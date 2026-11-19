@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Msg.Cli</RootNamespace>
+    <AssemblyName>msg</AssemblyName>
+
+    <!-- Installable as a global .NET tool (see README). -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>msg</ToolCommandName>
+    <PackageId>Msg.Cli</PackageId>
+    <PackageOutputPath>../../artifacts</PackageOutputPath>
+    <Description>MSG: generador de microservicios .NET con las convenciones de tu equipo.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Msg.Core\Msg.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,165 @@
+# End-to-end check for Windows (PowerShell 5.1 or 7+):
+# build MSG, generate services, build them with warnings-as-errors,
+# run one and hit its endpoints.
+#
+# Usage (from the repo root):
+#   powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
+#   pwsh -File scripts/smoke-test.ps1
+
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8   # dotnet prints UTF-8; avoids garbled accents
+Add-Type -AssemblyName System.Net.Http
+
+$Root   = Split-Path -Parent $PSScriptRoot
+$Work   = Join-Path ([IO.Path]::GetTempPath()) ("msg-smoke-" + [guid]::NewGuid().ToString('N'))
+$MsgDll = Join-Path $Root 'src\Msg.Cli\bin\Release\net10.0\msg.dll'
+$Port   = 5987
+$Base   = "http://127.0.0.1:$Port"
+$App    = $null
+$Http   = New-Object System.Net.Http.HttpClient
+$Http.Timeout = [TimeSpan]::FromSeconds(5)
+New-Item -ItemType Directory -Path $Work | Out-Null
+
+function Pass([string]$msg) { Write-Host "  [OK]   $msg" -ForegroundColor Green }
+function Fail([string]$msg) {
+    Write-Host "  [FAIL] $msg" -ForegroundColor Red
+    $log = Join-Path $Work 'app.out.log'
+    if (Test-Path $log) { Get-Content $log -Tail 20 | Out-Host }
+    throw "Smoke test failed: $msg"
+}
+function Step([string]$msg) { Write-Host "> $msg" -ForegroundColor Cyan }
+
+# Runs dotnet, hides output unless it fails. ErrorAction is relaxed locally because
+# Windows PowerShell 5.1 turns any stderr line of a native command into an error.
+function Invoke-Dotnet {
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # "$_" turns stderr ErrorRecords into plain text (no red NativeCommandError noise).
+        $out = & dotnet @args 2>&1 | ForEach-Object { "$_" }
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $eap
+    }
+    if ($code -ne 0) {
+        $out | Out-Host
+        Fail "dotnet $($args -join ' ') (exit $code)"
+    }
+}
+
+function Get-Http([string]$path, [string]$correlationId) {
+    $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$Base$path")
+    if ($correlationId) { [void]$req.Headers.TryAddWithoutValidation('X-Correlation-ID', $correlationId) }
+    $res = $Http.SendAsync($req).GetAwaiter().GetResult()
+    $correlation = $null
+    $values = $null
+    if ($res.Headers.TryGetValues('X-Correlation-ID', [ref]$values)) { $correlation = @($values)[0] }
+    [pscustomobject]@{
+        Status        = [int]$res.StatusCode
+        ContentType   = if ($res.Content.Headers.ContentType) { $res.Content.Headers.ContentType.MediaType } else { $null }
+        CorrelationId = $correlation
+        Body          = $res.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    }
+}
+
+try {
+    Step 'Build MSG'
+    Invoke-Dotnet build (Join-Path $Root 'Msg.slnx') -c Release -v q -nologo
+
+    Step 'Generate every feature combination worth checking'
+    Invoke-Dotnet $MsgDll new Orders  -o (Join-Path $Work 'full');                     Pass 'full (default features)'
+    Invoke-Dotnet $MsgDll new Billing -o (Join-Path $Work 'auth') --auth;              Pass 'full + auth'
+    Invoke-Dotnet $MsgDll new Catalog -o (Join-Path $Work 'core') `
+        --no-observability --no-openapi --no-resilience --no-tests;                    Pass 'core (framework only, no NuGet)'
+    Invoke-Dotnet $MsgDll new --from (Join-Path $Work 'auth\msg.json') -o (Join-Path $Work 'from'); Pass '--from msg.json'
+
+    Step 'Template sanity'
+    $files = Get-ChildItem -Path $Work -Recurse -File
+    $leftovers = $files | Select-String -Pattern '@msg:|\{\{Service\}\}|\{\{service-kebab\}\}|\{\{DevPort\}\}|__Service__'
+    if ($leftovers) { $leftovers | Out-Host; Fail 'unrendered template markers found' }
+    Pass 'no template markers left'
+
+    foreach ($f in ($files | Where-Object Extension -eq '.json')) {
+        try { Get-Content $f.FullName -Raw | ConvertFrom-Json | Out-Null } catch { Fail "invalid JSON: $($f.FullName)" }
+    }
+    Pass 'all JSON files are valid'
+
+    $hashes = {
+        param($dir)
+        $prefix = (Get-Item $dir).FullName   # same path format Get-ChildItem returns (8.3 names, etc.)
+        Get-ChildItem $dir -Recurse -File | ForEach-Object {
+            $_.FullName.Substring($prefix.Length) + '|' + (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+        } | Sort-Object
+    }
+    $diff = Compare-Object (& $hashes (Join-Path $Work 'auth')) (& $hashes (Join-Path $Work 'from'))
+    if ($diff) { $diff | Out-Host; Fail '--from differs' }
+    Pass '--from reproduces the same service'
+
+    Step "Build 'core' service (TreatWarningsAsErrors)"
+    Invoke-Dotnet build (Join-Path $Work 'core') -c Release -v q -nologo
+    Pass 'core builds with zero warnings'
+
+    Step "Run 'core' service and test the contract"
+    # Content root = working directory, where appsettings.json is copied.
+    $appDir = Join-Path $Work 'core\src\Catalog.Api\bin\Release\net10.0'
+    $env:ASPNETCORE_URLS = $Base
+    $env:ASPNETCORE_ENVIRONMENT = 'Production'
+    $App = Start-Process dotnet -ArgumentList 'Catalog.Api.dll' -WorkingDirectory $appDir -PassThru -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $Work 'app.out.log') -RedirectStandardError (Join-Path $Work 'app.err.log')
+    Remove-Item Env:ASPNETCORE_URLS, Env:ASPNETCORE_ENVIRONMENT
+
+    $up = $false
+    for ($i = 0; $i -lt 50 -and -not $up; $i++) {
+        try { $up = (Get-Http '/health/live').Status -eq 200 } catch { Start-Sleep -Milliseconds 200 }
+    }
+    if (-not $up) { Fail 'service did not start' }
+
+    if ((Get-Http '/health/live').Status  -eq 200) { Pass '/health/live 200' }  else { Fail '/health/live' }
+    if ((Get-Http '/health/ready').Status -eq 200) { Pass '/health/ready 200' } else { Fail '/health/ready' }
+
+    $ping = Get-Http '/api/v1/ping'
+    if ($ping.Body -like '*"service":"catalog"*') { Pass "/api/v1/ping -> $($ping.Body)" } else { Fail "ping: $($ping.Body)" }
+
+    $nf = Get-Http '/nope' 'smoke-42'
+    if ($nf.Status -eq 404 -and $nf.ContentType -eq 'application/problem+json') { Pass '404 is application/problem+json' } else { Fail "404: $($nf.Status) $($nf.ContentType)" }
+    if ($nf.CorrelationId -eq 'smoke-42') { Pass 'X-Correlation-ID echoed' } else { Fail "correlation header: $($nf.CorrelationId)" }
+    if ($nf.Body -like '*"correlationId":"smoke-42"*') { Pass "ProblemDetails has correlationId: $($nf.Body)" } else { Fail "problem body: $($nf.Body)" }
+
+    $bad = Get-Http '/health/live' '<script>'
+    if ($bad.CorrelationId -ne '<script>') { Pass 'unsafe correlation id rejected' } else { Fail 'unsafe correlation id accepted' }
+
+    Stop-Process -Id $App.Id -Force; $App.WaitForExit(); $App = $null
+    $firstLine = Get-Content (Join-Path $Work 'app.out.log') -TotalCount 1
+    if ($firstLine -and $firstLine.TrimStart().StartsWith('{')) { Pass 'logs are structured JSON in Production' } else { Fail "logs not JSON: $firstLine" }
+
+    Step 'Startup fails fast on invalid configuration'
+    $env:Service__Version = 'banana'
+    $badApp = Start-Process dotnet -ArgumentList 'Catalog.Api.dll', '--urls', "http://127.0.0.1:$($Port + 1)" `
+        -WorkingDirectory $appDir -PassThru -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $Work 'bad.out.log') -RedirectStandardError (Join-Path $Work 'bad.err.log')
+    Remove-Item Env:Service__Version
+    $null = $badApp.Handle   # PowerShell 5.1 needs this to read ExitCode later
+    if (-not $badApp.WaitForExit(15000)) { Stop-Process -Id $badApp.Id -Force; Fail 'service started with invalid config' }
+    $badLog = (Get-Content (Join-Path $Work 'bad.out.log') -Raw) + (Get-Content (Join-Path $Work 'bad.err.log') -Raw)
+    if ($badApp.ExitCode -ne 0 -and $badLog -like '*SemVer*') { Pass 'invalid Service:Version stops startup with a clear message' } else { Fail 'no validation message' }
+
+    Step 'Full services (need nuget.org)'
+    $nuget = $true
+    try { Invoke-WebRequest 'https://api.nuget.org/v3/index.json' -UseBasicParsing -TimeoutSec 5 | Out-Null } catch { $nuget = $false }
+    if ($nuget) {
+        foreach ($s in 'full', 'auth') {
+            Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
+            Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
+        }
+    } else {
+        Write-Host '  - nuget.org not reachable: skipped'
+    }
+
+    Write-Host 'Smoke test OK' -ForegroundColor Green
+}
+finally {
+    if ($App -and -not $App.HasExited) { Stop-Process -Id $App.Id -Force -ErrorAction SilentlyContinue }
+    $Http.Dispose()
+    Start-Sleep -Milliseconds 300
+    Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
+}

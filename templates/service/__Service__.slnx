@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/{{Service}}.Api/{{Service}}.Api.csproj" />
+    <Project Path="src/{{Service}}.ServiceDefaults/{{Service}}.ServiceDefaults.csproj" />
+  </Folder>
+  <!-- @msg:if tests -->
+  <Folder Name="/tests/">
+    <Project Path="tests/{{Service}}.Api.Tests/{{Service}}.Api.Tests.csproj" />
+  </Folder>
+  <!-- @msg:end -->
+</Solution>

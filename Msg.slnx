@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Msg.Core/Msg.Core.csproj" />
+    <Project Path="src/Msg.Cli/Msg.Cli.csproj" />
+  </Folder>
+</Solution>

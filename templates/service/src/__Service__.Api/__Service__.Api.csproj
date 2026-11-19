@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>{{Service}}.Api</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\{{Service}}.ServiceDefaults\{{Service}}.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <!-- @msg:if openApi -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+  <!-- @msg:end -->
+
+</Project>
