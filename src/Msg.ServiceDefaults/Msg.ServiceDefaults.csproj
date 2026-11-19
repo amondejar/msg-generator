@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Msg.ServiceDefaults</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <Description>MSG service defaults: health checks, ProblemDetails, correlation id, validated options. Framework-only, no third-party dependencies.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Msg.ServiceDefaults.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -6,7 +6,6 @@ WORKDIR /src
 
 # Restore first (only project files) so Docker caches the layer while dependencies don't change.
 COPY global.json Directory.Build.props Directory.Packages.props .editorconfig ./
-COPY src/{{Service}}.ServiceDefaults/{{Service}}.ServiceDefaults.csproj src/{{Service}}.ServiceDefaults/
 COPY src/{{Service}}.Api/{{Service}}.Api.csproj src/{{Service}}.Api/
 RUN dotnet restore src/{{Service}}.Api/{{Service}}.Api.csproj
 

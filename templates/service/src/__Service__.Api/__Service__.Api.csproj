@@ -5,13 +5,19 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\{{Service}}.ServiceDefaults\{{Service}}.ServiceDefaults.csproj" />
-  </ItemGroup>
-
-  <!-- @msg:if openApi -->
-  <ItemGroup>
+    <PackageReference Include="Msg.ServiceDefaults" />
+    <!-- @msg:if observability -->
+    <PackageReference Include="Msg.ServiceDefaults.OpenTelemetry" />
+    <!-- @msg:end -->
+    <!-- @msg:if resilience -->
+    <PackageReference Include="Msg.ServiceDefaults.Resilience" />
+    <!-- @msg:end -->
+    <!-- @msg:if auth -->
+    <PackageReference Include="Msg.ServiceDefaults.Authentication" />
+    <!-- @msg:end -->
+    <!-- @msg:if openApi -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <!-- @msg:end -->
   </ItemGroup>
-  <!-- @msg:end -->
 
 </Project>

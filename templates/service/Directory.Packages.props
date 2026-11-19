@@ -11,21 +11,24 @@
     <NuGetAuditLevel>low</NuGetAuditLevel>
   </PropertyGroup>
   <ItemGroup>
-    <!-- @msg:if openApi -->
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
-    <!-- @msg:end -->
+    <!--
+      MSG platform packages. Always the same version; "msg upgrade" bumps them.
+      Their own dependencies (OpenTelemetry, Polly, JwtBearer...) are managed by MSG.
+    -->
+    <PackageVersion Include="Msg.ServiceDefaults" Version="{{MsgVersion}}" />
     <!-- @msg:if observability -->
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.21.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.21.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.21.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.21.0" />
+    <PackageVersion Include="Msg.ServiceDefaults.OpenTelemetry" Version="{{MsgVersion}}" />
     <!-- @msg:end -->
     <!-- @msg:if resilience -->
-    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.11.0" />
+    <PackageVersion Include="Msg.ServiceDefaults.Resilience" Version="{{MsgVersion}}" />
     <!-- @msg:end -->
     <!-- @msg:if auth -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" />
+    <PackageVersion Include="Msg.ServiceDefaults.Authentication" Version="{{MsgVersion}}" />
+    <!-- @msg:end -->
+  </ItemGroup>
+  <ItemGroup>
+    <!-- @msg:if openApi -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
     <!-- @msg:end -->
     <!-- @msg:if tests -->
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />

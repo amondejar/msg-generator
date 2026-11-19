@@ -2,5 +2,12 @@
   <Folder Name="/src/">
     <Project Path="src/Msg.Core/Msg.Core.csproj" />
     <Project Path="src/Msg.Cli/Msg.Cli.csproj" />
+    <Project Path="src/Msg.ServiceDefaults/Msg.ServiceDefaults.csproj" />
+    <Project Path="src/Msg.ServiceDefaults.OpenTelemetry/Msg.ServiceDefaults.OpenTelemetry.csproj" />
+    <Project Path="src/Msg.ServiceDefaults.Resilience/Msg.ServiceDefaults.Resilience.csproj" />
+    <Project Path="src/Msg.ServiceDefaults.Authentication/Msg.ServiceDefaults.Authentication.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Msg.ServiceDefaults.Tests/Msg.ServiceDefaults.Tests.csproj" />
   </Folder>
 </Solution>

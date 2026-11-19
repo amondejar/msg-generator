@@ -1,6 +1,6 @@
-# End-to-end check for Windows (PowerShell 5.1 or 7+):
-# build MSG, generate services, build them with warnings-as-errors,
-# run one and hit its endpoints.
+# End-to-end check for Windows (PowerShell 5.1 or 7+): build + test + pack MSG, generate services
+# that consume the local Msg.* packages, build them with warnings-as-errors, run one and hit its
+# endpoints, check "msg upgrade", then build and test the full variants.
 #
 # Usage (from the repo root):
 #   powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
@@ -13,6 +13,7 @@ Add-Type -AssemblyName System.Net.Http
 $Root   = Split-Path -Parent $PSScriptRoot
 $Work   = Join-Path ([IO.Path]::GetTempPath()) ("msg-smoke-" + [guid]::NewGuid().ToString('N'))
 $MsgDll = Join-Path $Root 'src\Msg.Cli\bin\Release\net10.0\msg.dll'
+$Pkgs   = Join-Path $Work 'packages'
 $Port   = 5987
 $Base   = "http://127.0.0.1:$Port"
 $App    = $null
@@ -63,19 +64,31 @@ function Get-Http([string]$path, [string]$correlationId) {
 }
 
 try {
-    Step 'Build MSG'
-    Invoke-Dotnet build (Join-Path $Root 'Msg.slnx') -c Release -v q -nologo
+    Step 'Build, test and pack MSG'
+    $sln = Join-Path $Root 'Msg.slnx'
+    Invoke-Dotnet build $sln -c Release -v q -nologo
+    Invoke-Dotnet test  $sln -c Release --no-build -v q -nologo;              Pass 'Msg.ServiceDefaults.* tests pass'
+    Invoke-Dotnet pack  $sln -c Release --no-build -o $Pkgs -v q -nologo
+    Pass ("packed: " + ((Get-ChildItem $Pkgs -Filter *.nupkg | ForEach-Object Name) -join ' '))
+    $Version = (& dotnet $MsgDll --version | Out-String).Trim()
 
-    Step 'Generate every feature combination worth checking'
-    Invoke-Dotnet $MsgDll new Orders  -o (Join-Path $Work 'full');                     Pass 'full (default features)'
-    Invoke-Dotnet $MsgDll new Billing -o (Join-Path $Work 'auth') --auth;              Pass 'full + auth'
-    Invoke-Dotnet $MsgDll new Catalog -o (Join-Path $Work 'core') `
-        --no-observability --no-openapi --no-resilience --no-tests;                    Pass 'core (framework only, no NuGet)'
-    Invoke-Dotnet $MsgDll new --from (Join-Path $Work 'auth\msg.json') -o (Join-Path $Work 'from'); Pass '--from msg.json'
+    # The global NuGet cache keeps packages by id+version: drop old Msg.* builds so we test the ones just packed.
+    $globalLine = (& dotnet nuget locals global-packages --list | Out-String).Trim()
+    $global = $globalLine.Substring($globalLine.IndexOf(':') + 1).Trim()
+    Get-ChildItem $global -Directory -Filter 'msg.servicedefaults*' -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force
+
+    Step "Generate every feature combination worth checking (MSG $Version)"
+    Invoke-Dotnet $MsgDll new Orders  -o (Join-Path $Work 'full') --package-source $Pkgs;          Pass 'full (default features)'
+    Invoke-Dotnet $MsgDll new Billing -o (Join-Path $Work 'auth') --package-source $Pkgs --auth;   Pass 'full + auth'
+    Invoke-Dotnet $MsgDll new Catalog -o (Join-Path $Work 'core') --package-source $Pkgs `
+        --no-observability --no-openapi --no-resilience --no-tests;                                Pass 'core (framework only)'
+    Invoke-Dotnet $MsgDll new --from (Join-Path $Work 'auth\msg.json') -o (Join-Path $Work 'from') --package-source $Pkgs
+    Pass '--from msg.json'
 
     Step 'Template sanity'
-    $files = Get-ChildItem -Path $Work -Recurse -File
-    $leftovers = $files | Select-String -Pattern '@msg:|\{\{Service\}\}|\{\{service-kebab\}\}|\{\{DevPort\}\}|__Service__'
+    $files = 'full', 'auth', 'core', 'from' | ForEach-Object { Get-ChildItem -Path (Join-Path $Work $_) -Recurse -File }
+    $leftovers = $files | Select-String -Pattern '@msg:|\{\{Service\}\}|\{\{service-kebab\}\}|\{\{DevPort\}\}|\{\{MsgVersion\}\}|__Service__'
     if ($leftovers) { $leftovers | Out-Host; Fail 'unrendered template markers found' }
     Pass 'no template markers left'
 
@@ -95,9 +108,12 @@ try {
     if ($diff) { $diff | Out-Host; Fail '--from differs' }
     Pass '--from reproduces the same service'
 
+    $props = Get-Content (Join-Path $Work 'core\Directory.Packages.props') -Raw
+    if ($props -like "*Include=""Msg.ServiceDefaults"" Version=""$Version""*") { Pass "service pins Msg.ServiceDefaults $Version" } else { Fail 'Msg.ServiceDefaults version' }
+
     Step "Build 'core' service (TreatWarningsAsErrors)"
     Invoke-Dotnet build (Join-Path $Work 'core') -c Release -v q -nologo
-    Pass 'core builds with zero warnings'
+    Pass 'core builds against the local Msg.ServiceDefaults package with zero warnings'
 
     Step "Run 'core' service and test the contract"
     # Content root = working directory, where appsettings.json is copied.
@@ -123,7 +139,7 @@ try {
     $nf = Get-Http '/nope' 'smoke-42'
     if ($nf.Status -eq 404 -and $nf.ContentType -eq 'application/problem+json') { Pass '404 is application/problem+json' } else { Fail "404: $($nf.Status) $($nf.ContentType)" }
     if ($nf.CorrelationId -eq 'smoke-42') { Pass 'X-Correlation-ID echoed' } else { Fail "correlation header: $($nf.CorrelationId)" }
-    if ($nf.Body -like '*"correlationId":"smoke-42"*') { Pass "ProblemDetails has correlationId: $($nf.Body)" } else { Fail "problem body: $($nf.Body)" }
+    if ($nf.Body -like '*"correlationId":"smoke-42"*') { Pass 'ProblemDetails has correlationId' } else { Fail "problem body: $($nf.Body)" }
 
     $bad = Get-Http '/health/live' '<script>'
     if ($bad.CorrelationId -ne '<script>') { Pass 'unsafe correlation id rejected' } else { Fail 'unsafe correlation id accepted' }
@@ -143,16 +159,20 @@ try {
     $badLog = (Get-Content (Join-Path $Work 'bad.out.log') -Raw) + (Get-Content (Join-Path $Work 'bad.err.log') -Raw)
     if ($badApp.ExitCode -ne 0 -and $badLog -like '*SemVer*') { Pass 'invalid Service:Version stops startup with a clear message' } else { Fail 'no validation message' }
 
-    Step 'Full services (need nuget.org)'
-    $nuget = $true
-    try { Invoke-WebRequest 'https://api.nuget.org/v3/index.json' -UseBasicParsing -TimeoutSec 5 | Out-Null } catch { $nuget = $false }
-    if ($nuget) {
-        foreach ($s in 'full', 'auth') {
-            Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
-            Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
-        }
-    } else {
-        Write-Host '  - nuget.org not reachable: skipped'
+    Step 'msg upgrade'
+    $upgraded = Join-Path $Work 'upgraded'
+    Copy-Item (Join-Path $Work 'core') $upgraded -Recurse
+    Invoke-Dotnet $MsgDll upgrade --path $upgraded --to 9.9.9
+    $upProps = Get-Content (Join-Path $upgraded 'Directory.Packages.props') -Raw
+    $upJson  = Get-Content (Join-Path $upgraded 'msg.json') -Raw
+    if ($upProps -like '*Include="Msg.ServiceDefaults" Version="9.9.9"*' -and $upJson -like '*"msgVersion": "9.9.9"*') {
+        Pass 'upgrade bumps Msg.* packages and msg.json'
+    } else { Fail 'upgrade' }
+
+    Step 'Full services'
+    foreach ($s in 'full', 'auth') {
+        Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
+        Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
     }
 
     Write-Host 'Smoke test OK' -ForegroundColor Green

@@ -1,13 +1,22 @@
 using {{Service}}.Api;
 using {{Service}}.Api.Endpoints;
-using {{Service}}.ServiceDefaults;
+using Msg.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Everything every service does the same way (health, errors, logging, telemetry...).
-builder.AddServiceDefaults();
+// What every service does the same way (Msg.ServiceDefaults.* packages, upgraded with "msg upgrade").
+builder.AddMsgServiceDefaults();
+// @msg:if observability
+builder.AddMsgOpenTelemetry("{{service-kebab}}");
+// @msg:end
+// @msg:if resilience
+builder.AddMsgResilience();
+// @msg:end
+// @msg:if auth
+builder.AddMsgAuthentication();
+// @msg:end
 
-// Service-specific configuration, validated at startup.
+// What is specific to this service.
 builder.Services.AddValidatedOptions<ServiceOptions>(ServiceOptions.SectionName);
 // @msg:if openApi
 builder.Services.AddOpenApi();
@@ -15,8 +24,12 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-app.UseServiceDefaults();
-app.MapDefaultEndpoints();
+app.UseMsgServiceDefaults();
+// @msg:if auth
+app.UseAuthentication();
+app.UseAuthorization();
+// @msg:end
+app.MapMsgDefaultEndpoints();
 // @msg:if openApi
 
 if (app.Environment.IsDevelopment())

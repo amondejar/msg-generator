@@ -1,6 +1,6 @@
 # MSG: generador de microservicios .NET
 
-MSG genera microservicios .NET 10 que nacen con lo que cualquier equipo serio exige siempre igual: estructura, observabilidad, errores, configuración validada, tests, Docker y CI. El objetivo final es un editor visual. Esta es la **fase 1**: el motor y la CLI.
+MSG genera microservicios .NET 10 que nacen con lo que cualquier equipo serio exige siempre igual: estructura, observabilidad, errores, configuración validada, tests, Docker y CI. Lo común no se copia en cada servicio: llega en los paquetes `Msg.ServiceDefaults.*`, así que mejorarlo o parchearlo es subir una versión. El objetivo final es un editor visual.
 
 ```bash
 msg new Orders                 # servicio completo
@@ -8,6 +8,7 @@ msg new Billing --auth         # + JWT, autenticado por defecto
 msg new Catalog --no-docker    # quita lo que no necesites
 msg new --from msg.json        # regenera desde una definición
 msg new Orders --dry-run       # lista los archivos sin escribir nada
+msg upgrade                    # actualiza los paquetes Msg.* de un servicio a la versión de MSG instalada
 ```
 
 ## Qué genera
@@ -21,11 +22,24 @@ Orders/
 ├── global.json  .editorconfig  .gitignore
 ├── Dockerfile  .dockerignore    ← multi-stage, usuario no-root
 ├── .github/workflows/ci.yml
-├── src/
-│   ├── Orders.Api/              ← lo propio del servicio: endpoints, opciones
-│   └── Orders.ServiceDefaults/  ← lo que todos hacen igual
+├── src/Orders.Api/              ← lo propio del servicio: endpoints, opciones
 └── tests/Orders.Api.Tests/      ← tests del contrato común
 ```
+
+## Paquetes `Msg.ServiceDefaults.*`
+
+Uno por feature, para que quien no use una no arrastre sus dependencias:
+
+| Paquete | Qué aporta | Dependencias |
+| --- | --- | --- |
+| `Msg.ServiceDefaults` | `AddMsgServiceDefaults()`, `UseMsgServiceDefaults()`, `MapMsgDefaultEndpoints()`, `AddValidatedOptions<T>()` | Solo ASP.NET Core |
+| `Msg.ServiceDefaults.OpenTelemetry` | `AddMsgOpenTelemetry("servicio")` | OpenTelemetry |
+| `Msg.ServiceDefaults.Resilience` | `AddMsgResilience()` | Microsoft.Extensions.Http.Resilience |
+| `Msg.ServiceDefaults.Authentication` | `AddMsgAuthentication()` (sección `Auth`) | JwtBearer |
+
+Todos comparten versión con MSG (`<Version>` en `Directory.Build.props`). Las versiones de sus dependencias viven en `Directory.Packages.props` de este repo; un servicio generado solo fija `Msg.*`.
+
+**Flujo de una actualización de seguridad:** subir la dependencia aquí → nueva versión de MSG → en cada servicio, `msg upgrade` → PR.
 
 | Siempre incluido | Opcional (`--no-x` / `--x`) |
 | --- | --- |
@@ -45,7 +59,8 @@ msg.json ──► ServiceDefinition ──► ServiceGenerator (puro, en memori
 ```
 
 - **`src/Msg.Core`**: modelo, motor de plantillas y generador. No escribe en disco, así que el editor visual podrá reutilizarlo tal cual.
-- **`src/Msg.Cli`**: CLI sin dependencias externas.
+- **`src/Msg.Cli`**: CLI sin dependencias externas (`new`, `upgrade`).
+- **`src/Msg.ServiceDefaults*`**: los paquetes que consumen los servicios generados, con sus tests en `tests/`.
 - **`templates/service`**: plantillas como archivos reales (C#, XML, YAML, JSON), fáciles de leer y editar:
   - `{{Service}}`, `{{service-kebab}}`, `{{DevPort}}` y `{{MsgVersion}}` en el contenido; `__Service__` en las rutas.
   - Líneas con `@msg:if feature`, `@msg:if !feature`, `@msg:else` y `@msg:end` dentro de cualquier comentario. La línea de la directiva se elimina del resultado.
@@ -56,8 +71,14 @@ msg.json ──► ServiceDefinition ──► ServiceGenerator (puro, en memori
 
 ```bash
 dotnet build Msg.slnx
-dotnet run --project src/Msg.Cli -- new Orders -o ../Orders
+dotnet test Msg.slnx
+
+# Mientras los paquetes no estén en nuget.org: empaqueta en local y apunta el servicio a esa carpeta.
+dotnet pack Msg.slnx -c Release -o ./artifacts/packages
+dotnet run --project src/Msg.Cli -- new Orders -o ../Orders --package-source ./artifacts/packages
 ```
+
+`--package-source` genera en el servicio un `nuget.config` con *package source mapping*: `Msg.*` sale solo de esa carpeta y todo lo demás solo de nuget.org. Si reempaquetas la misma versión, borra la caché: `dotnet nuget locals global-packages --clear` (el smoke test ya lo hace solo para `Msg.*`).
 
 Test de extremo a extremo (genera, compila, arranca y prueba los endpoints):
 
@@ -74,13 +95,16 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
 Para instalar `msg` como herramienta global:
 
 ```bash
-dotnet pack src/Msg.Cli -c Release
-dotnet tool install -g Msg.Cli --add-source ./artifacts
+dotnet pack src/Msg.Cli -c Release -o ./artifacts/packages
+dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 ```
 
 ## Roadmap
 
 1. ✅ **Fase 1**: CLI + servicio con la base común.
-2. **Fase 2**: sacar `ServiceDefaults` a paquetes NuGet versionados (`Msg.ServiceDefaults`), para que mejorar la base sea subir una versión en todos los servicios. Añadir `msg add entity` con CRUD y persistencia (EF Core).
+2. **Fase 2**
+   - ✅ 2a: lo común en paquetes `Msg.ServiceDefaults.*` + `msg upgrade`.
+   - 2b: `msg add entity` con CRUD y persistencia (EF Core).
+   - 2c: publicar los paquetes en nuget.org desde CI al crear un tag.
 3. **Fase 3**: editor visual sobre `msg.json`.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

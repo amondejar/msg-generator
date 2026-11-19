@@ -20,10 +20,18 @@ dotnet run --project src/{{Service}}.Api
 | Carpeta | Qué contiene |
 | --- | --- |
 | `src/{{Service}}.Api` | Endpoints y configuración propia de este servicio. **Aquí va tu código.** |
-| `src/{{Service}}.ServiceDefaults` | Lo que todos los servicios hacen igual: health checks, errores, correlation id, logs, opciones validadas, telemetría. |
 <!-- @msg:if tests -->
 | `tests/{{Service}}.Api.Tests` | Tests de integración del contrato común. |
 <!-- @msg:end -->
+
+## Lo común viene en paquetes
+
+Lo que todos los servicios hacen igual no está copiado aquí: viene de los paquetes `Msg.ServiceDefaults.*`
+(versión en `Directory.Packages.props`). Para recibir mejoras y parches de seguridad:
+
+```bash
+msg upgrade
+```
 
 ## Convenciones incluidas
 
