@@ -59,7 +59,7 @@ else
                 <div class="card"><b style="color: var(--ok)">@Count(changes, ChangeKind.Create)</b>archivos nuevos</div>
                 <div class="card"><b style="color: var(--warn)">@Count(changes, ChangeKind.Regenerate)</b>regenerados por MSG</div>
                 <div class="card"><b style="color: #67E8F9">@Count(changes, ChangeKind.Merge)</b>completados (solo se añade)</div>
-                <div class="card"><b>0</b>archivos tuyos sobrescritos</div>
+                <div class="card"><b style="@(changes.Any(c => c.TouchesUserCode) ? "color: var(--err)" : "")">@changes.Count(c => c.TouchesUserCode)</b>archivos tuyos reemplazados o borrados</div>
             </div>
 
             @if (changes.Count == 0)
@@ -77,7 +77,7 @@ else
                         @foreach (var change in group)
                         {
                             <button type="button" class="@(change.Path == selected?.Path ? "sel" : "")" @onclick="() => selectedPath = change.Path">
-                                <span class="@css">@symbol</span> @change.Path
+                                <span class="@css">@symbol</span> @change.Path @if (change.TouchesUserCode) { <small style="color: var(--err)">· tuyo</small> }
                             </button>
                         }
                     </div>
@@ -111,6 +111,8 @@ else
         (ChangeKind.Create, "Nuevos · a partir de ahora son tuyos", "k-create", "+"),
         (ChangeKind.Regenerate, "Regenerados · gestionados por MSG (*.g.cs, msg.json)", "k-regen", "~"),
         (ChangeKind.Merge, "Completados · solo se añade lo que falta", "k-merge", "±"),
+        (ChangeKind.Replace, "Reemplazados · archivos tuyos de la entidad que conviertes al formato editable", "k-del", "!"),
+        (ChangeKind.Delete, "Eliminados", "k-del", "−"),
     ];
 
     private string? selectedPath;

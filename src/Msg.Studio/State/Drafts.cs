@@ -11,10 +11,19 @@ public sealed class PropertyDraft
 
     public bool Nullable { get; set; }
 
-    public static PropertyDraft From(PropertyDefinition p) => new() { Name = p.Name, Type = p.Type, Nullable = p.Nullable };
+    /// <summary>Name in msg.json. Null for a property added in this session. If it differs from <see cref="Name"/>, it's a rename.</summary>
+    public string? OriginalName { get; init; }
+
+    public bool IsRenamed => OriginalName is not null && !OriginalName.Equals(Name.Trim(), StringComparison.Ordinal);
+
+    public static PropertyDraft From(PropertyDefinition p) =>
+        new() { Name = p.Name, Type = p.Type, Nullable = p.Nullable, OriginalName = p.Name };
 }
 
-/// <summary>Editable entity. Entities that already exist in the service are shown read-only (their code is the user's).</summary>
+/// <summary>
+/// Editable entity. Existing entities with the editable layout (MSG 0.10+) can change their properties or be removed;
+/// older ones must be converted first.
+/// </summary>
 public sealed class EntityDraft
 {
     public string Name { get; set; } = string.Empty;
@@ -22,6 +31,17 @@ public sealed class EntityDraft
     public string Plural { get; set; } = string.Empty;
 
     public bool IsNew { get; init; }
+
+    /// <summary>False for entities created before MSG 0.10 (until <see cref="Convert"/> is set).</summary>
+    public bool IsLegacy { get; init; }
+
+    /// <summary>Marked to be removed when the changes are applied.</summary>
+    public bool Removed { get; set; }
+
+    /// <summary>Legacy entity marked to be converted to the editable layout.</summary>
+    public bool Convert { get; set; }
+
+    public bool CanEdit => !Removed && (IsNew || !IsLegacy || Convert);
 
     public List<PropertyDraft> Properties { get; } = [];
 
@@ -41,7 +61,7 @@ public sealed class EntityDraft
 
     public static EntityDraft From(EntityDefinition entity)
     {
-        var draft = new EntityDraft { Name = entity.Name, Plural = entity.Plural, IsNew = false };
+        var draft = new EntityDraft { Name = entity.Name, Plural = entity.Plural, IsNew = false, IsLegacy = !entity.IsEditable };
         draft.Properties.AddRange(entity.Properties.Select(PropertyDraft.From));
         return draft;
     }
@@ -68,6 +88,9 @@ public sealed class ServiceDraft
     public string MsgVersion { get; init; } = Msg.Core.MsgInfo.Version;
 
     public List<EntityDraft> Entities { get; } = [];
+
+    /// <summary>When removing entities, also delete the user's files (handlers, repositories...).</summary>
+    public bool DeleteOwnFiles { get; set; }
 
     public bool CanEditStructure => IsNew;
 

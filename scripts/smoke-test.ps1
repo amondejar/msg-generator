@@ -48,6 +48,18 @@ function Invoke-Dotnet {
     }
 }
 
+# Runs dotnet and returns its output as text (for commands whose output is checked). Exit code in $LASTEXITCODE.
+function Get-DotnetOutput {
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & dotnet @args 2>&1 | ForEach-Object { "$_" }
+    } finally {
+        $ErrorActionPreference = $eap
+    }
+    return ($out -join "`n")
+}
+
 function Get-Http([string]$path, [string]$correlationId) {
     $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$Base$path")
     if ($correlationId) { [void]$req.Headers.TryAddWithoutValidation('X-Correlation-ID', $correlationId) }
@@ -200,8 +212,8 @@ try {
     foreach ($p in 'Domain', 'Application', 'Infrastructure', 'Api') {
         if (-not (Test-Path (Join-Path $clean "src\Catalog.$p\Catalog.$p.csproj"))) { Fail "missing Catalog.$p" }
     }
-    $agg  = Get-Content (Join-Path $clean 'src\Catalog.Domain\Products\Product.cs') -Raw
-    $cmd  = Get-Content (Join-Path $clean 'src\Catalog.Application\Products\ProductCommands.cs') -Raw
+    $agg  = Get-Content (Join-Path $clean 'src\Catalog.Domain\Products\Product.g.cs') -Raw
+    $cmd  = Get-Content (Join-Path $clean 'src\Catalog.Application\Products\ProductCommands.g.cs') -Raw
     $repo = Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\RepositoryRegistration.g.cs') -Raw
     if ($agg -like '*AggregateRoot<Guid>*' -and $cmd -like '*ICommandHandler<CreateProduct, Guid>*' -and $repo -like '*AddScoped<IProductRepository, ProductRepository>*') {
         Pass 'Domain / Application / Infrastructure / Api with aggregates, use cases and repositories'
@@ -209,6 +221,60 @@ try {
     $cleanLeft = Get-ChildItem $clean -Recurse -File | Select-String -Pattern '@msg:|\{\{Service\}\}|\{\{Entity\}\}|__Entity__'
     if ($cleanLeft) { $cleanLeft | Out-Host; Fail 'unrendered markers in clean-ddd' }
     Pass 'no template markers left in clean-ddd'
+
+    Step 'Editable entities (msg entity)'
+    $cp = Join-Path $clean 'src\Catalog.Domain\Products\Product.cs'
+    $gp = Join-Path $clean 'src\Catalog.Domain\Products\Product.g.cs'
+    # User code in the partial class: must survive every regeneration.
+    $userCode = @'
+using Msg.Ddd;
+
+namespace Catalog.Domain.Products;
+
+public sealed partial class Product
+{
+    partial void EnsureInvariants()
+    {
+        if (Price < 0)
+        {
+            throw new DomainException("Price can't be negative.");
+        }
+    }
+
+    public string Label => $"{Name} ({Price})";
+}
+'@
+    Set-Content -Path $cp -Value $userCode -Encoding UTF8
+    $out = Get-DotnetOutput $MsgDll entity update Product --path $clean --props 'Title:string, Price:decimal, Stock:int' --rename Name=Title
+    if ($LASTEXITCODE -ne 0) { $out | Out-Host; Fail 'entity update' }
+    if ($out -like '*Product.Name se renombra a Title*' -and $out -like '*Product.Description se elimina*') {
+        Pass 'update warns about renamed/removed properties used in user code'
+    } else { $out | Out-Host; Fail 'entity update warnings' }
+    $g = Get-Content $gp -Raw
+    if ((Get-Content $cp -Raw) -like '*Label => *' -and $g -like '*public string Title*' -and $g -notlike '*Description*') {
+        Pass 'properties regenerated in .g.cs, user partial untouched'
+    } else { Fail 'entity update' }
+    if ((Get-Content (Join-Path $clean 'msg.json') -Raw) -like '*"from": "Name"*') { Pass 'rename recorded in msg.json (pendingRenames)' } else { Fail 'pendingRenames' }
+    Set-Content -Path $cp -Value ($userCode.Replace('{Name} ({Price})', '{Title} ({Price})')) -Encoding UTF8
+    $out = Get-DotnetOutput $MsgDll entity update Product --path $clean --props 'Title:string, Price:decimal, Stock:int'
+    if ($out -like '*Nada que cambiar*') { Pass 'no-op update changes nothing' } else { $out | Out-Host; Fail 'no-op update' }
+    Invoke-Dotnet $MsgDll add entity Tag --path $clean --props 'Label:string'
+    Invoke-Dotnet $MsgDll entity remove Tag --path $clean --delete-own-files
+    if (Get-ChildItem $clean -Recurse -File -Filter 'Tag*.cs') { Fail 'entity remove left files' }
+    if ((Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\CatalogDbContext.g.cs') -Raw) -like '*Tag*') { Fail 'Tag still in DbContext' }
+    Pass 'entity remove deletes its files and registrations'
+    # An entity from MSG < 0.10 (no "layout" in msg.json) is read-only until converted.
+    $defPath = Join-Path $full 'msg.json'
+    $def = Get-Content $defPath -Raw | ConvertFrom-Json
+    foreach ($e in $def.entities) { if ($e.name -eq 'Category') { $e.PSObject.Properties.Remove('layout') } }
+    [System.IO.File]::WriteAllText($defPath, ($def | ConvertTo-Json -Depth 10))
+    $out = Get-DotnetOutput $MsgDll entity update Category --path $full --props 'Title:string'
+    if ($LASTEXITCODE -eq 0) { Fail 'legacy entity edited without converting' }
+    $out = Get-DotnetOutput $MsgDll entity convert Category --path $full --dry-run
+    if ($out -notlike '*(archivo tuyo)*') { $out | Out-Host; Fail 'entity convert --dry-run' }
+    Invoke-Dotnet $MsgDll entity convert Category --path $full
+    Invoke-Dotnet $MsgDll entity update Category --path $full --props 'Title:string, Position:int?, Color:string?'
+    Pass 'legacy entity: blocked, converted (shows user files), then editable'
 
     Step 'Team templates (.msg)'
     $team = Join-Path $Work 'team'

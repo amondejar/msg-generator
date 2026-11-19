@@ -20,6 +20,22 @@ public sealed record ServiceDefinition
     public PersistenceSettings? Persistence { get; init; }
 
     public IReadOnlyList<EntityDefinition> Entities { get; init; } = [];
+
+    /// <summary>
+    /// Property renames not yet captured by a migration. Without them EF Core would drop the column and
+    /// create a new one (losing data); MSG turns them into <c>RenameColumn</c>. Null when there are none.
+    /// </summary>
+    public IReadOnlyList<PropertyRename>? PendingRenames { get; init; }
+}
+
+/// <summary>A property renamed in MSG (Studio or "msg entity update --rename").</summary>
+public sealed record PropertyRename
+{
+    public required string Entity { get; init; }
+
+    public required string From { get; init; }
+
+    public required string To { get; init; }
 }
 
 public static class Architectures
