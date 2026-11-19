@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
 // @msg:if !auth
 using {{Service}}.Api.Endpoints;
 // @msg:end
@@ -11,8 +10,7 @@ namespace {{Service}}.Api.Tests;
 /// Guards the contract every MSG service must keep: health endpoints, ProblemDetails, correlation id.
 /// If one of these fails, the service no longer behaves like the rest of the platform.
 /// </summary>
-public sealed class ServiceDefaultsTests(WebApplicationFactory<Program> factory)
-    : IClassFixture<WebApplicationFactory<Program>>
+public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Theory]
     [InlineData("/health/live")]

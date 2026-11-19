@@ -169,8 +169,30 @@ try {
         Pass 'upgrade bumps Msg.* packages and msg.json'
     } else { Fail 'upgrade' }
 
+    Step 'msg add entity'
+    $full = Join-Path $Work 'full'
+    Invoke-Dotnet $MsgDll add entity Product  --path $full --props 'Name:string, Price:decimal, Description:string?, Stock:int'
+    Invoke-Dotnet $MsgDll add entity Category --path $full --props 'Title:string, Position:int?' --plural Categories
+    Invoke-Dotnet $MsgDll add entity Invoice  --path (Join-Path $Work 'auth') --db sqlserver --props 'Number:string, Total:decimal, Paid:bool'
+    Pass 'entities added (postgres + sqlserver)'
+
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & dotnet $MsgDll add entity Product --path $full --props 'Name:string' 2>&1 | Out-Null
+    $dupCode = $LASTEXITCODE; $ErrorActionPreference = $eap
+    if ($dupCode -ne 0) { Pass 'duplicate entity rejected' } else { Fail 'duplicate entity accepted' }
+
+    $reg = Get-Content (Join-Path $full 'src\Orders.Api\Features\FeatureRegistration.g.cs') -Raw
+    $pkg = Get-Content (Join-Path $full 'Directory.Packages.props') -Raw
+    $dev = Get-Content (Join-Path $full 'src\Orders.Api\appsettings.Development.json') -Raw
+    if ($reg -like '*MapProductEndpoints*' -and $pkg -like '*Npgsql.EntityFrameworkCore.PostgreSQL*' -and $dev -like '*"Database"*') {
+        Pass 'registration, packages and connection string wired'
+    } else { Fail 'entity wiring' }
+
+    Invoke-Dotnet $MsgDll new --from (Join-Path $full 'msg.json') -o (Join-Path $Work 'regen') --package-source $Pkgs
+    Pass 'msg new --from regenerates the entities'
+
     Step 'Full services'
-    foreach ($s in 'full', 'auth') {
+    foreach ($s in 'full', 'auth', 'regen') {
         Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
         Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
     }

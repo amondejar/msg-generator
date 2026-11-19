@@ -16,6 +16,8 @@ internal static partial class Cli
         Uso:
           msg new <Nombre> [opciones]        Crea un servicio nuevo
           msg new --from <msg.json> [opc.]   Crea un servicio a partir de una definición
+          msg add entity <Nombre> --props "Campo:tipo, ..." [--plural <P>] [--db postgres|sqlserver] [--path <carpeta>]
+                                             Añade una entidad con CRUD, EF Core y tests
           msg upgrade [--path <carpeta>] [--to <versión>]
                                              Actualiza los paquetes Msg.* de un servicio existente
           msg --version
@@ -40,6 +42,9 @@ internal static partial class Cli
         Siempre incluido: estructura de solución, Central Package Management, health checks,
         ProblemDetails, correlation id, logs estructurados y configuración validada.
         Lo común llega como paquetes Msg.ServiceDefaults.*: 'msg upgrade' lo actualiza sin regenerar.
+
+        Tipos de --props: string, int, long, decimal, bool, guid, date, datetime. Añade ? si es opcional.
+          msg add entity Product --props "Name:string, Price:decimal, Description:string?"
         """;
 
     public static int Run(string[] args, TextWriter output)
@@ -60,6 +65,7 @@ internal static partial class Cli
         {
             "new" => New(args[1..], output),
             "upgrade" => Upgrade(args[1..], output),
+            "add" => Add(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
         };
     }
@@ -154,6 +160,82 @@ internal static partial class Cli
         PrintSummary(output, definition, files.Count, outputDir);
         return 0;
     }
+
+    private static int Add(string[] args, TextWriter output)
+    {
+        if (args.Length == 0 || args[0] != "entity")
+        {
+            throw new MsgException("Uso: msg add entity <Nombre> --props \"Campo:tipo, ...\"");
+        }
+
+        string? name = null, props = null, plural = null, db = null;
+        var path = ".";
+
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--props":
+                    props = Value(args, ref i, args[i]);
+                    break;
+                case "--plural":
+                    plural = Value(args, ref i, args[i]);
+                    break;
+                case "--db":
+                    db = Value(args, ref i, args[i]).ToLowerInvariant();
+                    break;
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                default:
+                    if (name is null && !args[i].StartsWith('-'))
+                    {
+                        name = args[i];
+                        break;
+                    }
+
+                    throw new MsgException($"Argumento inesperado '{args[i]}'.");
+            }
+        }
+
+        var result = EntityAdder.Add(new AddEntityRequest
+        {
+            ServiceDirectory = path,
+            Name = name ?? throw new MsgException("Falta el nombre de la entidad: msg add entity <Nombre> --props \"...\""),
+            Properties = props ?? throw new MsgException("Falta --props \"Campo:tipo, ...\" (p. ej. \"Name:string, Price:decimal\")."),
+            Plural = plural,
+            Provider = db,
+        });
+
+        var entity = result.Entity;
+        output.WriteLine($"✔ Entidad {entity.Name} añadida ({result.Provider}) → /api/v1/{ServiceName.ToKebab(entity.Plural)}");
+        foreach (var file in result.Created)
+        {
+            output.WriteLine($"  + {file}");
+        }
+
+        foreach (var file in result.Updated)
+        {
+            output.WriteLine($"  ~ {file}");
+        }
+
+        foreach (var warning in result.Warnings)
+        {
+            output.WriteLine();
+            output.WriteLine($"⚠ {warning}");
+        }
+
+        output.WriteLine();
+        output.WriteLine("Siguientes pasos:");
+        output.WriteLine("  dotnet test                                   # los tests usan SQLite en memoria");
+        output.WriteLine("  docker compose up -d                          # base de datos local");
+        output.WriteLine($"  dotnet ef migrations add Add{entity.Name} --project src/{ServiceNameFromPath(path)}.Api");
+        output.WriteLine($"  dotnet ef database update --project src/{ServiceNameFromPath(path)}.Api");
+        return 0;
+    }
+
+    private static string ServiceNameFromPath(string path) =>
+        ServiceGenerator.Deserialize(File.ReadAllText(Path.Combine(path, ServiceGenerator.DefinitionFileName))).Service.Name;
 
     private static int Upgrade(string[] args, TextWriter output)
     {

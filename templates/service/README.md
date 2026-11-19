@@ -24,6 +24,35 @@ dotnet run --project src/{{Service}}.Api
 | `tests/{{Service}}.Api.Tests` | Tests de integración del contrato común. |
 <!-- @msg:end -->
 
+<!-- @msg:if persistence -->
+## Base de datos
+
+<!-- @msg:if postgres -->
+PostgreSQL con EF Core. Para levantar una base de datos local:
+<!-- @msg:else -->
+SQL Server con EF Core. Para levantar una base de datos local:
+<!-- @msg:end -->
+
+```bash
+dotnet tool install -g dotnet-ef                                # una sola vez
+docker compose up -d
+dotnet ef migrations add Initial --project src/{{Service}}.Api   # la primera vez y tras cada cambio de modelo
+dotnet ef database update --project src/{{Service}}.Api
+```
+
+En producción, la cadena de conexión se pasa por la variable `ConnectionStrings__Database`. Si falta, el servicio no arranca.
+Los tests no necesitan Docker, porque usan SQLite en memoria (`tests/{{Service}}.Api.Tests/ApiFactory.Database.g.cs`).
+
+<!-- @msg:end -->
+## Entidades
+
+```bash
+msg add entity Product --props "Name:string, Price:decimal, Description:string?"
+```
+
+Genera en `src/{{Service}}.Api/Features/<Plural>/` la entidad, su mapeo de EF, los DTOs con validación, los endpoints CRUD paginados
+(`/api/v1/<plural>`) y sus tests. Esos archivos son tuyos: MSG no los vuelve a tocar. Los `*.g.cs` los regenera MSG en cada `msg add`.
+
 ## Lo común viene en paquetes
 
 Lo que todos los servicios hacen igual no está copiado aquí: viene de los paquetes `Msg.ServiceDefaults.*`

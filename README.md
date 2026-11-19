@@ -9,7 +9,30 @@ msg new Catalog --no-docker    # quita lo que no necesites
 msg new --from msg.json        # regenera desde una definición
 msg new Orders --dry-run       # lista los archivos sin escribir nada
 msg upgrade                    # actualiza los paquetes Msg.* de un servicio a la versión de MSG instalada
+
+# Dentro de un servicio:
+msg add entity Product --props "Name:string, Price:decimal, Description:string?"
+msg add entity Invoice --props "Number:string, Total:decimal" --db sqlserver   # la primera entidad elige la BD
 ```
+
+## `msg add entity`
+
+Por cada entidad genera la entidad (Id UUID v7, `CreatedAt`, `UpdatedAt`), su `IEntityTypeConfiguration`, los DTOs con validación
+(400 ProblemDetails gracias a la validación integrada de .NET 10), los endpoints CRUD paginados y sus tests. La primera entidad añade
+además el `DbContext`, el health check de base de datos (readiness), `compose.yaml` y una base SQLite en memoria para los tests.
+
+Tipos de `--props`: `string`, `int`, `long`, `decimal`, `bool`, `guid`, `date`, `datetime`. Con `?` la propiedad es opcional.
+
+Reglas para no pisar tu código:
+
+| Archivos | Qué hace MSG |
+| --- | --- |
+| `*.g.cs` (registro de endpoints, `DbSet`s, base de test) | Los regenera siempre a partir de `msg.json`. |
+| Entidad, endpoints, DTOs, tests, `DbContext`, `compose.yaml` | Los crea una vez. A partir de ahí son tuyos. |
+| `.csproj`, `Directory.Packages.props`, `appsettings.Development.json` | Solo añade lo que falta. |
+| Todo lo demás | No lo toca. |
+
+La entidad queda en `msg.json`, así que `msg new --from msg.json` reconstruye el servicio con todas sus entidades.
 
 ## Qué genera
 
@@ -104,7 +127,7 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 1. ✅ **Fase 1**: CLI + servicio con la base común.
 2. **Fase 2**
    - ✅ 2a: lo común en paquetes `Msg.ServiceDefaults.*` + `msg upgrade`.
-   - 2b: `msg add entity` con CRUD y persistencia (EF Core).
+   - ✅ 2b: `msg add entity` con CRUD, EF Core (PostgreSQL o SQL Server) y tests con SQLite en memoria.
    - 2c: publicar los paquetes en nuget.org desde CI al crear un tag.
 3. **Fase 3**: editor visual sobre `msg.json`.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

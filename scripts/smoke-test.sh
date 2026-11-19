@@ -100,9 +100,22 @@ grep -q 'Include="Msg.ServiceDefaults" Version="9.9.9"' "$WORK/upgraded/Director
   && grep -q '"msgVersion": "9.9.9"' "$WORK/upgraded/msg.json" \
   && pass "upgrade bumps Msg.* packages and msg.json" || fail "upgrade"
 
+echo "▶ msg add entity"
+"${MSG[@]}" add entity Product  --path "$WORK/full" --props "Name:string, Price:decimal, Description:string?, Stock:int" >/dev/null
+"${MSG[@]}" add entity Category --path "$WORK/full" --props "Title:string, Position:int?" --plural Categories >/dev/null
+"${MSG[@]}" add entity Invoice  --path "$WORK/auth" --db sqlserver --props "Number:string, Total:decimal, Paid:bool" >/dev/null
+pass "entities added (postgres + sqlserver)"
+if "${MSG[@]}" add entity Product --path "$WORK/full" --props "Name:string" >/dev/null 2>&1; then fail "duplicate entity accepted"; fi
+pass "duplicate entity rejected"
+grep -q "MapProductEndpoints" "$WORK/full/src/Orders.Api/Features/FeatureRegistration.g.cs" \
+  && grep -q "Npgsql.EntityFrameworkCore.PostgreSQL" "$WORK/full/Directory.Packages.props" \
+  && grep -q '"Database"' "$WORK/full/src/Orders.Api/appsettings.Development.json" \
+  && pass "registration, packages and connection string wired" || fail "entity wiring"
+"${MSG[@]}" new --from "$WORK/full/msg.json" -o "$WORK/regen" --package-source "$PKGS" >/dev/null && pass "msg new --from regenerates the entities"
+
 echo "▶ Full services (need nuget.org)"
 if [[ $ONLINE == 1 ]]; then
-  for s in full auth; do
+  for s in full auth regen; do
     dotnet build "$WORK/$s" -c Release -v q -nologo >/dev/null && pass "$s builds"
     dotnet test  "$WORK/$s" -c Release --no-build -v q -nologo >/dev/null && pass "$s tests pass"
   done

@@ -25,6 +25,7 @@ public sealed record GenerationOptions
 public static class ServiceGenerator
 {
     public const string TemplateName = "service";
+    public const string EntityTemplateName = "entity";
     public const string DefinitionFileName = "msg.json";
 
     // Whole files/folders that only exist when a feature is enabled.
@@ -32,9 +33,14 @@ public static class ServiceGenerator
     private static readonly (string Prefix, string Feature)[] ConditionalPaths =
     [
         ("tests/", "tests"),
+        ("tests/__Service__.Api.Tests/TestAuthHandler.cs", "auth"),
+        ("tests/__Service__.Api.Tests/ApiFactory.Database.g.cs", "persistence"),
         ("Dockerfile", "docker"),
         ("_dockerignore", "docker"),
         ("_github/", "ci"),
+        ("compose.yaml", "persistence"),
+        ("src/__Service__.Api/Data/", "persistence"),
+        ("src/__Service__.Api/Features/PagedResponse.cs", "persistence"),
     ];
 
     public static IReadOnlyList<GeneratedFile> Generate(ServiceDefinition definition, GenerationOptions? options = null)
@@ -46,26 +52,24 @@ public static class ServiceGenerator
         definition = definition with { MsgVersion = MsgInfo.Version };
 
         var tokens = BuildTokens(definition);
-        var features = definition.Features;
+        var isEnabled = Conditions(definition);
         var result = new List<GeneratedFile>();
 
-        foreach (var template in TemplateSource.Load(TemplateName))
+        RenderTemplateSet(TemplateName, tokens, isEnabled, result);
+
+        foreach (var entity in definition.Entities)
         {
-            if (!IsIncluded(template.Path, features))
+            var entityTokens = new Dictionary<string, string>(tokens, StringComparer.Ordinal);
+            foreach (var (key, value) in EntityCodeGen.Tokens(entity, definition.Features))
             {
-                continue;
+                entityTokens[key] = value;
             }
 
-            var path = RenderPath(template.Path, tokens);
-            var content = TemplateEngine.Render(template.Content, tokens, features.IsEnabled, template.Path);
-
-            // A template wrapped entirely in "@msg:if feature" renders empty when the feature is off: skip the file.
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                continue;
-            }
-
-            result.Add(new GeneratedFile(path, content));
+            RenderTemplateSet(
+                EntityTemplateName,
+                entityTokens,
+                feature => feature == "hasRequiredString" ? EntityCodeGen.HasRequiredString(entity) : isEnabled(feature),
+                result);
         }
 
         result.Add(new GeneratedFile(DefinitionFileName, Serialize(definition)));
@@ -113,13 +117,64 @@ public static class ServiceGenerator
         ArgumentNullException.ThrowIfNull(definition);
         var name = definition.Service.Name;
 
-        return new Dictionary<string, string>(StringComparer.Ordinal)
+        var tokens = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["Service"] = name,
             ["service-kebab"] = ServiceName.ToKebab(name),
             ["DevPort"] = ServiceName.DevPort(name).ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["MsgVersion"] = MsgInfo.Version,
         };
+
+        foreach (var (key, value) in EntityCodeGen.ServiceTokens(definition))
+        {
+            tokens[key] = value;
+        }
+
+        return tokens;
+    }
+
+    /// <summary>
+    /// Template conditions: the user features plus derived ones (persistence, postgres, sqlserver)
+    /// that come from the rest of msg.json.
+    /// </summary>
+    public static Func<string, bool> Conditions(ServiceDefinition definition)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        var provider = definition.Persistence?.Provider;
+
+        return feature => feature switch
+        {
+            "persistence" => provider is not null,
+            "postgres" => provider == PersistenceSettings.Postgres,
+            "sqlserver" => provider == PersistenceSettings.SqlServer,
+            _ => definition.Features.IsEnabled(feature),
+        };
+    }
+
+    private static void RenderTemplateSet(
+        string templateName,
+        Dictionary<string, string> tokens,
+        Func<string, bool> isEnabled,
+        List<GeneratedFile> result)
+    {
+        foreach (var template in TemplateSource.Load(templateName))
+        {
+            if (!IsIncluded(template.Path, isEnabled))
+            {
+                continue;
+            }
+
+            var path = RenderPath(template.Path, tokens);
+            var content = TemplateEngine.Render(template.Content, tokens, isEnabled, $"{templateName}/{template.Path}");
+
+            // A template wrapped entirely in "@msg:if feature" renders empty when the feature is off: skip the file.
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                continue;
+            }
+
+            result.Add(new GeneratedFile(path, content));
+        }
     }
 
     public static string Serialize(ServiceDefinition definition) =>
@@ -138,11 +193,11 @@ public static class ServiceGenerator
         }
     }
 
-    private static bool IsIncluded(string templatePath, FeatureSet features)
+    private static bool IsIncluded(string templatePath, Func<string, bool> isEnabled)
     {
         foreach (var (prefix, feature) in ConditionalPaths)
         {
-            if (templatePath.StartsWith(prefix, StringComparison.Ordinal) && !features.IsEnabled(feature))
+            if (templatePath.StartsWith(prefix, StringComparison.Ordinal) && !isEnabled(feature))
             {
                 return false;
             }

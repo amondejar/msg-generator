@@ -1,5 +1,6 @@
 using {{Service}}.Api;
 using {{Service}}.Api.Endpoints;
+using {{Service}}.Api.Features;
 using Msg.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,6 +19,8 @@ builder.AddMsgAuthentication();
 
 // What is specific to this service.
 builder.Services.AddValidatedOptions<ServiceOptions>(ServiceOptions.SectionName);
+builder.Services.AddValidation();   // DataAnnotations on request DTOs → 400 ProblemDetails
+builder.AddFeatures();              // generated from msg.json ("msg add entity")
 // @msg:if openApi
 builder.Services.AddOpenApi();
 // @msg:end
@@ -45,5 +48,6 @@ if (app.Environment.IsDevelopment())
 // Public contract: versioned from day one.
 var v1 = app.MapGroup("/api/v1");
 v1.MapPingEndpoints();
+v1.MapFeatures();
 
 await app.RunAsync().ConfigureAwait(false);

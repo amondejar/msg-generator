@@ -12,6 +12,11 @@ public sealed record ServiceDefinition
     public required ServiceInfo Service { get; init; }
 
     public FeatureSet Features { get; init; } = new();
+
+    /// <summary>Null until the first entity is added.</summary>
+    public PersistenceSettings? Persistence { get; init; }
+
+    public IReadOnlyList<EntityDefinition> Entities { get; init; } = [];
 }
 
 public sealed record ServiceInfo

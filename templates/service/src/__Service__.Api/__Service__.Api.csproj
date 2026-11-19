@@ -18,6 +18,16 @@
     <!-- @msg:if openApi -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <!-- @msg:end -->
+    <!-- @msg:if postgres -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- @msg:end -->
+    <!-- @msg:if sqlserver -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <!-- @msg:end -->
+    <!-- @msg:if persistence -->
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <!-- @msg:end -->
   </ItemGroup>
 
 </Project>
