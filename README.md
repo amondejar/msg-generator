@@ -108,12 +108,34 @@ Reglas para no pisar tu código:
 
 | Archivos | Qué hace MSG |
 | --- | --- |
-| `*.g.cs` (registro de endpoints, `DbSet`s, base de test) | Los regenera siempre a partir de `msg.json`. |
-| Entidad, endpoints, DTOs, tests, `DbContext`, `compose.yaml` | Los crea una vez. A partir de ahí son tuyos. |
+| `*.g.cs`: propiedades, configuración EF, contratos, CRUD, comandos/queries, tests CRUD, registros, `DbSet`s | Los regenera siempre a partir de `msg.json`. |
+| Clases `partial` sin `.g` (`Product.cs`, `ProductEndpoints.cs`), handlers de eventos, repositorio, `DbContext`, `compose.yaml` | Los crea una vez. A partir de ahí son tuyos. |
 | `.csproj`, `Directory.Packages.props`, `appsettings.Development.json` | Solo añade lo que falta. |
 | Todo lo demás | No lo toca. |
 
+Tu código va en las clases `partial`: métodos y propiedades calculadas en la entidad, reglas en `EnsureInvariants()` (clean-ddd),
+mapeo EF extra en `Customize(builder)` y endpoints propios en `MapCustomEndpoints(group)`.
+
 La entidad queda en `msg.json`, así que `msg new --from msg.json` reconstruye el servicio con todas sus entidades.
+
+## Cambiar entidades (`msg entity`)
+
+```bash
+msg entity list
+msg entity update Product --props "Title:string, Price:decimal, Stock:int" --rename Name=Title --dry-run
+msg entity remove Tag                      # tus archivos de Tag se quedan (y te los lista)
+msg entity remove Tag --delete-own-files   # también los borra
+msg entity convert Product                 # entidades creadas antes de MSG 0.10
+```
+
+- `--props` es la lista completa: lo que no esté se elimina. `--rename Viejo=Nuevo` marca un renombrado; queda en `pendingRenames`
+  de `msg.json` para que la migración conserve los datos (`RenameColumn` en lugar de borrar y crear).
+- Si tu código usa una propiedad eliminada o renombrada, MSG te dice en qué archivos.
+- En el Studio es lo mismo: cambia el nombre en la fila para renombrar, borra filas, añade otras o elimina la entidad; la pantalla
+  de revisión enseña el diff y cuántos archivos tuyos se tocan (solo al convertir o con "borrar también mis archivos").
+- Las entidades creadas antes de la 0.10 tenían todo en archivos tuyos: MSG no las edita hasta que las conviertes. La conversión
+  reemplaza la entidad y los endpoints por clases `partial` vacías y borra contratos, configuración, comandos, queries y tests
+  (pasan a `.g.cs`); eventos, handlers y repositorio se quedan como están. Revisa el `--dry-run` y pasa tus cambios a las partial.
 
 ## Qué genera
 
@@ -214,5 +236,6 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
    - 2c: publicar los paquetes en nuget.org desde CI al crear un tag.
 3. ✅ `msg aspire`: AppHost de Aspire para todos los servicios.
 4. ✅ **Fase 3**: editor visual `msg studio` (Blazor Server sobre `Msg.Core`).
-5. Siguiente: métodos propios del agregado y relaciones entre entidades desde el Studio, mensajería entre servicios (outbox), publicar en nuget.org.
+5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`msg entity`, Studio).
+6. Siguiente: migraciones guiadas (renombrados y avisos de pérdida de datos), quitar paquetes que ya no se usan, detectar `.g.cs` editados a mano; métodos propios del agregado y relaciones entre entidades desde el Studio, mensajería entre servicios (outbox), publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

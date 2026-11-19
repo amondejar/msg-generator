@@ -103,13 +103,36 @@ public sealed class StudioState(StudioOptions options)
         return entity;
     }
 
+    /// <summary>A new entity disappears from the draft; an existing one is marked (and can be restored).</summary>
     public void RemoveEntity(EntityDraft entity)
     {
-        if (entity.IsNew && Current is not null)
+        if (Current is null)
+        {
+            return;
+        }
+
+        if (entity.IsNew)
         {
             Current.Entities.Remove(entity);
             SelectedEntity = Current.Entities.FirstOrDefault()?.Name;
-            Recompute();
+        }
+        else
+        {
+            entity.Removed = !entity.Removed;
+        }
+
+        Recompute();
+    }
+
+    /// <summary>Forgets every unapplied edit of the open service.</summary>
+    public void Discard()
+    {
+        if (Current is { IsNew: false } draft && Services.FirstOrDefault(s => s.Directory == draft.Directory) is { } service)
+        {
+            var selected = SelectedEntity;
+            Open(service);
+            SelectedEntity = Current?.Entities.Any(e => e.Name == selected) == true ? selected : SelectedEntity;
+            Changed?.Invoke();
         }
     }
 
@@ -174,36 +197,65 @@ public sealed class StudioState(StudioOptions options)
     public string? ExistingAppHost =>
         Directory.EnumerateDirectories(Workspace, "*.AppHost").Select(Path.GetFileName).FirstOrDefault();
 
-    private ChangePlan PlanForExisting(ServiceDraft draft, ServiceDefinition definition)
+    private ChangePlan PlanForExisting(ServiceDraft draft, ServiceDefinition updated)
     {
         var directory = Path.Combine(Workspace, draft.Directory);
         var current = ServicePlanner.Load(directory);
-        var newEntities = definition.Entities.Skip(current.Entities.Count).ToList();
-
-        return newEntities.Count == 0
-            ? new ChangePlan(directory, [], [])
-            : ServicePlanner.AddEntities(directory, current, newEntities, draft.Provider, new GenerationOptions { Team = Team });
+        return ServicePlanner.Plan(directory, current, updated, new GenerationOptions { Team = Team }, draft.DeleteOwnFiles);
     }
 
-    private static ServiceDefinition BuildDefinition(ServiceDraft draft, List<string> errors)
+    private ServiceDefinition BuildDefinition(ServiceDraft draft, List<string> errors)
     {
-        var existing = draft.Entities.Where(e => !e.IsNew).Select(e => e.ToDefinition()).ToList();
-        var definition = new ServiceDefinition
+        var definition = draft.IsNew
+            ? new ServiceDefinition
+            {
+                Service = new ServiceInfo { Name = ServiceName.Normalize(draft.Name) },
+                Architecture = draft.Architecture,
+                Features = draft.Features,
+                MsgVersion = draft.MsgVersion,
+            }
+            : ServicePlanner.Load(Path.Combine(Workspace, draft.Directory));
+
+        // Existing entities: convert, remove or update them (same rules as "msg entity ...").
+        foreach (var entity in draft.Entities.Where(e => !e.IsNew))
         {
-            Service = new ServiceInfo { Name = ServiceName.Normalize(draft.Name) },
-            Architecture = draft.Architecture,
-            Features = draft.Features,
-            MsgVersion = draft.MsgVersion,
-            Entities = existing,
-        };
+            try
+            {
+                if (entity.Removed)
+                {
+                    definition = ServicePlanner.RemoveEntity(definition, entity.Name);
+                    continue;
+                }
+
+                if (entity.IsLegacy && !entity.Convert)
+                {
+                    continue;
+                }
+
+                if (entity.IsLegacy)
+                {
+                    definition = ServicePlanner.ConvertEntity(definition, entity.Name);
+                }
+
+                var renames = entity.Properties
+                    .Where(p => p.IsRenamed)
+                    .Select(p => new PropertyRename { Entity = entity.Name, From = p.OriginalName!, To = p.Name.Trim() })
+                    .ToList();
+                definition = ServicePlanner.UpdateEntity(definition, entity.Name, entity.ToDefinition().Properties, renames);
+            }
+            catch (MsgException ex)
+            {
+                errors.Add($"{entity.Name}: {ex.Message}");
+            }
+        }
 
         // New entities are validated one by one, against everything before them (same rules as the CLI).
-        var accepted = new List<EntityDefinition>(existing);
         foreach (var entity in draft.Entities.Where(e => e.IsNew))
         {
             try
             {
-                accepted.Add(ServicePlanner.ValidateEntity(entity.ToDefinition(), definition with { Entities = accepted }));
+                var accepted = ServicePlanner.ValidateEntity(entity.ToDefinition(), definition);
+                definition = definition with { Entities = [.. definition.Entities, accepted] };
             }
             catch (MsgException ex)
             {
@@ -213,8 +265,8 @@ public sealed class StudioState(StudioOptions options)
 
         return definition with
         {
-            Entities = accepted,
-            Persistence = accepted.Count > 0 ? new PersistenceSettings { Provider = draft.Provider } : null,
+            Persistence = definition.Persistence
+                ?? (definition.Entities.Count > 0 ? new PersistenceSettings { Provider = draft.Provider } : null),
         };
     }
 

@@ -49,6 +49,8 @@ internal static partial class EntityCodeGen
             ["ResponseArguments"] = string.Join("\n", props.Select(p => $"            entity.{p.Name},")),
             ["CreateAssignments"] = string.Join("\n", props.Select(p => $"            {p.Name} = request.{p.Name},")),
             ["UpdateAssignments"] = string.Join("\n", props.Select(p => $"        entity.{p.Name} = request.{p.Name};")),
+            ["RequestToEntity"] = string.Join("\n", props.Select(p => $"        {p.Name} = {p.Name},")),
+            ["RequestApplyTo"] = string.Join("\n", props.Select(p => $"        entity.{p.Name} = {p.Name};")),
             ["SampleArguments"] = string.Join(",\n", props.Select(p => $"        {p.Name}: {PropertyTypes.Sample(p)}")),
             ["TestClient"] = features.Auth ? "factory.CreateAuthenticatedClient()" : "factory.CreateClient()",
 

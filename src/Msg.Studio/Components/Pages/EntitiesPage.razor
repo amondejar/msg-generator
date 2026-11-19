@@ -13,8 +13,17 @@ else
     var entity = Selected;
     <main class="content">
         <div>
-            <h1>Entidades</h1>
-            <p class="lead">Diseña las entidades nuevas. Las que ya existen son código tuyo: MSG las muestra pero no las modifica.</p>
+            <div class="row" style="justify-content: space-between; align-items: center">
+                <h1>Entidades</h1>
+                @if (!draft.IsNew && State.Plan is { Changes.Count: > 0 })
+                {
+                    <div class="row" style="gap: 8px">
+                        <button type="button" class="btn" @onclick="State.Discard">Descartar cambios</button>
+                        <a class="btn btn-primary" href="apply">Revisar y aplicar →</a>
+                    </div>
+                }
+            </div>
+            <p class="lead">Crea entidades o cambia las que ya existen: MSG regenera sus archivos <span class="mono">.g.cs</span> y nunca toca tu código (las clases <span class="mono">partial</span> sin <span class="mono">.g</span>). Nada se escribe hasta que revisas y aplicas.</p>
         </div>
 
         <div class="row" role="tablist" aria-label="Entidades">
@@ -23,7 +32,7 @@ else
                 <button type="button" role="tab" aria-selected="@(e == entity ? "true" : "false")"
                         class="card @(e == entity ? "selected" : e.IsNew ? "new" : "")" style="padding: 10px 14px"
                         @onclick="() => State.SelectedEntity = e.Name">
-                    <b>@e.Name @if (e.IsNew) { <small style="color: var(--warn)">NUEVA</small> }</b>
+                    <b style="@(e.Removed ? "text-decoration: line-through" : "")">@e.Name @if (e.IsNew) { <small style="color: var(--warn)">NUEVA</small> } else if (e.Removed) { <small style="color: var(--err)">ELIMINAR</small> } else if (e.IsLegacy && !e.Convert) { <small class="hint">ANTERIOR A 0.10</small> } else if (e.Convert) { <small style="color: var(--warn)">CONVERTIR</small> }</b>
                     <small>@e.Properties.Count propiedad(es)</small>
                 </button>
             }
@@ -51,11 +60,33 @@ else
                     Endpoints
                     <span class="mono" style="min-height: 42px; display: flex; align-items: center; color: var(--text-2); font-weight: 400">/api/v1/@Route(entity)</span>
                 </div>
-                @if (entity.IsNew)
+                @if (!entity.Removed)
                 {
-                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => State.RemoveEntity(entity)">Quitar entidad</button>
+                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => State.RemoveEntity(entity)">@(entity.IsNew ? "Quitar entidad" : "Eliminar entidad")</button>
                 }
             </div>
+
+            @if (entity.Removed)
+            {
+                <div class="msg warn" role="status">
+                    <b>@entity.Name se eliminará al aplicar.</b> MSG borra sus archivos <span class="mono">.g.cs</span> y la quita de msg.json; la próxima migración borrará su tabla.
+                    <div class="row" style="margin-top: 10px">
+                        <label class="row" style="gap: 8px"><input type="checkbox" checked="@draft.DeleteOwnFiles" @onchange="e => { draft.DeleteOwnFiles = e.Value is true; State.Recompute(); }" /> Borrar también mis archivos de esta entidad (handlers, repositorio, endpoints propios…)</label>
+                        <button type="button" class="btn" @onclick="() => State.RemoveEntity(entity)">Restaurar</button>
+                    </div>
+                </div>
+            }
+            else if (entity.IsLegacy && !entity.Convert)
+            {
+                <div class="msg warn" role="status">
+                    <b>Creada con una versión de MSG anterior a la 0.10.</b> Su código está en archivos tuyos, así que MSG no puede cambiar sus propiedades sin pisarlos.
+                    Al convertirla, MSG mueve propiedades, contratos y CRUD a archivos <span class="mono">.g.cs</span> y deja clases <span class="mono">partial</span> vacías para tu código.
+                    Verás qué archivos se reemplazan o borran antes de aplicar; si los habías personalizado, pasa esos cambios a las clases partial.
+                    <div class="row" style="margin-top: 10px">
+                        <button type="button" class="btn btn-primary" @onclick="() => { entity.Convert = true; State.Recompute(); }">Convertir al formato editable</button>
+                    </div>
+                </div>
+            }
 
             <section class="stack" aria-labelledby="h-props">
                 <h2 class="section" id="h-props">Propiedades</h2>
@@ -65,9 +96,19 @@ else
                     @foreach (var p in entity.Properties)
                     {
                         <div class="tr">
-                            @if (entity.IsNew)
+                            @if (entity.CanEdit)
                             {
-                                <input type="text" value="@p.Name" aria-label="Nombre de la propiedad" @onchange="e => { p.Name = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                                <span class="stack" style="gap: 2px">
+                                    <input type="text" value="@p.Name" aria-label="Nombre de la propiedad" @onchange="e => { p.Name = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                                    @if (p.IsRenamed)
+                                    {
+                                        <small class="hint" style="color: var(--warn)">renombrada · antes @p.OriginalName (se conservan los datos)</small>
+                                    }
+                                    else if (p.OriginalName is null && !entity.IsNew)
+                                    {
+                                        <small class="hint" style="color: var(--ok)">nueva</small>
+                                    }
+                                </span>
                                 <select aria-label="@($"Tipo de {p.Name}")" value="@p.Type" @onchange="e => SetType(p, e)">
                                     @foreach (var type in Types)
                                     {
@@ -86,9 +127,13 @@ else
                     }
                     <div class="tr"><span class="auto">CreatedAt · UpdatedAt</span><span class="auto">datetime</span><span class="hint">—</span><span class="hint">Auditoría automática</span><span class="hint">auto</span></div>
                 </div>
-                @if (entity.IsNew)
+                @if (entity.CanEdit)
                 {
                     <button type="button" class="btn btn-dashed" style="align-self: flex-start" @onclick="() => AddProperty(entity)">+ Añadir propiedad</button>
+                    @if (!entity.IsNew)
+                    {
+                        <span class="hint">Para renombrar, cambia el nombre en su fila: MSG lo trata como renombrado y la migración conserva los datos. Si borras la fila y creas otra, la columna se elimina.</span>
+                    }
                 }
             </section>
 
@@ -102,7 +147,7 @@ else
                         <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Update(…)</span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Updated</span></div>
                         <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Delete()</span><span class="hint">—</span><span class="mono" style="color: #67E8F9">@(entity.Name)Deleted</span></div>
                     </div>
-                    <span class="hint">Las reglas de negocio van en <span class="mono">Apply(…)</span> del agregado, y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>. Métodos propios (p. ej. <span class="mono">Rename</span>): próximamente desde aquí; de momento, añádelos en el código.</span>
+                    <span class="hint">Las reglas de negocio van en <span class="mono">EnsureInvariants()</span> de <span class="mono">@(entity.Name).cs</span> (tu parte del agregado, MSG la crea una vez y no la toca), y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>. Métodos propios (p. ej. <span class="mono">Archive</span>): de momento, añádelos en <span class="mono">@(entity.Name).cs</span>.</span>
                 </section>
             }
         }
@@ -175,8 +220,8 @@ else
         var plural = Plural(entity);
         return [.. State.Preview
             .Where(f => f.Path.Contains($"/{plural}/", StringComparison.Ordinal)
-                        || f.Path.EndsWith($"/{entity.Name}EndpointsTests.cs", StringComparison.Ordinal)
-                        || f.Path.EndsWith($"/Domain/{entity.Name}Tests.cs", StringComparison.Ordinal))
+                        || f.Path.Contains($"/{entity.Name}EndpointsTests.", StringComparison.Ordinal)
+                        || f.Path.Contains($"/Domain/{entity.Name}Tests.", StringComparison.Ordinal))
             .OrderBy(f => Order(f.Path))
             .Select(f => new CodePanel.Tab(TabTitle(f.Path), f.Path, f.Content))];
     }
@@ -187,5 +232,5 @@ else
         : path.Contains(".Infrastructure/", StringComparison.Ordinal) ? 2
         : path.StartsWith("src/", StringComparison.Ordinal) ? 3 : 4;
 
-    private static string TabTitle(string path) => Path.GetFileNameWithoutExtension(path);
+    private static string TabTitle(string path) => Path.GetFileName(path).Replace(".cs", string.Empty, StringComparison.Ordinal);
 }

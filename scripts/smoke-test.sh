@@ -122,12 +122,62 @@ echo "▶ Clean Architecture + DDD"
 for p in Domain Application Infrastructure Api; do
   [[ -f "$WORK/clean/src/Catalog.$p/Catalog.$p.csproj" ]] || fail "missing Catalog.$p"
 done
-grep -q "AggregateRoot<Guid>" "$WORK/clean/src/Catalog.Domain/Products/Product.cs" \
-  && grep -q "ICommandHandler<CreateProduct, Guid>" "$WORK/clean/src/Catalog.Application/Products/ProductCommands.cs" \
+grep -q "AggregateRoot<Guid>" "$WORK/clean/src/Catalog.Domain/Products/Product.g.cs" \
+  && grep -q "ICommandHandler<CreateProduct, Guid>" "$WORK/clean/src/Catalog.Application/Products/ProductCommands.g.cs" \
   && grep -q "AddScoped<IProductRepository, ProductRepository>" "$WORK/clean/src/Catalog.Infrastructure/Persistence/RepositoryRegistration.g.cs" \
   && pass "Domain / Application / Infrastructure / Api with aggregates, use cases and repositories" || fail "clean-ddd structure"
 if grep -rn "@msg:\|{{Service}}\|{{Entity}}\|__Entity__" "$WORK/clean"; then fail "unrendered markers in clean-ddd"; fi
 pass "no template markers left in clean-ddd"
+
+echo "▶ Editable entities (msg entity)"
+CP="$WORK/clean/src/Catalog.Domain/Products/Product.cs"
+# User code in the partial class: must survive every regeneration.
+cat > "$CP" <<'CS'
+using Msg.Ddd;
+
+namespace Catalog.Domain.Products;
+
+public sealed partial class Product
+{
+    partial void EnsureInvariants()
+    {
+        if (Price < 0)
+        {
+            throw new DomainException("Price can't be negative.");
+        }
+    }
+
+    public string Label => $"{Name} ({Price})";
+}
+CS
+OUT=$("${MSG[@]}" entity update Product --path "$WORK/clean" --props "Title:string, Price:decimal, Stock:int" --rename Name=Title)
+grep -q "Product.Name se renombra a Title" <<<"$OUT" && grep -q "Product.Description se elimina" <<<"$OUT" \
+  && pass "update warns about renamed/removed properties used in user code" || { echo "$OUT"; fail "entity update warnings"; }
+grep -q "Label => " "$CP" && grep -q "public string Title" "$WORK/clean/src/Catalog.Domain/Products/Product.g.cs" \
+  && ! grep -q "Description" "$WORK/clean/src/Catalog.Domain/Products/Product.g.cs" \
+  && pass "properties regenerated in .g.cs, user partial untouched" || fail "entity update"
+grep -q '"from": "Name"' "$WORK/clean/msg.json" && pass "rename recorded in msg.json (pendingRenames)" || fail "pendingRenames"
+sed -i 's/{Name} ({Price})/{Title} ({Price})/' "$CP"
+"${MSG[@]}" entity update Product --path "$WORK/clean" --props "Title:string, Price:decimal, Stock:int" | grep -q "Nada que cambiar" \
+  && pass "no-op update changes nothing" || fail "no-op update"
+"${MSG[@]}" add entity Tag --path "$WORK/clean" --props "Label:string" >/dev/null
+"${MSG[@]}" entity remove Tag --path "$WORK/clean" --delete-own-files >/dev/null
+if find "$WORK/clean" -path "*Tag*" -name "*.cs" | grep -q .; then fail "entity remove left files"; fi
+grep -q "Tag" "$WORK/clean/src/Catalog.Infrastructure/Persistence/CatalogDbContext.g.cs" && fail "Tag still in DbContext"
+pass "entity remove deletes its files and registrations"
+# An entity from MSG < 0.10 (no "layout" in msg.json) is read-only until converted.
+python3 - "$WORK/full/msg.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+for e in d["entities"]:
+    if e["name"] == "Category": e.pop("layout", None)
+json.dump(d, open(p, "w"), indent=2)
+PY
+if "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string" >/dev/null 2>&1; then fail "legacy entity edited without converting"; fi
+"${MSG[@]}" entity convert Category --path "$WORK/full" --dry-run | grep -q "(archivo tuyo)" \
+  && "${MSG[@]}" entity convert Category --path "$WORK/full" >/dev/null \
+  && "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string, Position:int?, Color:string?" >/dev/null \
+  && pass "legacy entity: blocked, converted (shows user files), then editable" || fail "entity convert"
 
 echo "▶ Team templates (.msg)"
 TEAM="$WORK/team"; mkdir -p "$TEAM/services"
