@@ -1,9 +1,10 @@
 # MSG: generador de microservicios .NET
 
-MSG genera microservicios .NET 10 que nacen con lo que cualquier equipo serio exige siempre igual: estructura, observabilidad, errores, configuración validada, tests, Docker y CI. Lo común no se copia en cada servicio: llega en los paquetes `Msg.ServiceDefaults.*`, así que mejorarlo o parchearlo es subir una versión. El objetivo final es un editor visual.
+MSG genera microservicios .NET 10 desde la línea de comandos o desde un editor visual (`msg studio`) que nacen con lo que cualquier equipo serio exige siempre igual: estructura, observabilidad, errores, configuración validada, tests, Docker y CI. Lo común no se copia en cada servicio: llega en los paquetes `Msg.ServiceDefaults.*`, así que mejorarlo o parchearlo es subir una versión. El objetivo final es un editor visual.
 
 ```bash
-msg new Orders                 # servicio completo
+msg new Orders                 # servicio completo (vertical slice)
+msg new Orders --architecture clean-ddd   # Clean Architecture + DDD con eventos de dominio
 msg new Billing --auth         # + JWT, autenticado por defecto
 msg new Catalog --no-docker    # quita lo que no necesites
 msg new --from msg.json        # regenera desde una definición
@@ -14,6 +15,86 @@ msg upgrade                    # actualiza los paquetes Msg.* de un servicio a l
 msg add entity Product --props "Name:string, Price:decimal, Description:string?"
 msg add entity Invoice --props "Number:string, Total:decimal" --db sqlserver   # la primera entidad elige la BD
 ```
+
+## Arquitecturas
+
+| | `vertical-slice` (por defecto) | `clean-ddd` |
+| --- | --- | --- |
+| Proyectos | `Api` | `Domain`, `Application`, `Infrastructure`, `Api` |
+| Entidades | Clases con propiedades | Agregados (`AggregateRoot<Guid>`) con `Create`/`Update`/`Delete`, reglas en `Apply` y `DomainException` → 422 |
+| Lógica | En el endpoint, con el `DbContext` | Commands y queries con sus handlers, que el endpoint recibe por DI (sin mediator) |
+| Eventos | No hay | `XCreated`/`XUpdated`/`XDeleted`, publicados tras el commit por un interceptor de EF Core |
+| Tests | Integración | Integración + tests de dominio sin base de datos |
+
+Los bloques de construcción de DDD están en el paquete `Msg.Ddd`, que no tiene dependencias, y los puede referenciar el proyecto Domain.
+No usamos MediatR: desde la v13 tiene licencia dual (RPL-1.5 o comercial). Los handlers se registran con `AddMsgApplication()`.
+
+## `msg studio`
+
+```bash
+msg studio                       # en la carpeta que contiene tus servicios (o --path <carpeta>)
+```
+
+Abre el editor visual en `http://localhost:5150`. Usa el mismo motor que la CLI, así que lo que ves es lo que se genera:
+
+- **Sistema**: tus servicios, crear uno nuevo y generar o actualizar el AppHost de Aspire.
+- **Servicio**: arquitectura, features y base de datos, con vista previa en vivo de `Program.cs`, el árbol de archivos y `msg.json`.
+- **Entidades**: propiedades con tipo y opcionalidad. En Clean + DDD muestra los métodos del agregado y sus eventos. A la derecha, el código generado de cada capa.
+- **Aplicar cambios**: qué archivos se crean, cuáles se regeneran y cuáles se completan, con el diff de cada uno. Nunca se sobrescribe un archivo tuyo.
+- **Ejecutar sistema** (en Sistema): genera o actualiza el AppHost y lo arranca con Aspire. Muestra la salida en vivo, el enlace al
+  dashboard y los de Scalar y health de cada servicio. Avisa si falta Docker; al cerrar el Studio se detiene todo.
+- **Migraciones** (en Servicio): lista las migraciones y crea la siguiente con un nombre sugerido (`Initial`, `AddProduct`…),
+  con los proyectos correctos según la arquitectura. Si falta `dotnet-ef`, ofrece instalarlo.
+
+En un servicio que ya existe solo se pueden añadir entidades: las existentes, la arquitectura y las features ya son código tuyo.
+Opciones: `--port`, `--no-browser` y `--package-source` (igual que en `msg new`).
+
+## Plantillas del equipo (`.msg`)
+
+MSG trae sus convenciones, pero las que mandan son las de tu equipo. Pon una carpeta `.msg` en la raíz de tu repo
+(o de tu carpeta de servicios) y haz commit. `msg new`, `msg add entity` y `msg studio` la encuentran subiendo de carpeta:
+
+```bash
+msg templates list                                            # plantillas de MSG y del equipo
+msg templates eject service/src/__Service__.Api/Program.cs     # copia una a .msg/templates para editarla
+msg templates eject entity-clean                               # o un set entero
+```
+
+| En `.msg/templates/<set>/…` | Efecto |
+| --- | --- |
+| Misma ruta que una plantilla de MSG | La sustituye |
+| Ruta nueva (p. ej. `service/CODEOWNERS`) | Se añade a lo que genera MSG |
+| Archivo vacío | Esa plantilla no se genera (p. ej. `service/Dockerfile`) |
+
+Sets: `service`, `entity` (vertical slice), `entity-clean` y `entity-tests`. Las plantillas usan los tokens y las
+condiciones de MSG (`{{Service}}`, `{{Entity}}`, `@msg:if auth`…). Además, `.msg/config.json` define tokens propios:
+
+```json
+{ "tokens": { "Company": "Acme" } }
+```
+
+Con eso, `{{Company}}` sirve en cualquier plantilla. Los tokens de MSG no se pueden redefinir. Un error en una plantilla
+del equipo indica el archivo y la línea. El Studio muestra qué plantillas del equipo están activas y las usa en la vista previa.
+
+## `msg aspire`
+
+En la carpeta que contiene tus servicios:
+
+```bash
+msg aspire --name Shop     # genera Shop.AppHost, Shop.slnx y .aspire/settings.json
+aspire run                 # o: dotnet run --project Shop.AppHost  (requiere Docker o Podman)
+```
+
+- Un recurso por servicio, con health check en `/health/ready`.
+- PostgreSQL y/o SQL Server según la base de datos de cada servicio (volúmenes persistentes), con su cadena de conexión
+  inyectada como `ConnectionStrings__Database` y `Database__MigrateOnStartup=true`: aplica las migraciones al arrancar
+  o, si aún no hay ninguna, crea el esquema.
+- La telemetría aparece sola en el dashboard: Aspire pasa `OTEL_EXPORTER_OTLP_ENDPOINT` y `AddMsgOpenTelemetry()` la usa.
+- Enlace directo a Scalar en el dashboard para cada servicio con OpenAPI.
+- Service discovery: en `AppHost.cs`, `services.Billing.WithReference(services.Orders)` y Billing llama a `http://orders`.
+- `MsgServices.g.cs` y la `.slnx` se regeneran en cada `msg aspire`; `AppHost.cs` es tuyo. Volver a ejecutarlo incorpora los servicios nuevos.
+
+AppHost en Aspire 13.6.5 (la línea validada con .NET 10). Para pasar a Aspire 17: `aspire update`.
 
 ## `msg add entity`
 
@@ -55,9 +136,10 @@ Uno por feature, para que quien no use una no arrastre sus dependencias:
 
 | Paquete | Qué aporta | Dependencias |
 | --- | --- | --- |
-| `Msg.ServiceDefaults` | `AddMsgServiceDefaults()`, `UseMsgServiceDefaults()`, `MapMsgDefaultEndpoints()`, `AddValidatedOptions<T>()` | Solo ASP.NET Core |
+| `Msg.Ddd` | `AggregateRoot`, `DomainEvent`, `DomainException`, `ICommand`/`IQuery` y sus handlers | Ninguna |
+| `Msg.ServiceDefaults` | `AddMsgServiceDefaults()`, `UseMsgServiceDefaults()`, `MapMsgDefaultEndpoints()`, `AddValidatedOptions<T>()`, `AddMsgApplication()` | Solo ASP.NET Core + `Msg.Ddd` |
 | `Msg.ServiceDefaults.OpenTelemetry` | `AddMsgOpenTelemetry("servicio")` | OpenTelemetry |
-| `Msg.ServiceDefaults.Resilience` | `AddMsgResilience()` | Microsoft.Extensions.Http.Resilience |
+| `Msg.ServiceDefaults.Resilience` | `AddMsgResilience()`, `AddMsgServiceDiscovery()` | Microsoft.Extensions.Http.Resilience, Microsoft.Extensions.ServiceDiscovery |
 | `Msg.ServiceDefaults.Authentication` | `AddMsgAuthentication()` (sección `Auth`) | JwtBearer |
 
 Todos comparten versión con MSG (`<Version>` en `Directory.Build.props`). Las versiones de sus dependencias viven en `Directory.Packages.props` de este repo; un servicio generado solo fija `Msg.*`.
@@ -67,7 +149,7 @@ Todos comparten versión con MSG (`<Version>` en `Directory.Build.props`). Las v
 | Siempre incluido | Opcional (`--no-x` / `--x`) |
 | --- | --- |
 | Health checks `/health/live` y `/health/ready` | `observability`: OpenTelemetry (trazas, métricas, logs) |
-| Errores `application/problem+json` con `traceId` y `correlationId` | `openApi`: documento OpenAPI |
+| Errores `application/problem+json` con `traceId` y `correlationId` | `openApi`: documento OpenAPI + Scalar en `/scalar` (solo Development) |
 | `X-Correlation-ID` en respuesta y en cada log | `resilience`: retry/timeout/circuit breaker en todo `HttpClient` |
 | Logs JSON en producción y legibles en desarrollo | `auth`: JWT bearer, autenticado por defecto (**off** por defecto) |
 | Configuración validada al arrancar (`AddValidatedOptions<T>`) | `tests`, `docker`, `ci` |
@@ -82,7 +164,8 @@ msg.json ──► ServiceDefinition ──► ServiceGenerator (puro, en memori
 ```
 
 - **`src/Msg.Core`**: modelo, motor de plantillas y generador. No escribe en disco, así que el editor visual podrá reutilizarlo tal cual.
-- **`src/Msg.Cli`**: CLI sin dependencias externas (`new`, `upgrade`).
+- **`src/Msg.Cli`**: la CLI (`new`, `add entity`, `aspire`, `studio`, `upgrade`). Sin dependencias externas: solo .NET y ASP.NET Core.
+- **`src/Msg.Studio`**: el editor visual (componentes Blazor y estado), sobre `Msg.Core`.
 - **`src/Msg.ServiceDefaults*`**: los paquetes que consumen los servicios generados, con sus tests en `tests/`.
 - **`templates/service`**: plantillas como archivos reales (C#, XML, YAML, JSON), fáciles de leer y editar:
   - `{{Service}}`, `{{service-kebab}}`, `{{DevPort}}` y `{{MsgVersion}}` en el contenido; `__Service__` en las rutas.
@@ -129,5 +212,7 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
    - ✅ 2a: lo común en paquetes `Msg.ServiceDefaults.*` + `msg upgrade`.
    - ✅ 2b: `msg add entity` con CRUD, EF Core (PostgreSQL o SQL Server) y tests con SQLite en memoria.
    - 2c: publicar los paquetes en nuget.org desde CI al crear un tag.
-3. **Fase 3**: editor visual sobre `msg.json`.
+3. ✅ `msg aspire`: AppHost de Aspire para todos los servicios.
+4. ✅ **Fase 3**: editor visual `msg studio` (Blazor Server sobre `Msg.Core`).
+5. Siguiente: métodos propios del agregado y relaciones entre entidades desde el Studio, mensajería entre servicios (outbox), publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

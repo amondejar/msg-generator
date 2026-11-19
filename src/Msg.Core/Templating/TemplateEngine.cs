@@ -52,7 +52,16 @@ public static partial class TemplateEngine
                             throw Error(templateName, i, "'@msg:if' necesita una feature.");
                         }
 
-                        var value = isEnabled(match.Groups["feature"].Value);
+                        bool value;
+                        try
+                        {
+                            value = isEnabled(match.Groups["feature"].Value);
+                        }
+                        catch (MsgException ex)
+                        {
+                            throw Error(templateName, i, ex.Message);
+                        }
+
                         if (match.Groups["neg"].Success)
                         {
                             value = !value;

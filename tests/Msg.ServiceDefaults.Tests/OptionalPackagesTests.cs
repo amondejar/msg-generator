@@ -56,7 +56,7 @@ public sealed class OptionalPackagesTests
     [Fact]
     public async Task ResilienceDoesNotBreakHttpClientFactory()
     {
-        await using var app = await TestApp.StartAsync(builder => builder.AddMsgResilience());
+        await using var app = await TestApp.StartAsync(builder => builder.AddMsgResilience().AddMsgServiceDiscovery());
 
         using var client = app.Services.GetRequiredService<IHttpClientFactory>().CreateClient("any");
 

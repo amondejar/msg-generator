@@ -2,21 +2,39 @@ using System.Reflection;
 
 namespace Msg.Core.Templating;
 
-public sealed record TemplateFile(string Path, string Content);
+public sealed record TemplateFile(string Path, string Content, bool IsCustom = false);
 
-/// <summary>Reads the templates embedded in Msg.Core (see Msg.Core.csproj).</summary>
+/// <summary>Reads the templates embedded in Msg.Core (see Msg.Core.csproj), merged with the team's own.</summary>
 public static class TemplateSource
 {
-    public static IReadOnlyList<TemplateFile> Load(string templateName)
+    public static IReadOnlyList<string> Sets { get; } = ["service", "entity", "entity-clean", "entity-tests"];
+
+    /// <summary>MSG's templates for a set, with the team's files replacing or adding to them.</summary>
+    public static IReadOnlyList<TemplateFile> Load(string templateName, TeamTemplates? team = null)
+    {
+        var files = LoadEmbedded(templateName).ToDictionary(f => f.Path, StringComparer.Ordinal);
+
+        if (team is not null)
+        {
+            foreach (var (path, content) in team.FilesFor(templateName))
+            {
+                files[path] = new TemplateFile(path, content, IsCustom: true);
+            }
+        }
+
+        return [.. files.Values.OrderBy(f => f.Path, StringComparer.Ordinal)];
+    }
+
+    /// <summary>MSG's own templates only (what "msg templates eject" copies).</summary>
+    public static IReadOnlyList<TemplateFile> LoadEmbedded(string templateName)
     {
         var assembly = typeof(TemplateSource).Assembly;
         var prefix = $"templates/{templateName}/";
 
         var files = assembly.GetManifestResourceNames()
-            .Select(n => n.Replace('\\', '/'))
-            .Where(n => n.StartsWith(prefix, StringComparison.Ordinal))
+            .Where(n => n.Replace('\\', '/').StartsWith(prefix, StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)
-            .Select(n => new TemplateFile(n[prefix.Length..], Read(assembly, n)))
+            .Select(n => new TemplateFile(n.Replace('\\', '/')[prefix.Length..], Read(assembly, n)))
             .ToList();
 
         if (files.Count == 0)

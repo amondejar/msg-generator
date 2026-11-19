@@ -11,12 +11,31 @@ public sealed record ServiceDefinition
 
     public required ServiceInfo Service { get; init; }
 
+    /// <summary><see cref="Architectures.VerticalSlice"/> (default) or <see cref="Architectures.CleanDdd"/>.</summary>
+    public string Architecture { get; init; } = Architectures.VerticalSlice;
+
     public FeatureSet Features { get; init; } = new();
 
     /// <summary>Null until the first entity is added.</summary>
     public PersistenceSettings? Persistence { get; init; }
 
     public IReadOnlyList<EntityDefinition> Entities { get; init; } = [];
+}
+
+public static class Architectures
+{
+    /// <summary>One project organized by feature; endpoints use EF Core directly.</summary>
+    public const string VerticalSlice = "vertical-slice";
+
+    /// <summary>Domain / Application / Infrastructure / Api, aggregates with domain events, use-case handlers.</summary>
+    public const string CleanDdd = "clean-ddd";
+
+    public static IReadOnlyList<string> All { get; } = [VerticalSlice, CleanDdd];
+
+    public static string Validate(string value) =>
+        All.Contains(value)
+            ? value
+            : throw new MsgException($"Arquitectura '{value}' no soportada. Opciones: {string.Join(", ", All)}.");
 }
 
 public sealed record ServiceInfo

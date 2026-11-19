@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Use cases: commands, queries and domain event handlers. Depends only on the Domain.
+    Infrastructure implements the contracts declared here (IUnitOfWork) and in the Domain (repositories).
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>{{Service}}.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\{{Service}}.Domain\{{Service}}.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

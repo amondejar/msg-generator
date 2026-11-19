@@ -3,9 +3,10 @@
 // </auto-generated>
 #nullable enable
 using System.Data;
-using {{Service}}.Api.Data;
+using {{DbContextNamespace}};
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -28,7 +29,9 @@ public sealed partial class ApiFactory
         // Remove the real provider registration (EF Core 9+ stores it in IDbContextOptionsConfiguration<T>).
         services.RemoveAll<DbContextOptions<{{Service}}DbContext>>();
         services.RemoveAll<IDbContextOptionsConfiguration<{{Service}}DbContext>>();
-        services.AddDbContext<{{Service}}DbContext>(options => options.UseSqlite(_connection));
+        services.AddDbContext<{{Service}}DbContext>((provider, options) => options
+            .UseSqlite(_connection)
+            .AddInterceptors(provider.GetServices<IInterceptor>()));
     }
 
     partial void OnHostCreated(IHost host)

@@ -1,6 +1,9 @@
 using Msg.Core;
 using Msg.Core.Generation;
 using Msg.Core.Model;
+using Msg.Core.Templating;
+using Msg.Studio;
+using Msg.Studio.State;
 
 namespace Msg.Cli;
 
@@ -18,6 +21,13 @@ internal static partial class Cli
           msg new --from <msg.json> [opc.]   Crea un servicio a partir de una definición
           msg add entity <Nombre> --props "Campo:tipo, ..." [--plural <P>] [--db postgres|sqlserver] [--path <carpeta>]
                                              Añade una entidad con CRUD, EF Core y tests
+          msg aspire [--name <Sistema>] [--path <carpeta>]
+                                             AppHost de Aspire con todos los servicios de la carpeta
+          msg studio [--path <carpeta>] [--port 5150] [--no-browser]
+                                             Editor visual en el navegador
+          msg templates list [--path <carpeta>]        Plantillas de MSG y del equipo (.msg/templates)
+          msg templates eject <set>[/<archivo>] [--path <carpeta>] [--force]
+                                             Copia plantillas a .msg/templates para personalizarlas
           msg upgrade [--path <carpeta>] [--to <versión>]
                                              Actualiza los paquetes Msg.* de un servicio existente
           msg --version
@@ -26,13 +36,14 @@ internal static partial class Cli
           -o, --output <carpeta>   Carpeta de salida (por defecto ./<Nombre>)
               --force              Sobrescribe si la carpeta no está vacía
               --dry-run            Muestra los archivos sin escribirlos
+              --architecture <a>   vertical-slice (por defecto) o clean-ddd
               --package-source <carpeta>
                                    Usa paquetes Msg.* empaquetados en local (antes de publicarlos
                                    en nuget.org). Genera un nuget.config con source mapping.
 
         Features (activas por defecto salvo auth):
           --[no-]observability     OpenTelemetry: trazas, métricas y logs
-          --[no-]openapi           Documento OpenAPI
+          --[no-]openapi           Documento OpenAPI + Scalar (/scalar)
           --[no-]resilience        Reintentos/timeout/circuit breaker en HttpClient
           --[no-]auth              JWT bearer, autenticado por defecto      (off)
           --[no-]tests             Tests de integración
@@ -46,6 +57,16 @@ internal static partial class Cli
         Tipos de --props: string, int, long, decimal, bool, guid, date, datetime. Añade ? si es opcional.
           msg add entity Product --props "Name:string, Price:decimal, Description:string?"
         """;
+
+    public static async Task<int> RunAsync(string[] args, TextWriter output)
+    {
+        if (args.Length > 0 && args[0] == "studio")
+        {
+            return await Studio(args[1..], output).ConfigureAwait(false);
+        }
+
+        return Run(args, output);
+    }
 
     public static int Run(string[] args, TextWriter output)
     {
@@ -66,13 +87,15 @@ internal static partial class Cli
             "new" => New(args[1..], output),
             "upgrade" => Upgrade(args[1..], output),
             "add" => Add(args[1..], output),
+            "aspire" => Aspire(args[1..], output),
+            "templates" => Templates(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
         };
     }
 
     private static int New(string[] args, TextWriter output)
     {
-        string? name = null, outputDir = null, from = null, packageSource = null;
+        string? name = null, outputDir = null, from = null, packageSource = null, architecture = null;
         bool force = false, dryRun = false;
         var overrides = new List<(string Feature, bool Enabled)>();
 
@@ -97,6 +120,9 @@ internal static partial class Cli
                     break;
                 case "--force":
                     force = true;
+                    break;
+                case "--architecture" or "-a":
+                    architecture = Architectures.Validate(Value(args, ref i, arg).ToLowerInvariant());
                     break;
                 case "--dry-run":
                     dryRun = true;
@@ -140,11 +166,16 @@ internal static partial class Cli
             features = features.With(feature, enabled);
         }
 
-        definition = definition with { Features = features };
+        definition = definition with
+        {
+            Features = features,
+            Architecture = architecture ?? definition.Architecture,
+        };
 
-        var files = ServiceGenerator.Generate(definition, new GenerationOptions { LocalPackageSource = packageSource });
         var serviceName = definition.Service.Name;
         outputDir ??= serviceName;
+        var team = TeamTemplates.Find(Path.GetDirectoryName(Path.GetFullPath(outputDir))!);
+        var files = ServiceGenerator.Generate(definition, new GenerationOptions { LocalPackageSource = packageSource, Team = team });
 
         if (dryRun)
         {
@@ -158,6 +189,7 @@ internal static partial class Cli
 
         FileWriter.Write(files, outputDir, force);
         PrintSummary(output, definition, files.Count, outputDir);
+        PrintTeam(output, team);
         return 0;
     }
 
@@ -208,6 +240,11 @@ internal static partial class Cli
         });
 
         var entity = result.Entity;
+        if (result.TeamTemplates is { } teamRoot)
+        {
+            output.WriteLine($"  plantillas del equipo: {teamRoot}");
+        }
+
         output.WriteLine($"✔ Entidad {entity.Name} añadida ({result.Provider}) → /api/v1/{ServiceName.ToKebab(entity.Plural)}");
         foreach (var file in result.Created)
         {
@@ -229,13 +266,265 @@ internal static partial class Cli
         output.WriteLine("Siguientes pasos:");
         output.WriteLine("  dotnet test                                   # los tests usan SQLite en memoria");
         output.WriteLine("  docker compose up -d                          # base de datos local");
-        output.WriteLine($"  dotnet ef migrations add Add{entity.Name} --project src/{ServiceNameFromPath(path)}.Api");
-        output.WriteLine($"  dotnet ef database update --project src/{ServiceNameFromPath(path)}.Api");
+        var definition = ServiceGenerator.Deserialize(File.ReadAllText(Path.Combine(path, ServiceGenerator.DefinitionFileName)));
+        var service = definition.Service.Name;
+        var efProjects = definition.Architecture == Architectures.CleanDdd
+            ? $"--project src/{service}.Infrastructure --startup-project src/{service}.Api"
+            : $"--project src/{service}.Api";
+        output.WriteLine($"  dotnet ef migrations add Add{entity.Name} {efProjects}");
+        output.WriteLine($"  dotnet ef database update {efProjects}");
         return 0;
     }
 
-    private static string ServiceNameFromPath(string path) =>
-        ServiceGenerator.Deserialize(File.ReadAllText(Path.Combine(path, ServiceGenerator.DefinitionFileName))).Service.Name;
+    private static async Task<int> Studio(string[] args, TextWriter output)
+    {
+        var path = ".";
+        var port = 5150;
+        var openBrowser = true;
+        string? packageSource = null;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--port":
+                    port = int.TryParse(Value(args, ref i, args[i]), out var p) && p is > 0 and < 65536
+                        ? p
+                        : throw new MsgException("--port necesita un número entre 1 y 65535.");
+                    break;
+                case "--no-browser":
+                    openBrowser = false;
+                    break;
+                case "--package-source":
+                    packageSource = Path.GetFullPath(Value(args, ref i, args[i]));
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: msg studio [--path <carpeta>] [--port 5150] [--no-browser]");
+            }
+        }
+
+        var full = Path.GetFullPath(path);
+        if (!Directory.Exists(full))
+        {
+            throw new MsgException($"No existe la carpeta '{full}'.");
+        }
+
+        // Opened on a service folder: the system is its parent, and that service is opened.
+        var isService = File.Exists(Path.Combine(full, ServiceGenerator.DefinitionFileName));
+
+        // "dotnet run --project .../Msg.Cli" starts in the project folder, not where you typed it:
+        // never turn a .NET project folder into a system of services.
+        if (!isService && Directory.EnumerateFiles(full, "*.csproj").Any())
+        {
+            throw new MsgException(
+                $"'{full}' es un proyecto .NET, no una carpeta de servicios (¿lo lanzaste con dotnet run?). " +
+                "Indica la carpeta con --path, p. ej.: msg studio --path C:\\Repos\\servicios");
+        }
+        var options = new StudioOptions
+        {
+            Workspace = isService ? Path.GetDirectoryName(full)! : full,
+            OpenService = isService ? Path.GetFileName(full) : null,
+            PackageSource = packageSource,
+        };
+
+        await StudioServer.RunAsync(options, port, openBrowser, output).ConfigureAwait(false);
+        return 0;
+    }
+
+    private static void PrintTeam(TextWriter output, TeamTemplates? team)
+    {
+        if (team is null)
+        {
+            return;
+        }
+
+        var custom = team.CustomizedFiles();
+        output.WriteLine($"  plantillas del equipo: {team.Root} ({custom.Count} archivo(s), {team.Tokens.Count} token(s))");
+    }
+
+    private static int Templates(string[] args, TextWriter output)
+    {
+        if (args.Length == 0 || args[0] is not ("list" or "eject"))
+        {
+            throw new MsgException("Uso: msg templates list | msg templates eject <set>[/<archivo>]  (sets: " + string.Join(", ", TemplateSource.Sets) + ")");
+        }
+
+        var path = ".";
+        var force = false;
+        string? target = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--force":
+                    force = true;
+                    break;
+                default:
+                    if (target is null && !args[i].StartsWith('-'))
+                    {
+                        target = args[i].Replace('\\', '/').Trim('/');
+                        break;
+                    }
+
+                    throw new MsgException($"Argumento inesperado '{args[i]}'.");
+            }
+        }
+
+        var team = TeamTemplates.Find(path);
+        return args[0] == "list" ? ListTemplates(output, team) : EjectTemplates(output, team, path, target, force);
+    }
+
+    private static int ListTemplates(TextWriter output, TeamTemplates? team)
+    {
+        output.WriteLine(team is null
+            ? "Sin plantillas del equipo (crea una con: msg templates eject <set>/<archivo>)."
+            : $"Plantillas del equipo: {team.Root}");
+        if (team is not null && team.Tokens.Count > 0)
+        {
+            output.WriteLine($"  tokens: {string.Join(", ", team.Tokens.Keys.Select(k =>
+                "{{" + k + "}}" + (ServiceGenerator.ReservedTokens.Contains(k) ? " (ignorado: es de MSG)" : string.Empty)))}");
+        }
+
+        foreach (var set in TemplateSource.Sets)
+        {
+            output.WriteLine();
+            output.WriteLine($"{set}/");
+            var custom = team?.FilesFor(set) ?? new Dictionary<string, string>();
+            var embedded = TemplateSource.LoadEmbedded(set).Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
+
+            foreach (var file in embedded.Union(custom.Keys).Order(StringComparer.Ordinal))
+            {
+                var mark = !custom.TryGetValue(file, out var content) ? "     "
+                    : !embedded.Contains(file) ? "[+]  "
+                    : string.IsNullOrWhiteSpace(content) ? "[-]  "
+                    : "[~]  ";
+                output.WriteLine($"  {mark}{file}");
+            }
+        }
+
+        output.WriteLine();
+        output.WriteLine("[~] personalizada por el equipo  [+] añadida por el equipo  [-] desactivada (archivo vacío)");
+        return 0;
+    }
+
+    private static int EjectTemplates(TextWriter output, TeamTemplates? team, string path, string? target, bool force)
+    {
+        if (string.IsNullOrEmpty(target))
+        {
+            throw new MsgException("Indica qué copiar: msg templates eject service/src/__Service__.Api/Program.cs  (o un set entero: msg templates eject service)");
+        }
+
+        var slash = target.IndexOf('/', StringComparison.Ordinal);
+        var set = slash < 0 ? target : target[..slash];
+        var file = slash < 0 ? null : target[(slash + 1)..];
+
+        if (!TemplateSource.Sets.Contains(set))
+        {
+            throw new MsgException($"Set desconocido '{set}'. Sets: {string.Join(", ", TemplateSource.Sets)}.");
+        }
+
+        var selected = TemplateSource.LoadEmbedded(set).Where(f => file is null || f.Path == file).ToList();
+        if (selected.Count == 0)
+        {
+            throw new MsgException($"No existe la plantilla '{target}'. Míralas con: msg templates list");
+        }
+
+        var msgFolder = team?.Root ?? Path.Combine(Path.GetFullPath(path), TeamTemplates.FolderName);
+        var config = Path.Combine(msgFolder, TeamTemplates.ConfigFile);
+        if (!File.Exists(config))
+        {
+            Directory.CreateDirectory(msgFolder);
+            File.WriteAllText(config, """
+                {
+                  // Tokens of your team, usable as {{Company}} in any template under .msg/templates.
+                  "tokens": {
+                    "Company": "MiEmpresa"
+                  }
+                }
+
+                """);
+            output.WriteLine($"  + {Path.GetRelativePath(Path.GetFullPath(path), config)}");
+        }
+
+        foreach (var template in selected)
+        {
+            var destination = Path.Combine(msgFolder, TeamTemplates.TemplatesFolder, set, template.Path);
+            if (File.Exists(destination) && !force)
+            {
+                output.WriteLine($"  = {set}/{template.Path} (ya existe; --force para sobrescribir)");
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.WriteAllText(destination, template.Content);
+            output.WriteLine($"  + {Path.GetRelativePath(Path.GetFullPath(path), destination)}");
+        }
+
+        output.WriteLine();
+        output.WriteLine("Edítalas y haz commit de .msg: msg new, msg add entity y msg studio las usarán en todo el repo.");
+        output.WriteLine("Un archivo vacío desactiva esa plantilla; un archivo nuevo se añade a lo que genera MSG.");
+        return 0;
+    }
+
+    private static int Aspire(string[] args, TextWriter output)
+    {
+        var root = ".";
+        string? name = null;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    root = Value(args, ref i, args[i]);
+                    break;
+                case "--name":
+                    name = Value(args, ref i, args[i]);
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: msg aspire [--name <Sistema>] [--path <carpeta>]");
+            }
+        }
+
+        // A service folder is not a system: run it from the folder that contains the services.
+        if (File.Exists(Path.Combine(root, ServiceGenerator.DefinitionFileName)))
+        {
+            throw new MsgException("Esta carpeta es un servicio. Ejecuta 'msg aspire' en la carpeta que contiene tus servicios (o usa --path).");
+        }
+
+        var appHostName = ServiceName.Normalize(name ?? Path.GetFileName(Path.GetFullPath(root)));
+        var services = AspireGenerator.Discover(root);
+        var result = AspireGenerator.Generate(root, appHostName, services);
+
+        output.WriteLine($"✔ {result.AppHostName} con {services.Count} servicio(s)");
+        foreach (var service in services)
+        {
+            var db = service.Definition.Persistence?.Provider is { } provider ? $" + {provider} ({service.ResourceName}-db)" : string.Empty;
+            output.WriteLine($"  · {service.ResourceName,-20} {service.RelativeDirectory}{db}");
+        }
+
+        foreach (var file in result.Created)
+        {
+            output.WriteLine($"  + {file}");
+        }
+
+        foreach (var file in result.Updated)
+        {
+            output.WriteLine($"  ~ {file}");
+        }
+
+        output.WriteLine();
+        output.WriteLine("Siguientes pasos (necesitas Docker o Podman para las bases de datos):");
+        output.WriteLine("  aspire run                                    # o: dotnet run --project " + result.AppHostName);
+        output.WriteLine("  El dashboard muestra servicios, trazas, métricas y logs de todos ellos.");
+        return 0;
+    }
 
     private static int Upgrade(string[] args, TextWriter output)
     {
@@ -274,6 +563,12 @@ internal static partial class Cli
         foreach (var package in result.Packages)
         {
             output.WriteLine($"  {package} {result.ToVersion}");
+        }
+
+        foreach (var hint in result.Hints)
+        {
+            output.WriteLine();
+            output.WriteLine($"ℹ {hint}");
         }
 
         output.WriteLine();
@@ -319,6 +614,7 @@ internal static partial class Cli
         var off = FeatureSet.Names.Where(f => !features.IsEnabled(f)).ToList();
 
         output.WriteLine($"✔ Servicio {name} creado en {Path.GetFullPath(outputDir)} ({fileCount} archivos)");
+        output.WriteLine($"  arquitectura: {definition.Architecture}");
         output.WriteLine($"  features: {string.Join(", ", on)}");
         if (off.Count > 0)
         {

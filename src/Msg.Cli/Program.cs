@@ -3,7 +3,7 @@ using Msg.Core;
 
 try
 {
-    return Cli.Run(args, Console.Out);
+    return await Cli.RunAsync(args, Console.Out).ConfigureAwait(false);
 }
 catch (MsgException ex)
 {

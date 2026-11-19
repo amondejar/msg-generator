@@ -1,0 +1,66 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject StudioState State
+@inject NavigationManager Nav
+
+<div class="shell">
+    <header class="top">
+        <a class="logo" href="/"><i>m</i> msg studio</a>
+        @if (State.Current is { } current)
+        {
+            <span class="chip"><b>@(string.IsNullOrWhiteSpace(current.Name) ? "Servicio" : current.Name)</b><span class="mono hint">@current.Directory</span></span>
+            <span class="pill">@(current.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")</span>
+        }
+        else
+        {
+            <span class="chip mono hint">@State.Workspace</span>
+        }
+        <span class="pill">MSG @MsgInfo.Version</span>
+        @if (State.Team is not null)
+        {
+            <span class="pill" style="color: #C4B5FD; border-color: #4C3F99" title="@State.Team.Root">Plantillas del equipo</span>
+        }
+        <div class="spacer"></div>
+        @if (State.Current is not null)
+        {
+            @if (State.Errors.Count > 0)
+            {
+                <span class="pending" style="color: var(--err)">● @State.Errors.Count problema(s)</span>
+            }
+            else if (State.Plan is { Changes.Count: > 0 } plan)
+            {
+                <span class="pending">● @(State.Current.IsNew ? "Servicio nuevo" : $"{plan.Changes.Count} cambio(s) sin aplicar")</span>
+            }
+            <a class="btn btn-primary" href="apply">Revisar y aplicar</a>
+        }
+    </header>
+
+    <div class="layout">
+        <nav class="side" aria-label="Secciones">
+            <NavLink href="/" Match="NavLinkMatch.All" ActiveClass="active">Sistema <span class="hint">@State.Services.Count</span></NavLink>
+            @if (State.Current is { } c)
+            {
+                <div class="label">@(c.IsNew ? "Servicio nuevo" : c.Name)</div>
+                <NavLink href="service" ActiveClass="active">Servicio</NavLink>
+                <NavLink href="entities" ActiveClass="active">Entidades <span class="hint">@c.Entities.Count</span></NavLink>
+                <NavLink href="apply" ActiveClass="active">Aplicar cambios <span class="hint" style="color: var(--warn)">@(State.Plan?.Changes.Count ?? 0)</span></NavLink>
+            }
+            <div class="label">Archivo fuente</div>
+            <span class="mono hint" style="padding: 0 12px">msg.json</span>
+        </nav>
+
+        @Body
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

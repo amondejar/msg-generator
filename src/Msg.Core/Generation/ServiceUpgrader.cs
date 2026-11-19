@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace Msg.Core.Generation;
 
-public sealed record UpgradeResult(string FromVersion, string ToVersion, IReadOnlyList<string> Packages);
+public sealed record UpgradeResult(string FromVersion, string ToVersion, IReadOnlyList<string> Packages, IReadOnlyList<string> Hints);
 
 /// <summary>
 /// Upgrades an existing service to another MSG version without touching its code:
@@ -44,6 +44,38 @@ public static partial class ServiceUpgrader
         File.WriteAllText(packagesPath, updated);
         File.WriteAllText(definitionPath, ServiceGenerator.Serialize(definition with { MsgVersion = targetVersion }));
 
-        return new UpgradeResult(definition.MsgVersion, targetVersion, packages);
+        return new UpgradeResult(definition.MsgVersion, targetVersion, packages, Hints(serviceDirectory, definition));
+    }
+
+    /// <summary>
+    /// Improvements of newer templates that live in user-owned files (Program.cs, .csproj): MSG can't apply
+    /// them without overwriting your code, so it tells you exactly what to add.
+    /// </summary>
+    private static List<string> Hints(string directory, Msg.Core.Model.ServiceDefinition definition)
+    {
+        var hints = new List<string>();
+        var service = definition.Service.Name;
+        var program = Path.Combine(directory, "src", $"{service}.Api", "Program.cs");
+
+        if (definition.Features.OpenApi && File.Exists(program)
+            && !File.ReadAllText(program).Contains("MapScalarApiReference", StringComparison.Ordinal))
+        {
+            hints.Add(
+                "Scalar (explorar y probar la API en /scalar) llegó en MSG 0.7.0. Para añadirlo:\n" +
+                "      Directory.Packages.props:  <PackageVersion Include=\"Scalar.AspNetCore\" Version=\"2.21.0\" />\n" +
+                $"      src/{service}.Api/{service}.Api.csproj:  <PackageReference Include=\"Scalar.AspNetCore\" />\n" +
+                "      Program.cs:  using Scalar.AspNetCore;   y, junto a app.MapOpenApi():  app.MapScalarApiReference();");
+        }
+
+        var editorConfig = Path.Combine(directory, ".editorconfig");
+        if (File.Exists(editorConfig) && !File.ReadAllText(editorConfig).Contains("Migrations", StringComparison.Ordinal))
+        {
+            hints.Add(
+                "Las migraciones de EF Core (dotnet ef) no siguen las reglas de estilo del repo y rompen el build. Añade al final de .editorconfig:\n" +
+                "      [**/Migrations/*.cs]\n" +
+                "      generated_code = true");
+        }
+
+        return hints;
     }
 }

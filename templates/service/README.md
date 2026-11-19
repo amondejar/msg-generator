@@ -12,14 +12,26 @@ dotnet run --project src/{{Service}}.Api
 - Liveness: http://localhost:{{DevPort}}/health/live
 - Readiness: http://localhost:{{DevPort}}/health/ready
 <!-- @msg:if openApi -->
+- Scalar, para explorar y probar la API (solo Development): http://localhost:{{DevPort}}/scalar
 - OpenAPI (solo Development): http://localhost:{{DevPort}}/openapi/v1.json
 <!-- @msg:end -->
 
 ## Estructura
 
+<!-- @msg:if cleanDdd -->
+Clean Architecture + DDD. Las dependencias apuntan hacia el dominio: `Api → Application → Domain` e `Infrastructure → Application`.
+
+| Carpeta | Qué contiene |
+| --- | --- |
+| `src/{{Service}}.Domain` | Agregados, eventos de dominio y contratos de repositorio. Sin frameworks: solo `Msg.Ddd`. |
+| `src/{{Service}}.Application` | Casos de uso: commands, queries y handlers de eventos de dominio. |
+| `src/{{Service}}.Infrastructure` | EF Core, repositorios y el interceptor que publica los eventos de dominio tras guardar. |
+| `src/{{Service}}.Api` | Endpoints finos que llaman a los casos de uso. Sin lógica de negocio. |
+<!-- @msg:else -->
 | Carpeta | Qué contiene |
 | --- | --- |
 | `src/{{Service}}.Api` | Endpoints y configuración propia de este servicio. **Aquí va tu código.** |
+<!-- @msg:end -->
 <!-- @msg:if tests -->
 | `tests/{{Service}}.Api.Tests` | Tests de integración del contrato común. |
 <!-- @msg:end -->
@@ -36,8 +48,13 @@ SQL Server con EF Core. Para levantar una base de datos local:
 ```bash
 dotnet tool install -g dotnet-ef                                # una sola vez
 docker compose up -d
+<!-- @msg:if cleanDdd -->
+dotnet ef migrations add Initial --project src/{{Service}}.Infrastructure --startup-project src/{{Service}}.Api
+dotnet ef database update --project src/{{Service}}.Infrastructure --startup-project src/{{Service}}.Api
+<!-- @msg:else -->
 dotnet ef migrations add Initial --project src/{{Service}}.Api   # la primera vez y tras cada cambio de modelo
 dotnet ef database update --project src/{{Service}}.Api
+<!-- @msg:end -->
 ```
 
 En producción, la cadena de conexión se pasa por la variable `ConnectionStrings__Database`. Si falta, el servicio no arranca.

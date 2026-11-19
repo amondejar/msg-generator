@@ -1,0 +1,273 @@
+@page "/"
+@implements IDisposable
+@inject StudioState State
+@inject NavigationManager Nav
+@inject ProcessRunner Runner
+@inject Toolchain Tools
+
+<PageTitle>Sistema · msg studio</PageTitle>
+
+<main class="content">
+    <div>
+        <h1>Sistema</h1>
+        <p class="lead">Los servicios MSG de <span class="mono">@State.Workspace</span>. Abre uno para añadirle entidades o crea uno nuevo.</p>
+    </div>
+
+    @if (State.LastMessage is { } message)
+    {
+        <div class="msg ok" role="status">@message</div>
+    }
+
+    <section class="stack" aria-labelledby="h-services">
+        <h2 class="section" id="h-services">Servicios</h2>
+        <div class="grid">
+            @foreach (var service in State.Services)
+            {
+                var d = service.Definition;
+                <button type="button" class="card" @onclick="() => Open(service)">
+                    <b style="font-size: 15px">@d.Service.Name</b>
+                    <small class="mono">@service.Directory</small>
+                    <small>
+                        @(d.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")
+                        · @(d.Persistence?.Provider ?? "sin base de datos")
+                        · @d.Entities.Count entidad(es)
+                    </small>
+                </button>
+            }
+
+            <div class="card stack" style="border-style: dashed">
+                <label class="field">
+                    Nuevo servicio
+                    <input type="text" placeholder="Orders" @bind="newName" @bind:event="oninput" @onkeydown="OnKey" aria-describedby="new-hint" />
+                </label>
+                <span class="hint" id="new-hint">Se creará en la carpeta <span class="mono">@NewFolder</span></span>
+                <button type="button" class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(newName)" @onclick="Create">+ Crear servicio</button>
+            </div>
+        </div>
+        @if (error is not null)
+        {
+            <div class="msg err" role="alert">@error</div>
+        }
+    </section>
+
+    <section class="stack" aria-labelledby="h-team">
+        <h2 class="section" id="h-team">Plantillas del equipo</h2>
+        <div class="card stack">
+            @if (State.Team is { } team)
+            {
+                var custom = team.CustomizedFiles();
+                <p style="margin: 0">
+                    MSG está usando las convenciones de tu equipo de <span class="mono">@team.Root</span>:
+                    @custom.Count plantilla(s) personalizada(s)@(team.Tokens.Count > 0 ? $" y {team.Tokens.Count} token(s)" : "").
+                </p>
+                @if (team.Tokens.Count > 0)
+                {
+                    <small class="mono">@string.Join("  ", team.Tokens.Select(t => "{{" + t.Key + "}} = " + t.Value))</small>
+                }
+                @if (custom.Count > 0)
+                {
+                    <div class="files">
+                        @foreach (var file in custom)
+                        {
+                            <div class="mono" style="padding: 8px 16px; border-bottom: 1px solid #1F2330; font-size: 12.5px">@file</div>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <p style="margin: 0">
+                    Sin plantillas del equipo: MSG usa las suyas. Para imponer tus convenciones (logging, nombres, pipeline…),
+                    copia una plantilla y edítala; el Studio la usará en la vista previa y al aplicar:
+                </p>
+                <span class="mono hint">msg templates eject service/src/__Service__.Api/Program.cs --path "@State.Workspace"</span>
+            }
+        </div>
+    </section>
+
+    <section class="stack" aria-labelledby="h-aspire">
+        <h2 class="section" id="h-aspire">Ejecutar con Aspire</h2>
+        <div class="card stack">
+            @{ var job = Runner.Get(ServiceCommands.DashboardJob); var running = job?.Status == JobStatus.Running; }
+            <div class="row">
+                @if (running)
+                {
+                    <button type="button" class="btn" style="color: var(--err)" @onclick="StopSystem">■ Detener sistema</button>
+                    @if (job!.DetectedUrl is { } dashboard)
+                    {
+                        <a class="btn btn-primary" href="@dashboard" target="_blank" rel="noopener">Abrir dashboard de Aspire ↗</a>
+                    }
+                    else
+                    {
+                        <span class="hint">Arrancando… la primera vez compila y descarga las imágenes de las bases de datos, puede tardar unos minutos.</span>
+                    }
+                }
+                else
+                {
+                    <button type="button" class="btn btn-primary" disabled="@(State.Services.Count == 0 || dockerMissing)" @onclick="RunSystem">▶ Ejecutar sistema</button>
+                    <span class="hint">Genera o actualiza el AppHost y arranca todos los servicios con sus bases de datos.</span>
+                }
+            </div>
+            @if (dockerMissing)
+            {
+                <div class="msg warn" role="alert">Hay servicios con base de datos y no se encuentra Docker. Arranca Docker Desktop (o Podman) y <button type="button" class="btn" style="min-height: 30px; padding: 0 10px" @onclick="RecheckDocker">vuelve a comprobar</button>.</div>
+            }
+            @if (running)
+            {
+                <div class="grid">
+                    @foreach (var service in State.Services)
+                    {
+                        var port = ServiceName.DevPort(service.Definition.Service.Name);
+                        <div class="card" style="padding: 10px 14px">
+                            <b>@service.Definition.Service.Name</b>
+                            <small class="row" style="gap: 10px">
+                                @if (service.Definition.Features.OpenApi)
+                                {
+                                    <a href="http://localhost:@port/scalar" target="_blank" rel="noopener">Scalar ↗</a>
+                                }
+                                <a href="http://localhost:@port/health/ready" target="_blank" rel="noopener">Health ↗</a>
+                                <span class="mono">:@port</span>
+                            </small>
+                        </div>
+                    }
+                </div>
+            }
+            <JobOutput Key="@ServiceCommands.DashboardJob" Lines="12" />
+        </div>
+        <div class="card stack">
+            <p style="margin: 0">
+                Un AppHost que arranca todos los servicios con sus bases de datos, el dashboard de telemetría y el service discovery.
+                @if (State.ExistingAppHost is { } appHost)
+                {
+                    <span> Ya existe <b class="mono">@appHost</b>: al regenerarlo se incorporan los servicios nuevos sin tocar tu <span class="mono">AppHost.cs</span>.</span>
+                }
+            </p>
+            <div class="row">
+                <label class="field" style="flex: 0 1 260px">
+                    Nombre del sistema
+                    <input type="text" @bind="systemName" />
+                </label>
+                <button type="button" class="btn" style="align-self: flex-end" disabled="@(State.Services.Count == 0)" @onclick="GenerateAppHost">
+                    @(State.ExistingAppHost is null ? "Generar AppHost" : "Actualizar AppHost")
+                </button>
+            </div>
+            @if (aspire is not null)
+            {
+                <div class="msg ok" role="status">
+                    ✔ @aspire.AppHostName con @aspire.Services.Count servicio(s).
+                    @(aspire.Created.Count + aspire.Updated.Count == 0 ? "Ya estaba al día." : $"{aspire.Created.Count} archivo(s) nuevos, {aspire.Updated.Count} actualizados.")
+                    Arráncalo con <span class="mono">aspire run</span> (necesita Docker o Podman).
+                </div>
+            }
+        </div>
+    </section>
+</main>
+
+@code {
+    private string newName = string.Empty;
+    private string? error;
+    private string systemName = string.Empty;
+    private AspireResult? aspire;
+
+    private string NewFolder
+    {
+        get
+        {
+            try { return string.IsNullOrWhiteSpace(newName) ? "…" : ServiceName.ToKebab(ServiceName.Normalize(newName)); }
+            catch (MsgException) { return "…"; }
+        }
+    }
+
+    private bool dockerMissing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Initialize();
+        systemName = SafeName(Path.GetFileName(State.Workspace));
+        Runner.Changed += OnChanged;
+        await CheckDockerAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Runner.Changed -= OnChanged;
+
+    private async Task CheckDockerAsync()
+    {
+        var needsDocker = State.Services.Any(s => s.Definition.Persistence is not null);
+        dockerMissing = needsDocker && !await Tools.HasDockerAsync();
+    }
+
+    private async Task RecheckDocker()
+    {
+        Tools.Reset();
+        await CheckDockerAsync();
+    }
+
+    private void RunSystem()
+    {
+        try
+        {
+            error = null;
+            aspire = State.GenerateAppHost(systemName);   // always up to date with the services on disk
+            var project = Path.Combine(State.Workspace, aspire.AppHostName, $"{aspire.AppHostName}.csproj");
+            Runner.Start(ServiceCommands.DashboardJob, "Sistema (Aspire)", State.Workspace, "dotnet",
+                ["run", "--project", project], ServiceCommands.DashboardUrl());
+        }
+        catch (Exception ex) when (ex is MsgException or InvalidOperationException)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private void StopSystem() => Runner.Stop(ServiceCommands.DashboardJob);
+
+    private void Open(WorkspaceService service)
+    {
+        State.LastMessage = null;
+        State.Open(service);
+        Nav.NavigateTo("service");
+    }
+
+    private void Create()
+    {
+        try
+        {
+            error = null;
+            State.LastMessage = null;
+            State.StartNewService(newName);
+            Nav.NavigateTo("service");
+        }
+        catch (MsgException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private void OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newName))
+        {
+            Create();
+        }
+    }
+
+    private void GenerateAppHost()
+    {
+        try
+        {
+            error = null;
+            aspire = State.GenerateAppHost(systemName);
+        }
+        catch (MsgException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string SafeName(string? folder)
+    {
+        try { return ServiceName.Normalize(folder ?? "System"); }
+        catch (MsgException) { return "System"; }
+    }
+}

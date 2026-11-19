@@ -1,0 +1,42 @@
+@* Live status and output of a process started from the Studio. *@
+@implements IDisposable
+@inject ProcessRunner Runner
+
+@if (Runner.Get(Key) is { } job)
+{
+    <div class="stack" style="gap: 8px">
+        <div class="row" style="gap: 10px">
+            <span class="pill" style="@StatusStyle(job.Status)">@StatusText(job)</span>
+            <span class="mono hint" style="overflow-wrap: anywhere">@job.CommandLine</span>
+        </div>
+        <pre class="code" style="max-height: @(Lines * 18)px; background: #0B0D11; border: 1px solid var(--line); border-radius: 8px">@string.Join("\n", job.Output.TakeLast(Lines))</pre>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Key { get; set; } = string.Empty;
+
+    [Parameter] public int Lines { get; set; } = 14;
+
+    protected override void OnInitialized() => Runner.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Runner.Changed -= OnChanged;
+
+    private static string StatusText(ProcessJob job) => job.Status switch
+    {
+        JobStatus.Running => "● En marcha",
+        JobStatus.Succeeded => "✔ Terminado",
+        JobStatus.Stopped => "■ Detenido",
+        _ => $"✘ Error (código {job.ExitCode})",
+    };
+
+    private static string StatusStyle(JobStatus status) => status switch
+    {
+        JobStatus.Running => "color: var(--warn); border-color: #78350F",
+        JobStatus.Succeeded => "color: var(--ok); border-color: #065F46",
+        JobStatus.Failed => "color: var(--err); border-color: #7F1D1D",
+        _ => string.Empty,
+    };
+}

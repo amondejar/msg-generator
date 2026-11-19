@@ -1,0 +1,184 @@
+@page "/service"
+@implements IDisposable
+@inject StudioState State
+@inject NavigationManager Nav
+
+<PageTitle>Servicio · msg studio</PageTitle>
+
+@if (State.Current is not { } draft)
+{
+    <main class="content"><p class="lead">No hay ningún servicio abierto. <a href="/">Elige uno en Sistema</a>.</p></main>
+}
+else
+{
+    <main class="content">
+        <div>
+            <h1>@(draft.IsNew ? "Nuevo servicio" : "Servicio")</h1>
+            <p class="lead">
+                Lo que eliges aquí se guarda en <code>msg.json</code>. La vista previa muestra el código que se va a generar.
+                @if (!draft.CanEditStructure)
+                {
+                    <span>En un servicio que ya existe solo se pueden <a href="entities">añadir entidades</a>: el resto ya es código tuyo.</span>
+                }
+            </p>
+        </div>
+
+        @if (draft.IsNew)
+        {
+            <label class="field" style="max-width: 360px">
+                Nombre del servicio
+                <input type="text" value="@draft.Name" @onchange="e => { draft.Name = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+            </label>
+        }
+
+        <section class="stack" aria-labelledby="h-arch">
+            <h2 class="section" id="h-arch">Arquitectura</h2>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
+                <button type="button" class="card @(draft.Architecture == Architectures.VerticalSlice ? "selected" : "")"
+                        aria-pressed="@(draft.Architecture == Architectures.VerticalSlice ? "true" : "false")"
+                        disabled="@(!draft.CanEditStructure)" @onclick="() => SetArchitecture(Architectures.VerticalSlice)">
+                    <b>Vertical slice</b>
+                    <small>Un proyecto, organizado por features. Los endpoints usan EF Core directamente. Ideal para servicios de CRUD.</small>
+                    <small class="mono">src/@(draft.Name).Api/Features/…</small>
+                </button>
+                <button type="button" class="card @(draft.Architecture == Architectures.CleanDdd ? "selected" : "")"
+                        aria-pressed="@(draft.Architecture == Architectures.CleanDdd ? "true" : "false")"
+                        disabled="@(!draft.CanEditStructure)" @onclick="() => SetArchitecture(Architectures.CleanDdd)">
+                    <b>Clean + DDD</b>
+                    <small>Agregados con comportamiento, eventos de dominio y casos de uso. Dependencias hacia el dominio.</small>
+                    <small class="mono">Domain · Application · Infrastructure · Api</small>
+                </button>
+            </div>
+        </section>
+
+        <section class="stack" aria-labelledby="h-features">
+            <h2 class="section" id="h-features">Features</h2>
+            <div class="grid">
+                @foreach (var (key, name, description, package) in FeatureList)
+                {
+                    var on = draft.Features.IsEnabled(key);
+                    <div class="card feature">
+                        <button type="button" class="switch" aria-pressed="@(on ? "true" : "false")" aria-label="@((on ? "Desactivar " : "Activar ") + name)"
+                                disabled="@(!draft.CanEditStructure)" @onclick="() => Toggle(key, !on)"></button>
+                        <div class="stack" style="gap: 4px; min-width: 0">
+                            <b>@name</b>
+                            <small>@description</small>
+                            <small class="mono">@package</small>
+                        </div>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <section class="stack" aria-labelledby="h-db">
+            <h2 class="section" id="h-db">Base de datos</h2>
+            <div class="seg" role="group" aria-label="Proveedor de base de datos">
+                <button type="button" aria-pressed="@(draft.Provider == PersistenceSettings.Postgres ? "true" : "false")" disabled="@draft.ProviderLocked" @onclick="() => SetProvider(PersistenceSettings.Postgres)">PostgreSQL</button>
+                <button type="button" aria-pressed="@(draft.Provider == PersistenceSettings.SqlServer ? "true" : "false")" disabled="@draft.ProviderLocked" @onclick="() => SetProvider(PersistenceSettings.SqlServer)">SQL Server</button>
+            </div>
+            <span class="hint">@(draft.ProviderLocked ? "Fijada: el servicio ya tiene entidades en esta base de datos." : "Se fija con la primera entidad. Los tests usan SQLite en memoria, así que no necesitan Docker.")</span>
+        </section>
+
+        <section class="stack" aria-labelledby="h-entities">
+            <div class="row" style="justify-content: space-between">
+                <h2 class="section" id="h-entities">Entidades</h2>
+                <a href="entities" style="font-weight: 600; text-decoration: none">Abrir diseñador →</a>
+            </div>
+            <div class="grid">
+                @foreach (var entity in draft.Entities)
+                {
+                    <button type="button" class="card @(entity.IsNew ? "new" : "")" @onclick="() => OpenEntity(entity)">
+                        <b>@entity.Name @if (entity.IsNew) { <small style="color: var(--warn); margin-left: 6px">NUEVA</small> }</b>
+                        <small class="mono">/api/v1/@ServiceName.ToKebab(SafePlural(entity)) · @entity.Properties.Count propiedad(es)</small>
+                    </button>
+                }
+                <button type="button" class="btn btn-dashed" style="min-height: 76px" @onclick="NewEntity">+ Nueva entidad</button>
+            </div>
+        </section>
+
+        @if (!draft.IsNew && draft.ProviderLocked)
+        {
+            <MigrationsPanel ServiceDirectory="@Path.Combine(State.Workspace, draft.Directory)" />
+        }
+
+        <ProblemList />
+    </main>
+
+    <CodePanel Tabs="Tabs" />
+}
+
+@code {
+    private static readonly (string Key, string Name, string Description, string Package)[] FeatureList =
+    [
+        ("observability", "Observabilidad", "Trazas, métricas y logs con OpenTelemetry. Aspire las muestra en su dashboard.", "Msg.ServiceDefaults.OpenTelemetry"),
+        ("openApi", "OpenAPI + Scalar", "Documento /openapi/v1.json y Scalar en /scalar para explorar y probar la API.", "Microsoft.AspNetCore.OpenApi · Scalar.AspNetCore"),
+        ("resilience", "Clientes HTTP", "Reintentos, timeout, circuit breaker y service discovery en todos los HttpClient.", "Msg.ServiceDefaults.Resilience"),
+        ("auth", "Autenticación", "JWT bearer. Todo autenticado por defecto salvo los health checks.", "Msg.ServiceDefaults.Authentication"),
+        ("tests", "Tests", "Tests de integración del contrato común y de cada entidad.", "xUnit · WebApplicationFactory"),
+        ("docker", "Docker", "Dockerfile multi-stage con usuario no-root.", "Dockerfile"),
+        ("ci", "CI", "GitHub Actions: build, test y auditoría de paquetes.", ".github/workflows/ci.yml"),
+    ];
+
+    private IReadOnlyList<CodePanel.Tab> Tabs
+    {
+        get
+        {
+            var files = State.Preview;
+            var program = files.FirstOrDefault(f => f.Path.EndsWith("Api/Program.cs", StringComparison.Ordinal));
+            var json = files.FirstOrDefault(f => f.Path == ServiceGenerator.DefinitionFileName);
+            var tree = string.Join("\n", files.Select(f => f.Path).Order(StringComparer.Ordinal));
+
+            var tabs = new List<CodePanel.Tab>();
+            if (program is not null) { tabs.Add(new("Program.cs", program.Path, program.Content)); }
+            tabs.Add(new($"Archivos ({files.Count})", "(árbol de archivos)", tree));
+            if (json is not null) { tabs.Add(new("msg.json", json.Path, json.Content)); }
+            return tabs;
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+
+    private void SetArchitecture(string architecture)
+    {
+        State.Current!.Architecture = architecture;
+        State.Recompute();
+    }
+
+    private void Toggle(string feature, bool enabled)
+    {
+        State.Current!.Features = State.Current.Features.With(feature, enabled);
+        State.Recompute();
+    }
+
+    private void SetProvider(string provider)
+    {
+        State.Current!.Provider = provider;
+        State.Recompute();
+    }
+
+    private void OpenEntity(EntityDraft entity)
+    {
+        State.SelectedEntity = entity.Name;
+        Nav.NavigateTo("entities");
+    }
+
+    private void NewEntity()
+    {
+        State.AddEntity();
+        Nav.NavigateTo("entities");
+    }
+
+    private static string SafePlural(EntityDraft entity)
+    {
+        try { return ServiceName.Normalize(entity.EffectivePlural); }
+        catch (MsgException) { return entity.EffectivePlural; }
+    }
+}

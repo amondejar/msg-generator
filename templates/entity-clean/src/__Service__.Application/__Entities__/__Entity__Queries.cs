@@ -1,0 +1,41 @@
+using {{Service}}.Domain.{{Entities}};
+using Msg.Ddd;
+
+namespace {{Service}}.Application.{{Entities}};
+
+/// <summary>Read model returned by the queries (the API maps it to its own contract).</summary>
+public sealed record {{Entity}}Dto(Guid Id, {{CommandParameters}}, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)
+{
+    public static {{Entity}}Dto From({{Entity}} entity)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+        return new(entity.Id, {{EntityArguments}}, entity.CreatedAt, entity.UpdatedAt);
+    }
+}
+
+public sealed record Get{{Entity}}(Guid Id) : IQuery<{{Entity}}Dto?>;
+
+public sealed record List{{Entities}}(int Page, int PageSize) : IQuery<PagedResult<{{Entity}}Dto>>;
+
+public sealed class Get{{Entity}}Handler(I{{Entity}}Repository repository) : IQueryHandler<Get{{Entity}}, {{Entity}}Dto?>
+{
+    public async Task<{{Entity}}Dto?> HandleAsync(Get{{Entity}} query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var entity = await repository.GetAsync(query.Id, cancellationToken);
+        return entity is null ? null : {{Entity}}Dto.From(entity);
+    }
+}
+
+public sealed class List{{Entities}}Handler(I{{Entity}}Repository repository)
+    : IQueryHandler<List{{Entities}}, PagedResult<{{Entity}}Dto>>
+{
+    public async Task<PagedResult<{{Entity}}Dto>> HandleAsync(List{{Entities}} query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var (items, total) = await repository.ListAsync(query.Page, query.PageSize, cancellationToken);
+        return new PagedResult<{{Entity}}Dto>([.. items.Select({{Entity}}Dto.From)], query.Page, query.PageSize, total);
+    }
+}

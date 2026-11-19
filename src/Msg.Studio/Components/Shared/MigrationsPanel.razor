@@ -1,0 +1,96 @@
+@* EF Core migrations of an existing service: list, create (right projects per architecture), install dotnet-ef. *@
+@implements IDisposable
+@inject StudioState State
+@inject ProcessRunner Runner
+@inject Toolchain Tools
+
+<section class="stack" id="migrations" aria-labelledby="h-migrations">
+    <h2 class="section" id="h-migrations">Migraciones</h2>
+    <div class="card stack">
+        @{
+            var definition = ServicePlanner.Load(ServiceDirectory);
+            var migrations = ServiceCommands.Migrations(ServiceDirectory, definition);
+            var job = Runner.Get(JobKey);
+            var running = job?.Status == JobStatus.Running;
+        }
+        <p style="margin: 0">
+            @if (migrations.Count == 0)
+            {
+                <span>Aún no hay migraciones. Crea la primera para que la base de datos tenga el esquema de tus entidades.</span>
+            }
+            else
+            {
+                <span>@migrations.Count migración(es) en <span class="mono">@ServiceCommands.MigrationsProject(definition)/Migrations</span>. Última: <b class="mono">@migrations[^1]</b>.</span>
+            }
+            <span class="hint"> Al ejecutar con Aspire se aplican solas al arrancar.</span>
+        </p>
+
+        @if (efAvailable == false)
+        {
+            <div class="msg warn">
+                Para crear migraciones hace falta la herramienta <span class="mono">dotnet-ef</span>.
+                <div class="row" style="margin-top: 8px">
+                    <button type="button" class="btn" disabled="@Runner.IsRunning(ServiceCommands.InstallEfJob)" @onclick="InstallEf">Instalar dotnet-ef</button>
+                    <button type="button" class="btn" @onclick="Recheck">Volver a comprobar</button>
+                </div>
+            </div>
+            <JobOutput Key="@ServiceCommands.InstallEfJob" Lines="6" />
+        }
+        else
+        {
+            <div class="row" style="align-items: flex-end">
+                <label class="field" style="flex: 0 1 280px">
+                    Nombre de la migración
+                    <input type="text" @bind="name" @bind:event="oninput" placeholder="@ServiceCommands.SuggestMigrationName(migrations, definition)" />
+                </label>
+                <button type="button" class="btn btn-primary" disabled="@(running || efAvailable is null || !ServiceCommands.IsValidMigrationName(EffectiveName(migrations, definition)))"
+                        @onclick="() => Create(definition, EffectiveName(migrations, definition))">
+                    @(running ? "Creando…" : "Crear migración")
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(name) && !ServiceCommands.IsValidMigrationName(name))
+            {
+                <span class="hint" style="color: var(--err)">Solo letras, números y _, empezando por letra.</span>
+            }
+            <JobOutput Key="@JobKey" Lines="10" />
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string ServiceDirectory { get; set; } = string.Empty;
+
+    private string name = string.Empty;
+    private bool? efAvailable;
+
+    private string JobKey => ServiceCommands.MigrationsJob(ServiceDirectory);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Runner.Changed += OnChanged;
+        efAvailable = await Tools.HasDotnetEfAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Runner.Changed -= OnChanged;
+
+    private string EffectiveName(IReadOnlyList<string> migrations, ServiceDefinition definition) =>
+        string.IsNullOrWhiteSpace(name) ? ServiceCommands.SuggestMigrationName(migrations, definition) : name.Trim();
+
+    private void Create(ServiceDefinition definition, string migration)
+    {
+        Runner.Start(JobKey, $"Migración {migration}", ServiceDirectory, "dotnet", ServiceCommands.AddMigration(definition, migration));
+        name = string.Empty;
+    }
+
+    private void InstallEf() =>
+        Runner.Start(ServiceCommands.InstallEfJob, "Instalar dotnet-ef", State.Workspace, "dotnet", ["tool", "install", "--global", "dotnet-ef"]);
+
+    private async Task Recheck()
+    {
+        Tools.Reset();
+        efAvailable = null;
+        efAvailable = await Tools.HasDotnetEfAsync();
+    }
+}

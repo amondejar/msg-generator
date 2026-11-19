@@ -50,6 +50,20 @@ public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<Api
 
         Assert.Equal("test-123", Assert.Single(response.Headers.GetValues("X-Correlation-ID")));
     }
+    // @msg:if openApi
+
+    [Theory]
+    [InlineData("/openapi/v1.json")]
+    [InlineData("/scalar")]
+    public async Task ApiDocumentationIsAvailableInDevelopment(string path)
+    {
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync(new Uri(path, UriKind.Relative));
+
+        Assert.True(response.IsSuccessStatusCode, $"{path} returned {(int)response.StatusCode}");
+    }
+    // @msg:end
     // @msg:if auth
 
     [Fact]

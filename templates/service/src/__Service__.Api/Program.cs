@@ -2,6 +2,9 @@ using {{Service}}.Api;
 using {{Service}}.Api.Endpoints;
 using {{Service}}.Api.Features;
 using Msg.ServiceDefaults;
+// @msg:if openApi
+using Scalar.AspNetCore;
+// @msg:end
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,7 +14,8 @@ builder.AddMsgServiceDefaults();
 builder.AddMsgOpenTelemetry("{{service-kebab}}");
 // @msg:end
 // @msg:if resilience
-builder.AddMsgResilience();
+builder.AddMsgResilience();          // retries, timeouts and circuit breaker on every HttpClient
+builder.AddMsgServiceDiscovery();    // http://other-service resolved by Aspire / configuration
 // @msg:end
 // @msg:if auth
 builder.AddMsgAuthentication();
@@ -38,9 +42,11 @@ app.MapMsgDefaultEndpoints();
 if (app.Environment.IsDevelopment())
 {
     // @msg:if auth
-    app.MapOpenApi().AllowAnonymous();   // GET /openapi/v1.json
+    app.MapOpenApi().AllowAnonymous();               // GET /openapi/v1.json
+    app.MapScalarApiReference().AllowAnonymous();    // GET /scalar: explore and try the API
     // @msg:else
-    app.MapOpenApi();   // GET /openapi/v1.json
+    app.MapOpenApi();                 // GET /openapi/v1.json
+    app.MapScalarApiReference();      // GET /scalar: explore and try the API
     // @msg:end
 }
 // @msg:end

@@ -28,6 +28,7 @@ public static class MsgServiceDefaultsExtensions
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.Services.AddMsgProblemDetails();
+        builder.Services.AddExceptionHandler<DomainExceptionHandler>();
         builder.Services.AddHealthChecks()
             .AddCheck("self", () => HealthCheckResult.Healthy(), [HealthTags.Live]);
 

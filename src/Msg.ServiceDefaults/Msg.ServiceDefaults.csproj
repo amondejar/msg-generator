@@ -11,6 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Msg.Ddd\Msg.Ddd.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Msg.ServiceDefaults.Tests" />
   </ItemGroup>
 

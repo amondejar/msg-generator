@@ -24,7 +24,9 @@ if [[ $ONLINE == 1 ]]; then
   dotnet pack  "$ROOT/Msg.slnx" -c Release --no-build -o "$PKGS" -v q -nologo >/dev/null
 else
   echo "  – nuget.org not reachable: building/packing only the framework-only projects"
-  dotnet build "$ROOT/src/Msg.Cli" -c Release -v q -nologo >/dev/null
+  # Without nuget.org the Blazor framework assets package can't be restored: build the CLI without it.
+  dotnet build "$ROOT/src/Msg.Cli" -c Release -v q -nologo -p:RequiresAspNetWebAssets=false >/dev/null
+  dotnet pack  "$ROOT/src/Msg.Ddd" -c Release -o "$PKGS" -v q -nologo >/dev/null
   dotnet pack  "$ROOT/src/Msg.ServiceDefaults" -c Release -o "$PKGS" -v q -nologo >/dev/null
 fi
 pass "packed: $(ls "$PKGS" | tr '\n' ' ')"
@@ -33,7 +35,7 @@ VERSION="$("${MSG[@]}" --version)"
 
 # The global NuGet cache keeps packages by id+version: drop old Msg.* builds so we test the ones just packed.
 GLOBAL="$(dotnet nuget locals global-packages --list | sed 's/^global-packages: //')"
-rm -rf "$GLOBAL"/msg.servicedefaults*
+rm -rf "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd
 
 echo "▶ Generate every feature combination worth checking (MSG $VERSION)"
 "${MSG[@]}" new Orders  -o "$WORK/full" --package-source "$PKGS"        >/dev/null && pass "full (default features)"
@@ -113,12 +115,86 @@ grep -q "MapProductEndpoints" "$WORK/full/src/Orders.Api/Features/FeatureRegistr
   && pass "registration, packages and connection string wired" || fail "entity wiring"
 "${MSG[@]}" new --from "$WORK/full/msg.json" -o "$WORK/regen" --package-source "$PKGS" >/dev/null && pass "msg new --from regenerates the entities"
 
+echo "▶ Clean Architecture + DDD"
+"${MSG[@]}" new Catalog -o "$WORK/clean" --architecture clean-ddd --package-source "$PKGS" >/dev/null
+"${MSG[@]}" add entity Product  --path "$WORK/clean" --props "Name:string, Price:decimal, Description:string?" >/dev/null
+"${MSG[@]}" add entity Category --path "$WORK/clean" --props "Title:string, Position:int?" --plural Categories >/dev/null
+for p in Domain Application Infrastructure Api; do
+  [[ -f "$WORK/clean/src/Catalog.$p/Catalog.$p.csproj" ]] || fail "missing Catalog.$p"
+done
+grep -q "AggregateRoot<Guid>" "$WORK/clean/src/Catalog.Domain/Products/Product.cs" \
+  && grep -q "ICommandHandler<CreateProduct, Guid>" "$WORK/clean/src/Catalog.Application/Products/ProductCommands.cs" \
+  && grep -q "AddScoped<IProductRepository, ProductRepository>" "$WORK/clean/src/Catalog.Infrastructure/Persistence/RepositoryRegistration.g.cs" \
+  && pass "Domain / Application / Infrastructure / Api with aggregates, use cases and repositories" || fail "clean-ddd structure"
+if grep -rn "@msg:\|{{Service}}\|{{Entity}}\|__Entity__" "$WORK/clean"; then fail "unrendered markers in clean-ddd"; fi
+pass "no template markers left in clean-ddd"
+
+echo "▶ Team templates (.msg)"
+TEAM="$WORK/team"; mkdir -p "$TEAM/services"
+"${MSG[@]}" templates eject service/src/__Service__.Api/Program.cs --path "$TEAM" >/dev/null
+sed -i '1i // {{Company}} conventions' "$TEAM/.msg/templates/service/src/__Service__.Api/Program.cs"
+printf '{ "tokens": { "Company": "Acme" } }\n' > "$TEAM/.msg/config.json"
+printf '* @{{Company}}/backend\n' > "$TEAM/.msg/templates/service/CODEOWNERS"
+: > "$TEAM/.msg/templates/service/Dockerfile"
+"${MSG[@]}" new Orders -o "$TEAM/services/orders" --package-source "$PKGS" >/dev/null
+"${MSG[@]}" add entity Product --path "$TEAM/services/orders" --props "Name:string" >/dev/null
+head -1 "$TEAM/services/orders/src/Orders.Api/Program.cs" | grep -q "Acme conventions" \
+  && [[ "$(cat "$TEAM/services/orders/CODEOWNERS")" == "* @Acme/backend" ]] \
+  && [[ ! -f "$TEAM/services/orders/Dockerfile" ]] \
+  && pass "team templates: replace, add, remove and tokens (found walking up)" || fail "team templates"
+echo '// @msg:if bogus' >> "$TEAM/.msg/templates/service/CODEOWNERS"
+{ "${MSG[@]}" new Broken -o "$TEAM/services/broken" 2>&1 || true; } | grep -q ".msg/templates/service/CODEOWNERS, línea 2" \
+  && pass "a broken team template is reported with file and line" || fail "broken template error"
+
+echo "▶ msg aspire"
+SYS="$WORK/system"; mkdir -p "$SYS"
+"${MSG[@]}" new Orders  -o "$SYS/orders"  --package-source "$PKGS" >/dev/null
+"${MSG[@]}" add entity Order --path "$SYS/orders" --props "Number:string, Total:decimal" >/dev/null
+"${MSG[@]}" new Billing -o "$SYS/billing" --architecture clean-ddd --package-source "$PKGS" >/dev/null
+"${MSG[@]}" add entity Invoice --path "$SYS/billing" --db sqlserver --props "Number:string" >/dev/null
+"${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+for f in Shop.AppHost/Shop.AppHost.csproj Shop.AppHost/AppHost.cs Shop.AppHost/MsgServices.g.cs Shop.slnx .aspire/settings.json; do
+  [[ -f "$SYS/$f" ]] || fail "missing $f"
+done
+grep -q 'AddProject<Projects.Orders_Api>("orders")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+  && grep -q 'connectionName: "Database"' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+  && grep -q 'AddPostgres' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'AddSqlServer' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+  && pass "AppHost with both services, their databases and health checks" || fail "AppHost content"
+[[ -z "$("${MSG[@]}" aspire --path "$SYS" --name Shop | grep '^  [+~]')" ]] && pass "msg aspire is idempotent" || fail "msg aspire rewrote files"
+"${MSG[@]}" new Notifications -o "$SYS/notifications" --package-source "$PKGS" >/dev/null
+"${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+grep -q 'Notifications_Api' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'Notifications.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && pass "a new service is added to the AppHost" || fail "new service not added"
+
+echo "▶ msg studio"
+STUDIO_PORT=5988
+"${MSG[@]}" studio --path "$SYS" --port $STUDIO_PORT --no-browser >"$WORK/studio.log" 2>&1 &
+PID=$!
+for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$STUDIO_PORT/" >/dev/null 2>&1 && break; sleep 0.2; done
+HOME_HTML="$(curl -s "http://127.0.0.1:$STUDIO_PORT/")"
+for s in Orders Billing Notifications; do
+  echo "$HOME_HTML" | grep -q ">$s<" || fail "studio: $s missing on the system page"
+done
+pass "studio lists the services of the system"
+for p in service entities apply; do
+  [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$STUDIO_PORT/$p")" == 200 ]] || fail "studio: /$p"
+done
+pass "studio pages render"
+if [[ $ONLINE == 1 ]]; then
+  [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$STUDIO_PORT/_framework/blazor.web.js")" == 200 ]] \
+    && pass "studio serves blazor.web.js (interactive UI)" || fail "studio: blazor.web.js missing"
+else
+  echo "  – blazor.web.js check skipped (source-built SDKs don't ship Blazor's JavaScript)"
+fi
+kill "$PID"; wait "$PID" 2>/dev/null || true; PID=""
+
 echo "▶ Full services (need nuget.org)"
 if [[ $ONLINE == 1 ]]; then
-  for s in full auth regen; do
+  for s in full auth regen clean team/services/orders; do
     dotnet build "$WORK/$s" -c Release -v q -nologo >/dev/null && pass "$s builds"
     dotnet test  "$WORK/$s" -c Release --no-build -v q -nologo >/dev/null && pass "$s tests pass"
   done
+  dotnet build "$SYS/Shop.AppHost" -c Release -v q -nologo >/dev/null && pass "Aspire AppHost builds"
 else
   echo "  – nuget.org not reachable: skipped (run this script on your machine)"
 fi

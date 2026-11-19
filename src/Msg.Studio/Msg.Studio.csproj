@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <!-- msg studio: the visual editor. Blazor Server components on top of Msg.Core (same engine as the CLI). -->
+
+  <PropertyGroup>
+    <RootNamespace>Msg.Studio</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Msg.Core\Msg.Core.csproj" />
+  </ItemGroup>
+
+</Project>

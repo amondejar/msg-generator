@@ -3,8 +3,14 @@
 //   Your code goes in the files next to it, which MSG creates once and never touches again.
 // </auto-generated>
 #nullable enable
+// @msg:if cleanDdd
+using {{Service}}.Application;
+using {{Service}}.Infrastructure;
+using Msg.ServiceDefaults;
+// @msg:else
 // @msg:if persistence
 using {{Service}}.Api.Data;
+// @msg:end
 // @msg:end
 {{FeatureUsings}}
 
@@ -15,8 +21,13 @@ public static class FeatureRegistration
     public static WebApplicationBuilder AddFeatures(this WebApplicationBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
+        // @msg:if cleanDdd
+        builder.Services.AddMsgApplication(typeof(IUnitOfWork).Assembly);   // command/query/event handlers
+        builder.AddInfrastructure();
+        // @msg:else
         // @msg:if persistence
         builder.AddDatabase();
+        // @msg:end
         // @msg:end
         return builder;
     }

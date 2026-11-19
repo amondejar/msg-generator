@@ -15,6 +15,9 @@ public sealed record GenerationOptions
     /// from this folder, everything else only from nuget.org.
     /// </summary>
     public string? LocalPackageSource { get; init; }
+
+    /// <summary>The team's own templates and tokens (<c>.msg</c> folder), if any.</summary>
+    public TeamTemplates? Team { get; init; }
 }
 
 /// <summary>
@@ -26,6 +29,8 @@ public static class ServiceGenerator
 {
     public const string TemplateName = "service";
     public const string EntityTemplateName = "entity";
+    public const string CleanEntityTemplateName = "entity-clean";
+    public const string EntityTestsTemplateName = "entity-tests";
     public const string DefinitionFileName = "msg.json";
 
     // Whole files/folders that only exist when a feature is enabled.
@@ -40,6 +45,11 @@ public static class ServiceGenerator
         ("_github/", "ci"),
         ("compose.yaml", "persistence"),
         ("src/__Service__.Api/Data/", "persistence"),
+        ("src/__Service__.Api/Data/", "verticalSlice"),
+        ("src/__Service__.Domain/", "cleanDdd"),
+        ("src/__Service__.Application/", "cleanDdd"),
+        ("src/__Service__.Infrastructure/", "cleanDdd"),
+        ("src/__Service__.Infrastructure/Persistence/", "persistence"),
         ("src/__Service__.Api/Features/PagedResponse.cs", "persistence"),
     ];
 
@@ -51,11 +61,17 @@ public static class ServiceGenerator
         // Files always come from the current templates, so the service is stamped with the current MSG version.
         definition = definition with { MsgVersion = MsgInfo.Version };
 
+        var team = options?.Team;
         var tokens = BuildTokens(definition);
+        foreach (var (key, value) in team?.Tokens ?? new Dictionary<string, string>())
+        {
+            tokens.TryAdd(key, value);   // MSG's own tokens ({{Service}}...) can't be redefined
+        }
+
         var isEnabled = Conditions(definition);
         var result = new List<GeneratedFile>();
 
-        RenderTemplateSet(TemplateName, tokens, isEnabled, result);
+        RenderTemplateSet(TemplateName, tokens, isEnabled, result, team);
 
         foreach (var entity in definition.Entities)
         {
@@ -65,11 +81,15 @@ public static class ServiceGenerator
                 entityTokens[key] = value;
             }
 
-            RenderTemplateSet(
-                EntityTemplateName,
-                entityTokens,
-                feature => feature == "hasRequiredString" ? EntityCodeGen.HasRequiredString(entity) : isEnabled(feature),
-                result);
+            bool EntityConditions(string feature) =>
+                feature == "hasRequiredString" ? EntityCodeGen.HasRequiredString(entity) : isEnabled(feature);
+
+            var architectureTemplates = definition.Architecture == Architectures.CleanDdd
+                ? CleanEntityTemplateName
+                : EntityTemplateName;
+
+            RenderTemplateSet(architectureTemplates, entityTokens, EntityConditions, result, team);
+            RenderTemplateSet(EntityTestsTemplateName, entityTokens, EntityConditions, result, team);
         }
 
         result.Add(new GeneratedFile(DefinitionFileName, Serialize(definition)));
@@ -112,6 +132,16 @@ public static class ServiceGenerator
             """;
     }
 
+    /// <summary>Tokens MSG defines itself; a team's config.json can't redefine them.</summary>
+    public static IReadOnlySet<string> ReservedTokens { get; } = BuildReservedTokens();
+
+    private static HashSet<string> BuildReservedTokens()
+    {
+        var sample = new ServiceDefinition { Service = new ServiceInfo { Name = "Sample" } };
+        var entity = new EntityDefinition { Name = "Item", Plural = "Items", Properties = [new PropertyDefinition { Name = "Name", Type = "string" }] };
+        return [.. BuildTokens(sample).Keys, .. EntityCodeGen.Tokens(entity, new FeatureSet()).Keys];
+    }
+
     public static Dictionary<string, string> BuildTokens(ServiceDefinition definition)
     {
         ArgumentNullException.ThrowIfNull(definition);
@@ -141,12 +171,18 @@ public static class ServiceGenerator
     {
         ArgumentNullException.ThrowIfNull(definition);
         var provider = definition.Persistence?.Provider;
+        var clean = Architectures.Validate(definition.Architecture) == Architectures.CleanDdd;
 
         return feature => feature switch
         {
+            "cleanDdd" => clean,
+            "verticalSlice" => !clean,
             "persistence" => provider is not null,
             "postgres" => provider == PersistenceSettings.Postgres,
             "sqlserver" => provider == PersistenceSettings.SqlServer,
+            _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new MsgException(
+                $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
+                "persistence, postgres, sqlserver, cleanDdd, verticalSlice (y hasRequiredString en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };
     }
@@ -155,9 +191,10 @@ public static class ServiceGenerator
         string templateName,
         Dictionary<string, string> tokens,
         Func<string, bool> isEnabled,
-        List<GeneratedFile> result)
+        List<GeneratedFile> result,
+        TeamTemplates? team)
     {
-        foreach (var template in TemplateSource.Load(templateName))
+        foreach (var template in TemplateSource.Load(templateName, team))
         {
             if (!IsIncluded(template.Path, isEnabled))
             {
@@ -165,7 +202,8 @@ public static class ServiceGenerator
             }
 
             var path = RenderPath(template.Path, tokens);
-            var content = TemplateEngine.Render(template.Content, tokens, isEnabled, $"{templateName}/{template.Path}");
+            var origin = template.IsCustom ? $".msg/templates/{templateName}/{template.Path}" : $"{templateName}/{template.Path}";
+            var content = TemplateEngine.Render(template.Content, tokens, isEnabled, origin);
 
             // A template wrapped entirely in "@msg:if feature" renders empty when the feature is off: skip the file.
             if (string.IsNullOrWhiteSpace(content))

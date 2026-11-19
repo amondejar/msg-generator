@@ -1,0 +1,191 @@
+@page "/entities"
+@implements IDisposable
+@inject StudioState State
+
+<PageTitle>Entidades · msg studio</PageTitle>
+
+@if (State.Current is not { } draft)
+{
+    <main class="content"><p class="lead">No hay ningún servicio abierto. <a href="/">Elige uno en Sistema</a>.</p></main>
+}
+else
+{
+    var entity = Selected;
+    <main class="content">
+        <div>
+            <h1>Entidades</h1>
+            <p class="lead">Diseña las entidades nuevas. Las que ya existen son código tuyo: MSG las muestra pero no las modifica.</p>
+        </div>
+
+        <div class="row" role="tablist" aria-label="Entidades">
+            @foreach (var e in draft.Entities)
+            {
+                <button type="button" role="tab" aria-selected="@(e == entity ? "true" : "false")"
+                        class="card @(e == entity ? "selected" : e.IsNew ? "new" : "")" style="padding: 10px 14px"
+                        @onclick="() => State.SelectedEntity = e.Name">
+                    <b>@e.Name @if (e.IsNew) { <small style="color: var(--warn)">NUEVA</small> }</b>
+                    <small>@e.Properties.Count propiedad(es)</small>
+                </button>
+            }
+            <button type="button" class="btn btn-dashed" @onclick="() => State.AddEntity()">+ Nueva entidad</button>
+        </div>
+
+        @if (entity is null)
+        {
+            <p class="lead">Este servicio aún no tiene entidades. Crea la primera: MSG generará la persistencia, los endpoints CRUD y sus tests.</p>
+        }
+        else
+        {
+            <div class="row" style="align-items: flex-end">
+                <label class="field">
+                    Nombre (singular)
+                    <input type="text" value="@entity.Name" disabled="@(!entity.IsNew)" style="font-size: 18px; font-weight: 600"
+                           @onchange="e => Rename(entity, e.Value?.ToString())" />
+                </label>
+                <label class="field">
+                    Plural
+                    <input type="text" value="@entity.Plural" placeholder="@entity.EffectivePlural" disabled="@(!entity.IsNew)"
+                           @onchange="e => { entity.Plural = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                </label>
+                <div class="field">
+                    Endpoints
+                    <span class="mono" style="min-height: 42px; display: flex; align-items: center; color: var(--text-2); font-weight: 400">/api/v1/@Route(entity)</span>
+                </div>
+                @if (entity.IsNew)
+                {
+                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => State.RemoveEntity(entity)">Quitar entidad</button>
+                }
+            </div>
+
+            <section class="stack" aria-labelledby="h-props">
+                <h2 class="section" id="h-props">Propiedades</h2>
+                <div class="table">
+                    <div class="tr head"><span>Nombre</span><span>Tipo</span><span>Opcional</span><span>Genera</span><span></span></div>
+                    <div class="tr"><span class="auto">Id</span><span class="auto">guid</span><span class="hint">—</span><span class="hint">UUID v7 · clave primaria</span><span class="hint">auto</span></div>
+                    @foreach (var p in entity.Properties)
+                    {
+                        <div class="tr">
+                            @if (entity.IsNew)
+                            {
+                                <input type="text" value="@p.Name" aria-label="Nombre de la propiedad" @onchange="e => { p.Name = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                                <select aria-label="@($"Tipo de {p.Name}")" value="@p.Type" @onchange="e => SetType(p, e)">
+                                    @foreach (var type in Types)
+                                    {
+                                        <option value="@type">@type</option>
+                                    }
+                                </select>
+                                <label class="row" style="gap: 8px"><input type="checkbox" checked="@p.Nullable" @onchange="e => { p.Nullable = e.Value is true; State.Recompute(); }" /> @(p.Nullable ? "Sí" : "No")</label>
+                                <span class="hint">@Generates(p)</span>
+                                <button type="button" class="icon-btn" aria-label="@($"Eliminar {p.Name}")" @onclick="() => { entity.Properties.Remove(p); State.Recompute(); }">×</button>
+                            }
+                            else
+                            {
+                                <span class="mono">@p.Name</span><span class="mono">@p.Type</span><span>@(p.Nullable ? "Sí" : "No")</span><span class="hint">@Generates(p)</span><span></span>
+                            }
+                        </div>
+                    }
+                    <div class="tr"><span class="auto">CreatedAt · UpdatedAt</span><span class="auto">datetime</span><span class="hint">—</span><span class="hint">Auditoría automática</span><span class="hint">auto</span></div>
+                </div>
+                @if (entity.IsNew)
+                {
+                    <button type="button" class="btn btn-dashed" style="align-self: flex-start" @onclick="() => AddProperty(entity)">+ Añadir propiedad</button>
+                }
+            </section>
+
+            @if (draft.Architecture == Architectures.CleanDdd)
+            {
+                <section class="stack" aria-labelledby="h-behavior">
+                    <h2 class="section" id="h-behavior">Comportamiento · Clean + DDD</h2>
+                    <div class="table">
+                        <div class="tr head" style="grid-template-columns: 2fr 1.4fr 2fr"><span>Método del agregado</span><span>Modifica</span><span>Evento de dominio</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">@(entity.Name).Create(…) <small class="hint">fábrica</small></span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Created</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Update(…)</span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Updated</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Delete()</span><span class="hint">—</span><span class="mono" style="color: #67E8F9">@(entity.Name)Deleted</span></div>
+                    </div>
+                    <span class="hint">Las reglas de negocio van en <span class="mono">Apply(…)</span> del agregado, y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>. Métodos propios (p. ej. <span class="mono">Rename</span>): próximamente desde aquí; de momento, añádelos en el código.</span>
+                </section>
+            }
+        }
+
+        <ProblemList />
+    </main>
+
+    <CodePanel Tabs="EntityTabs(entity)" Label="Código generado" Empty="Selecciona o crea una entidad." />
+}
+
+@code {
+    private static readonly string[] Types = ["string", "int", "long", "decimal", "bool", "guid", "date", "datetime"];
+
+    private EntityDraft? Selected =>
+        State.Current?.Entities.FirstOrDefault(e => e.Name == State.SelectedEntity) ?? State.Current?.Entities.FirstOrDefault();
+
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+
+    private void Rename(EntityDraft entity, string? name)
+    {
+        entity.Name = name?.Trim() ?? string.Empty;
+        State.SelectedEntity = entity.Name;
+        State.Recompute();
+    }
+
+    private void SetType(PropertyDraft property, ChangeEventArgs e)
+    {
+        property.Type = e.Value?.ToString() ?? "string";
+        State.Recompute();
+    }
+
+    private void AddProperty(EntityDraft entity)
+    {
+        entity.Properties.Add(new PropertyDraft { Name = $"Field{entity.Properties.Count + 1}", Type = "string", Nullable = true });
+        State.Recompute();
+    }
+
+    private static string Generates(PropertyDraft p) => (p.Type, p.Nullable) switch
+    {
+        ("string", false) => $"Required · MaxLength({PropertyTypes.DefaultStringLength})",
+        ("string", true) => $"MaxLength({PropertyTypes.DefaultStringLength}) · columna nullable",
+        ("decimal", _) => "Precisión (18, 2)" + (p.Nullable ? " · nullable" : string.Empty),
+        (_, true) => "Columna nullable",
+        _ => "Columna obligatoria",
+    };
+
+    private static string Plural(EntityDraft entity)
+    {
+        try { return ServiceName.Normalize(entity.EffectivePlural); }
+        catch (MsgException) { return entity.EffectivePlural; }
+    }
+
+    private static string Route(EntityDraft entity) => ServiceName.ToKebab(Plural(entity));
+
+    private IReadOnlyList<CodePanel.Tab> EntityTabs(EntityDraft? entity)
+    {
+        if (entity is null)
+        {
+            return [];
+        }
+
+        var plural = Plural(entity);
+        return [.. State.Preview
+            .Where(f => f.Path.Contains($"/{plural}/", StringComparison.Ordinal)
+                        || f.Path.EndsWith($"/{entity.Name}EndpointsTests.cs", StringComparison.Ordinal)
+                        || f.Path.EndsWith($"/Domain/{entity.Name}Tests.cs", StringComparison.Ordinal))
+            .OrderBy(f => Order(f.Path))
+            .Select(f => new CodePanel.Tab(TabTitle(f.Path), f.Path, f.Content))];
+    }
+
+    private static int Order(string path) =>
+        path.Contains(".Domain/", StringComparison.Ordinal) ? 0
+        : path.Contains(".Application/", StringComparison.Ordinal) ? 1
+        : path.Contains(".Infrastructure/", StringComparison.Ordinal) ? 2
+        : path.StartsWith("src/", StringComparison.Ordinal) ? 3 : 4;
+
+    private static string TabTitle(string path) => Path.GetFileNameWithoutExtension(path);
+}

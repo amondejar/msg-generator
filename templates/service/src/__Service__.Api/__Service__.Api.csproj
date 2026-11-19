@@ -17,7 +17,9 @@
     <!-- @msg:end -->
     <!-- @msg:if openApi -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Scalar.AspNetCore" />
     <!-- @msg:end -->
+    <!-- @msg:if verticalSlice -->
     <!-- @msg:if postgres -->
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <!-- @msg:end -->
@@ -26,8 +28,19 @@
     <!-- @msg:end -->
     <!-- @msg:if persistence -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+    <!-- @msg:end -->
+    <!-- @msg:end -->
+    <!-- @msg:if persistence -->
+    <!-- Startup project for "dotnet ef" migrations. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
     <!-- @msg:end -->
   </ItemGroup>
+  <!-- @msg:if cleanDdd -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\{{Service}}.Application\{{Service}}.Application.csproj" />
+    <ProjectReference Include="..\{{Service}}.Infrastructure\{{Service}}.Infrastructure.csproj" />
+  </ItemGroup>
+  <!-- @msg:end -->
 
 </Project>

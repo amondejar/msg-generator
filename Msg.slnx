@@ -2,6 +2,8 @@
   <Folder Name="/src/">
     <Project Path="src/Msg.Core/Msg.Core.csproj" />
     <Project Path="src/Msg.Cli/Msg.Cli.csproj" />
+    <Project Path="src/Msg.Studio/Msg.Studio.csproj" />
+    <Project Path="src/Msg.Ddd/Msg.Ddd.csproj" />
     <Project Path="src/Msg.ServiceDefaults/Msg.ServiceDefaults.csproj" />
     <Project Path="src/Msg.ServiceDefaults.OpenTelemetry/Msg.ServiceDefaults.OpenTelemetry.csproj" />
     <Project Path="src/Msg.ServiceDefaults.Resilience/Msg.ServiceDefaults.Resilience.csproj" />

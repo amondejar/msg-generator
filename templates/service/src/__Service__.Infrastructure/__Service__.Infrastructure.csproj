@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Implements the Domain and Application contracts: EF Core persistence, repositories, external services. -->
+
+  <PropertyGroup>
+    <RootNamespace>{{Service}}.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- @msg:if postgres -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- @msg:end -->
+    <!-- @msg:if sqlserver -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <!-- @msg:end -->
+    <!-- @msg:if persistence -->
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+    <!-- @msg:end -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\{{Service}}.Application\{{Service}}.Application.csproj" />
+  </ItemGroup>
+
+</Project>

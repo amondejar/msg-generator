@@ -31,6 +31,11 @@ public static class DatabaseExtensions
 
         builder.Services.AddHealthChecks().AddDbContextCheck<{{Service}}DbContext>("database");
 
+        if (builder.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
+        {
+            builder.Services.AddHostedService<DatabaseMigrator>();
+        }
+
         return builder;
     }
 }

@@ -75,7 +75,8 @@ try {
     # The global NuGet cache keeps packages by id+version: drop old Msg.* builds so we test the ones just packed.
     $globalLine = (& dotnet nuget locals global-packages --list | Out-String).Trim()
     $global = $globalLine.Substring($globalLine.IndexOf(':') + 1).Trim()
-    Get-ChildItem $global -Directory -Filter 'msg.servicedefaults*' -ErrorAction SilentlyContinue |
+    Get-ChildItem $global -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'msg.servicedefaults*' -or $_.Name -eq 'msg.ddd' } |
         Remove-Item -Recurse -Force
 
     Step "Generate every feature combination worth checking (MSG $Version)"
@@ -191,11 +192,93 @@ try {
     Invoke-Dotnet $MsgDll new --from (Join-Path $full 'msg.json') -o (Join-Path $Work 'regen') --package-source $Pkgs
     Pass 'msg new --from regenerates the entities'
 
+    Step 'Clean Architecture + DDD'
+    $clean = Join-Path $Work 'clean'
+    Invoke-Dotnet $MsgDll new Catalog -o $clean --architecture clean-ddd --package-source $Pkgs
+    Invoke-Dotnet $MsgDll add entity Product  --path $clean --props 'Name:string, Price:decimal, Description:string?'
+    Invoke-Dotnet $MsgDll add entity Category --path $clean --props 'Title:string, Position:int?' --plural Categories
+    foreach ($p in 'Domain', 'Application', 'Infrastructure', 'Api') {
+        if (-not (Test-Path (Join-Path $clean "src\Catalog.$p\Catalog.$p.csproj"))) { Fail "missing Catalog.$p" }
+    }
+    $agg  = Get-Content (Join-Path $clean 'src\Catalog.Domain\Products\Product.cs') -Raw
+    $cmd  = Get-Content (Join-Path $clean 'src\Catalog.Application\Products\ProductCommands.cs') -Raw
+    $repo = Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\RepositoryRegistration.g.cs') -Raw
+    if ($agg -like '*AggregateRoot<Guid>*' -and $cmd -like '*ICommandHandler<CreateProduct, Guid>*' -and $repo -like '*AddScoped<IProductRepository, ProductRepository>*') {
+        Pass 'Domain / Application / Infrastructure / Api with aggregates, use cases and repositories'
+    } else { Fail 'clean-ddd structure' }
+    $cleanLeft = Get-ChildItem $clean -Recurse -File | Select-String -Pattern '@msg:|\{\{Service\}\}|\{\{Entity\}\}|__Entity__'
+    if ($cleanLeft) { $cleanLeft | Out-Host; Fail 'unrendered markers in clean-ddd' }
+    Pass 'no template markers left in clean-ddd'
+
+    Step 'Team templates (.msg)'
+    $team = Join-Path $Work 'team'
+    New-Item -ItemType Directory -Path (Join-Path $team 'services') | Out-Null
+    Invoke-Dotnet $MsgDll templates eject service/src/__Service__.Api/Program.cs --path $team
+    $teamProgram = Join-Path $team '.msg\templates\service\src\__Service__.Api\Program.cs'
+    Set-Content -Path $teamProgram -Value (@('// {{Company}} conventions') + (Get-Content $teamProgram)) -Encoding utf8
+    Set-Content -Path (Join-Path $team '.msg\config.json') -Value '{ "tokens": { "Company": "Acme" } }' -Encoding utf8
+    Set-Content -Path (Join-Path $team '.msg\templates\service\CODEOWNERS') -Value '* @{{Company}}/backend' -Encoding utf8
+    New-Item -ItemType File -Path (Join-Path $team '.msg\templates\service\Dockerfile') -Force | Out-Null
+    $teamOrders = Join-Path $team 'services\orders'
+    Invoke-Dotnet $MsgDll new Orders -o $teamOrders --package-source $Pkgs
+    Invoke-Dotnet $MsgDll add entity Product --path $teamOrders --props 'Name:string'
+    $firstLine = Get-Content (Join-Path $teamOrders 'src\Orders.Api\Program.cs') -TotalCount 1
+    $owners = (Get-Content (Join-Path $teamOrders 'CODEOWNERS') -Raw).Trim()
+    if ($firstLine -like '*Acme conventions*' -and $owners -eq '* @Acme/backend' -and -not (Test-Path (Join-Path $teamOrders 'Dockerfile'))) {
+        Pass 'team templates: replace, add, remove and tokens (found walking up)'
+    } else { Fail "team templates (first line: $firstLine, CODEOWNERS: $owners)" }
+
+    Step 'msg aspire'
+    $sys = Join-Path $Work 'system'
+    New-Item -ItemType Directory -Path $sys | Out-Null
+    Invoke-Dotnet $MsgDll new Orders  -o (Join-Path $sys 'orders')  --package-source $Pkgs
+    Invoke-Dotnet $MsgDll add entity Order --path (Join-Path $sys 'orders') --props 'Number:string, Total:decimal'
+    Invoke-Dotnet $MsgDll new Billing -o (Join-Path $sys 'billing') --architecture clean-ddd --package-source $Pkgs
+    Invoke-Dotnet $MsgDll add entity Invoice --path (Join-Path $sys 'billing') --db sqlserver --props 'Number:string'
+    Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
+    foreach ($f in 'Shop.AppHost\Shop.AppHost.csproj', 'Shop.AppHost\AppHost.cs', 'Shop.AppHost\MsgServices.g.cs', 'Shop.slnx', '.aspire\settings.json') {
+        if (-not (Test-Path (Join-Path $sys $f))) { Fail "missing $f" }
+    }
+    $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw
+    if ($hostCode -like '*AddProject<Projects.Orders_Api>("orders")*' -and $hostCode -like '*connectionName: "Database"*' -and $hostCode -like '*AddPostgres*' -and $hostCode -like '*AddSqlServer*') {
+        Pass 'AppHost with both services, their databases and health checks'
+    } else { Fail 'AppHost content' }
+    $again = (& dotnet $MsgDll aspire --path $sys --name Shop | Out-String)
+    if ($again -notmatch '(?m)^  [+~]') { Pass 'msg aspire is idempotent' } else { Fail 'msg aspire rewrote files' }
+    Invoke-Dotnet $MsgDll new Notifications -o (Join-Path $sys 'notifications') --package-source $Pkgs
+    Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
+    $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw
+    $hostProj = Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw
+    if ($hostCode -like '*Notifications_Api*' -and $hostProj -like '*Notifications.Api.csproj*') { Pass 'a new service is added to the AppHost' } else { Fail 'new service not added' }
+
+    Step 'msg studio'
+    $studioPort = 5988
+    $studio = Start-Process dotnet -ArgumentList $MsgDll, 'studio', '--path', $sys, '--port', $studioPort, '--no-browser' -PassThru -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $Work 'studio.out.log') -RedirectStandardError (Join-Path $Work 'studio.err.log')
+    $studioBase = "http://127.0.0.1:$studioPort"
+    $studioUp = $false
+    for ($i = 0; $i -lt 50 -and -not $studioUp; $i++) {
+        try { $studioUp = ($Http.GetAsync("$studioBase/").GetAwaiter().GetResult().StatusCode -eq 'OK') } catch { Start-Sleep -Milliseconds 200 }
+    }
+    if (-not $studioUp) { Fail 'studio did not start' }
+    $homeHtml = $Http.GetStringAsync("$studioBase/").GetAwaiter().GetResult()
+    foreach ($s in 'Orders', 'Billing', 'Notifications') {
+        if ($homeHtml -notlike "*>$s<*") { Fail "studio: $s missing on the system page" }
+    }
+    Pass 'studio lists the services of the system'
+    foreach ($p in 'service', 'entities', 'apply', '_framework/blazor.web.js') {
+        $code = [int]$Http.GetAsync("$studioBase/$p").GetAwaiter().GetResult().StatusCode
+        if ($code -ne 200) { Stop-Process -Id $studio.Id -Force; Fail "studio: /$p returned $code" }
+    }
+    Pass 'studio pages render and blazor.web.js is served (interactive UI)'
+    Stop-Process -Id $studio.Id -Force
+
     Step 'Full services'
-    foreach ($s in 'full', 'auth', 'regen') {
+    foreach ($s in 'full', 'auth', 'regen', 'clean', 'team\services\orders') {
         Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
         Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
     }
+    Invoke-Dotnet build (Join-Path $sys 'Shop.AppHost') -c Release -v q -nologo; Pass 'Aspire AppHost builds'
 
     Write-Host 'Smoke test OK' -ForegroundColor Green
 }
