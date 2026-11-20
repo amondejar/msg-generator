@@ -25,6 +25,9 @@ public static class TemplateSource
         return [.. files.Values.OrderBy(f => f.Path, StringComparer.Ordinal)];
     }
 
+    /// <summary>The user's half of a partial class (X.cs next to X.g.cs on purpose). Older templates had no partial classes.</summary>
+    private static bool IsPartialStub(string content) => content.Contains(" partial ", StringComparison.Ordinal);
+
     /// <summary>MSG's own templates only (what "msg templates eject" copies).</summary>
     public static IReadOnlyList<TemplateFile> LoadEmbedded(string templateName)
     {
@@ -40,6 +43,20 @@ public static class TemplateSource
         if (files.Count == 0)
         {
             throw new MsgException($"No se encontró la plantilla '{templateName}'.");
+        }
+
+        // X.cs next to X.g.cs: a template of an older MSG left behind (e.g. a zip unpacked over another version).
+        var stale = files
+            .Where(f => f.Path.EndsWith(".g.cs", StringComparison.Ordinal)
+                        && files.Any(o => o.Path == f.Path[..^".g.cs".Length] + ".cs" && !IsPartialStub(o.Content)))
+            .Select(f => f.Path[..^".g.cs".Length] + ".cs")
+            .ToList();
+        if (stale.Count > 0)
+        {
+            throw new MsgException(
+                $"La plantilla '{templateName}' mezcla archivos de dos versiones de MSG: {string.Join(", ", stale)} " +
+                $"{(stale.Count == 1 ? "es" : "son")} de una versión anterior (ahora se generan como .g.cs). Borra la carpeta templates del repositorio de MSG, " +
+                "vuelve a copiar la de esta versión y recompila.");
         }
 
         return files;

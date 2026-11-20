@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Msg.Core.Generation;
 using Msg.Core.Model;
 
 namespace Msg.Studio.State;
@@ -41,18 +42,25 @@ public static partial class ServiceCommands
 
     public static bool IsValidMigrationName(string? name) => name is not null && MigrationName().IsMatch(name);
 
-    /// <summary>Where the migrations live: the Api (vertical slice) or the Infrastructure project (clean + DDD).</summary>
-    public static string MigrationsProject(ServiceDefinition definition)
-    {
-        ArgumentNullException.ThrowIfNull(definition);
-        var service = definition.Service.Name;
-        return definition.Architecture == Architectures.CleanDdd ? $"src/{service}.Infrastructure" : $"src/{service}.Api";
-    }
+    public static string MigrationsProject(ServiceDefinition definition) => MigrationReviewer.MigrationsProject(definition);
 
-    public static IReadOnlyList<string> AddMigration(ServiceDefinition definition, string name)
+    public static IReadOnlyList<string> AddMigration(ServiceDefinition definition, string name) => Ef(definition, "migrations", "add", name);
+
+    public static IReadOnlyList<string> RemoveMigration(ServiceDefinition definition) => Ef(definition, "migrations", "remove");
+
+    public static IReadOnlyList<string> HasPendingModelChanges(ServiceDefinition definition) => Ef(definition, "migrations", "has-pending-model-changes");
+
+    /// <summary>SQL of one migration, from the previous one ("0" = empty database) to <paramref name="to"/>, written to <paramref name="outputFile"/>.</summary>
+    public static IReadOnlyList<string> Script(ServiceDefinition definition, string from, string to, string outputFile) =>
+        Ef(definition, "migrations", "script", from, to, "--output", outputFile);
+
+    /// <summary>"dotnet ef ..." with the right projects for the architecture.</summary>
+    private static List<string> Ef(ServiceDefinition definition, params string[] verb)
     {
         ArgumentNullException.ThrowIfNull(definition);
-        var args = new List<string> { "ef", "migrations", "add", name, "--project", MigrationsProject(definition) };
+        var args = new List<string> { "ef" };
+        args.AddRange(verb);
+        args.AddRange(["--project", MigrationsProject(definition)]);
         if (definition.Architecture == Architectures.CleanDdd)
         {
             args.AddRange(["--startup-project", $"src/{definition.Service.Name}.Api"]);
@@ -61,17 +69,8 @@ public static partial class ServiceCommands
         return args;
     }
 
-    public static IReadOnlyList<string> Migrations(string serviceDirectory, ServiceDefinition definition)
-    {
-        var folder = Path.Combine(serviceDirectory, MigrationsProject(definition), "Migrations");
-        return Directory.Exists(folder)
-            ? [.. Directory.EnumerateFiles(folder, "*.cs")
-                .Select(Path.GetFileNameWithoutExtension)
-                .OfType<string>()
-                .Where(f => !f.EndsWith(".Designer", StringComparison.Ordinal) && !f.EndsWith("ModelSnapshot", StringComparison.Ordinal))
-                .Order(StringComparer.Ordinal)]
-            : [];
-    }
+    public static IReadOnlyList<string> Migrations(string serviceDirectory, ServiceDefinition definition) =>
+        MigrationReviewer.List(serviceDirectory, definition);
 
     public static string SuggestMigrationName(IReadOnlyList<string> existing, ServiceDefinition definition)
     {

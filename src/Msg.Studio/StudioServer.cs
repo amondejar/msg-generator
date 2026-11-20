@@ -31,6 +31,7 @@ public static class StudioServer
         builder.Services.AddScoped<StudioState>();
         builder.Services.AddSingleton<ProcessRunner>();   // disposed on shutdown: kills every process it started
         builder.Services.AddSingleton<Toolchain>();
+        builder.Services.AddSingleton<MigrationAssistant>();
         builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
         var app = builder.Build();

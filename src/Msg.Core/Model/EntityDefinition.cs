@@ -19,6 +19,18 @@ public sealed record EntityDefinition
     public required string Plural { get; init; }
 
     public required IReadOnlyList<PropertyDefinition> Properties { get; init; }
+
+    /// <summary>
+    /// File layout of the entity's code. Null (entities created before MSG 0.10): the files are the user's
+    /// and MSG can't edit the entity until it is converted. <see cref="CurrentLayout"/>: properties, contracts,
+    /// mapping and CRUD live in <c>*.g.cs</c> files that MSG regenerates; the user's code lives in partial classes.
+    /// </summary>
+    public int? Layout { get; init; }
+
+    public const int CurrentLayout = 2;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsEditable => Layout >= CurrentLayout;
 }
 
 public sealed record PropertyDefinition

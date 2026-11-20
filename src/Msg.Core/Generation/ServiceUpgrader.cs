@@ -76,6 +76,14 @@ public static partial class ServiceUpgrader
                 "      generated_code = true");
         }
 
+        var legacy = definition.Entities.Where(e => !e.IsEditable).Select(e => e.Name).ToList();
+        if (legacy.Count > 0)
+        {
+            hints.Add(
+                $"Entidades creadas antes de MSG 0.10 ({string.Join(", ", legacy)}): MSG no puede editarlas. Para cambiar sus " +
+                "propiedades desde el Studio o con 'msg entity update', conviértelas antes: msg entity convert <Entidad> --dry-run");
+        }
+
         return hints;
     }
 }

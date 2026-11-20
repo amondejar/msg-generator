@@ -21,6 +21,16 @@ internal static partial class Cli
           msg new --from <msg.json> [opc.]   Crea un servicio a partir de una definición
           msg add entity <Nombre> --props "Campo:tipo, ..." [--plural <P>] [--db postgres|sqlserver] [--path <carpeta>]
                                              Añade una entidad con CRUD, EF Core y tests
+          msg entity list [--path <carpeta>]          Entidades del servicio y sus propiedades
+          msg entity update <Entidad> --props "..." [--rename Viejo=Nuevo]... [--path] [--dry-run]
+                                             Cambia las propiedades (las que falten se eliminan)
+          msg entity remove <Entidad> [--delete-own-files] [--path] [--dry-run]
+                                             Elimina una entidad (tus archivos solo con --delete-own-files)
+          msg entity convert <Entidad> [--path] [--dry-run]
+                                             Pasa una entidad anterior a 0.10 al formato editable
+          msg migration review [--path <carpeta>] [--dry-run]
+                                             Revisa la última migración de EF Core: aplica los renombrados
+                                             (RenameColumn) y avisa de lo que borra datos
           msg aspire [--name <Sistema>] [--path <carpeta>]
                                              AppHost de Aspire con todos los servicios de la carpeta
           msg studio [--path <carpeta>] [--port 5150] [--no-browser]
@@ -87,6 +97,8 @@ internal static partial class Cli
             "new" => New(args[1..], output),
             "upgrade" => Upgrade(args[1..], output),
             "add" => Add(args[1..], output),
+            "entity" => Entity(args[1..], output),
+            "migration" => Migration(args[1..], output),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
@@ -590,6 +602,212 @@ internal static partial class Cli
         return nameOverride is null
             ? definition
             : definition with { Service = definition.Service with { Name = ServiceName.Normalize(nameOverride) } };
+    }
+
+    private static int Entity(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: msg entity list|update|remove|convert <Entidad> [opciones]. Usa 'msg --help'.";
+        if (args.Length == 0)
+        {
+            throw new MsgException(usage);
+        }
+
+        var action = args[0];
+        string? name = null, props = null;
+        var path = ".";
+        bool dryRun = false, deleteOwn = false;
+        var renames = new List<PropertyRename>();
+
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--props" when action == "update":
+                    props = Value(args, ref i, args[i]);
+                    break;
+                case "--rename" when action == "update":
+                    var pair = Value(args, ref i, args[i]).Split('=', StringSplitOptions.TrimEntries);
+                    if (pair.Length != 2 || pair[0].Length == 0 || pair[1].Length == 0)
+                    {
+                        throw new MsgException("--rename espera Viejo=Nuevo (p. ej. --rename Name=Title).");
+                    }
+
+                    renames.Add(new PropertyRename { Entity = string.Empty, From = pair[0], To = pair[1] });
+                    break;
+                case "--delete-own-files" when action == "remove":
+                    deleteOwn = true;
+                    break;
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    if (name is null && !args[i].StartsWith('-'))
+                    {
+                        name = args[i];
+                        break;
+                    }
+
+                    throw new MsgException($"Argumento inesperado '{args[i]}'.");
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        if (action == "list")
+        {
+            ListEntities(output, current);
+            return 0;
+        }
+
+        var entityName = name ?? throw new MsgException($"Falta el nombre de la entidad. {usage}");
+        var updated = action switch
+        {
+            "update" => ServicePlanner.UpdateEntity(
+                current,
+                entityName,
+                PropertyTypes.Parse(props ?? throw new MsgException("Falta --props con la lista completa de propiedades (las que no estén se eliminan).")),
+                renames),
+            "remove" => ServicePlanner.RemoveEntity(current, entityName),
+            "convert" => ServicePlanner.ConvertEntity(current, entityName),
+            _ => throw new MsgException(usage),
+        };
+
+        var team = TeamTemplates.Find(path);
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = team }, deleteOwn);
+        PrintPlan(output, plan, dryRun);
+
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+            if (action == "convert")
+            {
+                output.WriteLine();
+                output.WriteLine("La base de datos no cambia. Si habías personalizado los archivos reemplazados, pasa esos cambios a las clases partial.");
+            }
+            else if (current.Persistence is not null)
+            {
+                var service = current.Service.Name;
+                var efProjects = current.Architecture == Architectures.CleanDdd
+                    ? $"--project src/{service}.Infrastructure --startup-project src/{service}.Api"
+                    : $"--project src/{service}.Api";
+                output.WriteLine();
+                output.WriteLine("Siguiente paso: crea la migración y revísala (o hazlo desde el Studio, que hace las dos cosas):");
+                output.WriteLine($"  dotnet ef migrations add <Nombre> {efProjects}");
+                output.WriteLine($"  msg migration review{(path == "." ? string.Empty : $" --path {path}")}");
+            }
+        }
+
+        return 0;
+    }
+
+    private static int Migration(string[] args, TextWriter output)
+    {
+        if (args.Length == 0 || args[0] != "review")
+        {
+            throw new MsgException("Uso: msg migration review [--path <carpeta>] [--dry-run]");
+        }
+
+        var path = ".";
+        var dryRun = false;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'.");
+            }
+        }
+
+        var review = MigrationReviewer.ReviewLatest(path, apply: !dryRun);
+        output.WriteLine($"Migración {review.Name} ({review.Path})");
+        if (review.Findings.Count == 0)
+        {
+            output.WriteLine("  ✔ No borra datos ni cambia columnas existentes.");
+        }
+
+        foreach (var finding in review.Findings)
+        {
+            var symbol = finding.Level switch
+            {
+                FindingLevel.Danger => "✖ BORRA DATOS:",
+                FindingLevel.Warning => "⚠",
+                _ => "✔",
+            };
+            output.WriteLine($"  {symbol} {finding.Message}");
+        }
+
+        if (review.Changed)
+        {
+            output.WriteLine(dryRun
+                ? "  (--dry-run: la migración no se ha modificado)"
+                : "  La migración se ha corregido; los renombrados ya no están pendientes en msg.json.");
+        }
+
+        if (review.DeletesData)
+        {
+            output.WriteLine();
+            output.WriteLine("Si no quieres perder esos datos, deshaz la migración (dotnet ef migrations remove) antes de aplicarla.");
+        }
+
+        return 0;
+    }
+
+    private static void ListEntities(TextWriter output, ServiceDefinition definition)
+    {
+        if (definition.Entities.Count == 0)
+        {
+            output.WriteLine("El servicio no tiene entidades. Añade una con: msg add entity <Nombre> --props \"...\"");
+            return;
+        }
+
+        foreach (var entity in definition.Entities)
+        {
+            var props = string.Join(", ", entity.Properties.Select(p => $"{p.Name}:{p.Type}{(p.Nullable ? "?" : string.Empty)}"));
+            output.WriteLine($"{entity.Name} ({entity.Plural}){(entity.IsEditable ? string.Empty : "  [anterior a 0.10: msg entity convert " + entity.Name + "]")}");
+            output.WriteLine($"  --props \"{props}\"");
+        }
+
+        foreach (var rename in definition.PendingRenames ?? [])
+        {
+            output.WriteLine($"  renombrado pendiente de migración: {rename.Entity}.{rename.From} → {rename.To}");
+        }
+    }
+
+    private static void PrintPlan(TextWriter output, ChangePlan plan, bool dryRun)
+    {
+        if (plan.Changes.Count == 0)
+        {
+            output.WriteLine("Nada que cambiar: el código ya coincide con msg.json.");
+            return;
+        }
+
+        output.WriteLine(dryRun ? "Cambios (--dry-run, no se escribe nada):" : "✔ Cambios aplicados:");
+        foreach (var change in plan.Changes)
+        {
+            var symbol = change.Kind switch
+            {
+                ChangeKind.Create => "+",
+                ChangeKind.Regenerate or ChangeKind.Merge => "~",
+                ChangeKind.Replace => "!",
+                _ => "-",
+            };
+            var note = change.TouchesUserCode ? "   (archivo tuyo)" : string.Empty;
+            output.WriteLine($"  {symbol} {change.Path}{note}");
+        }
+
+        foreach (var warning in plan.Warnings)
+        {
+            output.WriteLine();
+            output.WriteLine($"⚠ {warning}");
+        }
     }
 
     private static string ResolveFeature(string input, string arg) =>

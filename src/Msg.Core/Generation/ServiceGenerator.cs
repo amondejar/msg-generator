@@ -73,23 +73,9 @@ public static class ServiceGenerator
 
         RenderTemplateSet(TemplateName, tokens, isEnabled, result, team);
 
-        foreach (var entity in definition.Entities)
+        foreach (var entity in definition.Entities.Where(e => e.IsEditable))
         {
-            var entityTokens = new Dictionary<string, string>(tokens, StringComparer.Ordinal);
-            foreach (var (key, value) in EntityCodeGen.Tokens(entity, definition.Features))
-            {
-                entityTokens[key] = value;
-            }
-
-            bool EntityConditions(string feature) =>
-                feature == "hasRequiredString" ? EntityCodeGen.HasRequiredString(entity) : isEnabled(feature);
-
-            var architectureTemplates = definition.Architecture == Architectures.CleanDdd
-                ? CleanEntityTemplateName
-                : EntityTemplateName;
-
-            RenderTemplateSet(architectureTemplates, entityTokens, EntityConditions, result, team);
-            RenderTemplateSet(EntityTestsTemplateName, entityTokens, EntityConditions, result, team);
+            RenderEntity(definition, entity, tokens, isEnabled, result, team);
         }
 
         result.Add(new GeneratedFile(DefinitionFileName, Serialize(definition)));
@@ -100,6 +86,88 @@ public static class ServiceGenerator
         }
 
         return result;
+    }
+
+    /// <summary>Files of one entity only (same content as in <see cref="Generate"/>).</summary>
+    public static IReadOnlyList<GeneratedFile> GenerateEntity(ServiceDefinition definition, EntityDefinition entity, GenerationOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(entity);
+
+        var tokens = BuildTokens(definition with { MsgVersion = MsgInfo.Version });
+        foreach (var (key, value) in options?.Team?.Tokens ?? new Dictionary<string, string>())
+        {
+            tokens.TryAdd(key, value);
+        }
+
+        var result = new List<GeneratedFile>();
+        RenderEntity(definition, entity, tokens, Conditions(definition), result, options?.Team);
+        return result;
+    }
+
+    private static void RenderEntity(
+        ServiceDefinition definition,
+        EntityDefinition entity,
+        Dictionary<string, string> tokens,
+        Func<string, bool> isEnabled,
+        List<GeneratedFile> result,
+        TeamTemplates? team)
+    {
+        var entityTokens = new Dictionary<string, string>(tokens, StringComparer.Ordinal);
+        foreach (var (key, value) in EntityCodeGen.Tokens(entity, definition.Features))
+        {
+            entityTokens[key] = value;
+        }
+
+        bool EntityConditions(string feature) =>
+            feature == "hasRequiredString" ? EntityCodeGen.HasRequiredString(entity) : isEnabled(feature);
+
+        var architectureTemplates = definition.Architecture == Architectures.CleanDdd
+            ? CleanEntityTemplateName
+            : EntityTemplateName;
+
+        RenderTemplateSet(architectureTemplates, entityTokens, EntityConditions, result, team);
+        RenderTemplateSet(EntityTestsTemplateName, entityTokens, EntityConditions, result, team);
+    }
+
+    /// <summary>
+    /// Files that "msg add entity" created before MSG 0.10 (layout without .g.cs). They are the user's;
+    /// MSG only touches them when the user converts the entity to the editable layout.
+    /// </summary>
+    public static IReadOnlyList<string> LegacyEntityPaths(ServiceDefinition definition, EntityDefinition entity)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(entity);
+
+        var s = definition.Service.Name;
+        var (e, p) = (entity.Name, entity.Plural);
+        string[] tests = [$"tests/{s}.Api.Tests/Features/{e}EndpointsTests.cs"];
+
+        if (definition.Architecture != Architectures.CleanDdd)
+        {
+            return [
+                $"src/{s}.Api/Features/{p}/{e}.cs",
+                $"src/{s}.Api/Features/{p}/{e}Configuration.cs",
+                $"src/{s}.Api/Features/{p}/{e}Contracts.cs",
+                $"src/{s}.Api/Features/{p}/{e}Endpoints.cs",
+                .. tests,
+            ];
+        }
+
+        return [
+            $"src/{s}.Domain/{p}/{e}.cs",
+            $"src/{s}.Domain/{p}/{e}Events.cs",
+            $"src/{s}.Domain/{p}/I{e}Repository.cs",
+            $"src/{s}.Application/{p}/{e}Commands.cs",
+            $"src/{s}.Application/{p}/{e}Queries.cs",
+            $"src/{s}.Application/{p}/{e}EventHandlers.cs",
+            $"src/{s}.Infrastructure/Persistence/{p}/{e}Configuration.cs",
+            $"src/{s}.Infrastructure/Persistence/{p}/{e}Repository.cs",
+            $"src/{s}.Api/Features/{p}/{e}Contracts.cs",
+            $"src/{s}.Api/Features/{p}/{e}Endpoints.cs",
+            $"tests/{s}.Api.Tests/Domain/{e}Tests.cs",
+            .. tests,
+        ];
     }
 
     private static string LocalNuGetConfig(string source)
