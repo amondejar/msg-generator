@@ -182,6 +182,19 @@ msg migration review                                             # corrige la mi
   migración, **Crear y revisar migración** la crea y la corrige, **Ver SQL** enseña el script y **Deshacer esta migración**
   la quita (y devuelve sus renombrados a `msg.json`) mientras no se haya aplicado.
 
+## Servicios en otras carpetas (`msg.workspace.json`)
+
+Un sistema es una carpeta con servicios dentro, pero un servicio puede vivir en otra ruta (otro disco, otro repositorio):
+
+```bash
+msg new Payments -o D:/apis/payments
+msg workspace add D:/apis/payments --path C:/servicios   # lo apunta en C:/servicios/msg.workspace.json
+msg workspace list --path C:/servicios
+msg aspire --path C:/servicios                            # el AppHost lo incluye
+```
+
+En el Studio, **Nuevo servicio → Ubicación** (con un explorador de carpetas) y **Añadir un servicio de otra carpeta** hacen lo mismo.
+
 ## Mensajería entre servicios (Kafka)
 
 ```bash

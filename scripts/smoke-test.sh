@@ -337,6 +337,14 @@ grep -q 'AddProject<Projects.Orders_Api>("orders")' "$SYS/Shop.AppHost/MsgServic
   && grep -q 'AddPostgres' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'AddSqlServer' "$SYS/Shop.AppHost/MsgServices.g.cs" \
   && pass "AppHost with both services, their databases and health checks" || fail "AppHost content"
 [[ -z "$("${MSG[@]}" aspire --path "$SYS" --name Shop | grep '^  [+~]')" ]] && pass "msg aspire is idempotent" || fail "msg aspire rewrote files"
+"${MSG[@]}" new Payments -o "$WORK/elsewhere/payments" --package-source "$PKGS" >/dev/null
+"${MSG[@]}" workspace add "$WORK/elsewhere/payments" --path "$SYS" >/dev/null
+"${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+grep -q '"../elsewhere/payments"' "$SYS/msg.workspace.json" \
+  && grep -q 'elsewhere\\payments\\src\\Payments.Api\\Payments.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && grep -q 'AddProject<Projects.Payments_Api>("payments")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+  && "${MSG[@]}" workspace list --path "$SYS" | grep -q "msg.workspace.json" \
+  && pass "a service in another folder joins the system (msg.workspace.json → AppHost)" || fail "workspace add"
 "${MSG[@]}" new Notifications -o "$SYS/notifications" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
 grep -q 'Notifications_Api' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'Notifications.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \

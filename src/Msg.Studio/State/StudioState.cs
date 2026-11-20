@@ -73,15 +73,25 @@ public sealed class StudioState(StudioOptions options)
         Recompute();
     }
 
-    public void StartNewService(string name)
+    /// <param name="location">Folder where the service folder is created. Null: the workspace. Elsewhere, the
+    /// service is listed in msg.workspace.json so the Studio and the AppHost find it.</param>
+    public void StartNewService(string name, string? location = null)
     {
         var normalized = ServiceName.Normalize(name);
-        var directory = ServiceName.ToKebab(normalized);
-        if (Directory.Exists(Path.Combine(Workspace, directory)))
+        var parent = string.IsNullOrWhiteSpace(location) ? Workspace : Path.GetFullPath(Path.Combine(Workspace, location.Trim()));
+        if (Directory.Exists(parent) && Directory.EnumerateFiles(parent, "*.csproj").Any())
         {
-            throw new MsgException($"Ya existe la carpeta '{directory}' en el sistema.");
+            throw new MsgException($"'{parent}' es la carpeta de un proyecto .NET: elige la carpeta donde quieres el servicio.");
         }
 
+        var full = Path.Combine(parent, ServiceName.ToKebab(normalized));
+        if (Directory.Exists(full))
+        {
+            throw new MsgException($"Ya existe la carpeta '{full}'.");
+        }
+
+        // Inside the workspace: relative ("orders"); elsewhere: the full path.
+        var directory = WorkspaceFile.IsInside(Workspace, full) ? Path.GetRelativePath(Workspace, full) : full;
         Current = new ServiceDraft { Directory = directory, IsNew = true, Name = normalized };
         SelectedEntity = null;
         Recompute();
@@ -177,14 +187,41 @@ public sealed class StudioState(StudioOptions options)
 
         var count = Plan.Changes.Count;
         Plan.Apply();
-        var directory = Current.Directory;
+        var full = FullPath(Current.Directory);
+        WorkspaceFile.Add(Workspace, full);   // no-op inside the workspace
         Reload();
-        LastMessage = $"✔ {count} archivo(s) escritos en {Path.Combine(Workspace, directory)}";
+        LastMessage = $"✔ {count} archivo(s) escritos en {full}";
 
-        if (Services.FirstOrDefault(s => s.Directory == directory) is { } service)
+        if (Services.FirstOrDefault(s => FullPath(s.Directory) == full) is { } service)
         {
             Open(service);
         }
+    }
+
+    public string FullPath(string serviceDirectory) => Path.GetFullPath(Path.Combine(Workspace, serviceDirectory));
+
+    /// <summary>True for services outside the workspace folder (listed in msg.workspace.json).</summary>
+    public bool IsExternal(WorkspaceService service) => !WorkspaceFile.IsInside(Workspace, FullPath(service.Directory));
+
+    /// <summary>Adds an existing MSG service from another folder to this system.</summary>
+    public void AddExternalService(string directory)
+    {
+        var full = Path.GetFullPath(Path.Combine(Workspace, directory.Trim()));
+        if (!WorkspaceFile.Add(Workspace, full) && !Services.Any(s => FullPath(s.Directory) == full))
+        {
+            throw new MsgException($"'{full}' no se ha añadido: ¿tiene src/<Servicio>.Api?");
+        }
+
+        Reload();
+        Changed?.Invoke();
+    }
+
+    /// <summary>Stops showing an external service (its files stay where they are).</summary>
+    public void ForgetService(WorkspaceService service)
+    {
+        WorkspaceFile.Remove(Workspace, FullPath(service.Directory));
+        Reload();
+        Changed?.Invoke();
     }
 
     public AspireResult GenerateAppHost(string name)

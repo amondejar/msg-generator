@@ -450,6 +450,14 @@ namespace Catalog.Infrastructure.Migrations
     } else { Fail 'AppHost content' }
     $again = (& dotnet $MsgDll aspire --path $sys --name Shop | Out-String)
     if ($again -notmatch '(?m)^  [+~]') { Pass 'msg aspire is idempotent' } else { Fail 'msg aspire rewrote files' }
+    $elsewhere = Join-Path $Work 'elsewhere\payments'
+    Invoke-Dotnet $MsgDll new Payments -o $elsewhere --package-source $Pkgs
+    Invoke-Dotnet $MsgDll workspace add $elsewhere --path $sys
+    Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
+    $out = Get-DotnetOutput $MsgDll workspace list --path $sys
+    if ((Get-Content (Join-Path $sys 'msg.workspace.json') -Raw) -like '*../elsewhere/payments*' -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -like '*elsewhere\payments\src\Payments.Api\Payments.Api.csproj*' -and (Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw) -like '*AddProject<Projects.Payments_Api>("payments")*' -and $out -like '*msg.workspace.json*') {
+        Pass 'a service in another folder joins the system (msg.workspace.json -> AppHost)'
+    } else { Fail 'workspace add' }
     Invoke-Dotnet $MsgDll new Notifications -o (Join-Path $sys 'notifications') --package-source $Pkgs
     Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
     $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw

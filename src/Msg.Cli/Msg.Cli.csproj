@@ -18,6 +18,12 @@
     -->
     <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
     <PackageOutputPath>../../artifacts</PackageOutputPath>
+
+    <!--
+      Web SDK projects run from their own folder with "dotnet run". MSG works on the folder you call it from,
+      so a relative path such as "orders" is resolved where you are, not inside src/Msg.Cli.
+    -->
+    <RunWorkingDirectory>$(MSBuildStartupDirectory)</RunWorkingDirectory>
     <Description>MSG: generador de microservicios .NET con las convenciones de tu equipo.</Description>
   </PropertyGroup>
 

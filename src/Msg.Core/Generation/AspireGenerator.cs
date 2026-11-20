@@ -39,6 +39,19 @@ public static class AspireGenerator
         var rootFull = Path.GetFullPath(root);
         var found = new List<AspireService>();
         Walk(rootFull, 0);
+
+        // Services in other folders, listed in msg.workspace.json.
+        foreach (var directory in WorkspaceFile.ExternalServices(rootFull))
+        {
+            var definition = ServiceGenerator.Deserialize(File.ReadAllText(Path.Combine(directory, ServiceGenerator.DefinitionFileName)));
+            var relative = Path.GetRelativePath(rootFull, directory).Replace('\\', '/');
+            var service = new AspireService(relative, definition);
+            if (File.Exists(Path.Combine(rootFull, service.ApiProject)) && !found.Any(f => f.RelativeDirectory == relative))
+            {
+                found.Add(service);
+            }
+        }
+
         return [.. found.OrderBy(s => s.RelativeDirectory, StringComparer.Ordinal)];
 
         void Walk(string directory, int depth)
@@ -117,7 +130,7 @@ public static class AspireGenerator
         }
 
         var csprojPath = $"{appHost}/{appHost}.csproj";
-        var csproj = Csproj(appHostName, services);
+        var csproj = Csproj(root, appHostName, services);
         if (File.Exists(Path.Combine(root, csprojPath)))
         {
             if (ProjectFileMerger.Merge(Path.Combine(root, csprojPath), csproj))
@@ -155,7 +168,7 @@ public static class AspireGenerator
         return new AspireResult(appHost, services, created, updated);
     }
 
-    private static string Csproj(string name, IReadOnlyList<AspireService> services)
+    private static string Csproj(string root, string name, IReadOnlyList<AspireService> services)
     {
         var providers = services.Select(s => s.Definition.Persistence?.Provider).Where(p => p is not null).Distinct().ToList();
         var packages = new StringBuilder();
@@ -174,7 +187,9 @@ public static class AspireGenerator
             packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Kafka\" Version=\"{AspireVersion}\" />\n");
         }
 
-        var projects = string.Concat(services.Select(s => $"    <ProjectReference Include=\"..\\{s.ApiProject.Replace('/', '\\')}\" />\n"));
+        // Relative to the AppHost folder; absolute for a service on another drive.
+        var projects = string.Concat(services.Select(s =>
+            $"    <ProjectReference Include=\"{Path.GetRelativePath(Path.GetFullPath(Path.Combine(root, $"{name}.AppHost")), Path.GetFullPath(Path.Combine(root, s.ApiProject))).Replace('/', '\\')}\" />\n"));
 
         return $"""
             <Project Sdk="Aspire.AppHost.Sdk/{AspireVersion}">

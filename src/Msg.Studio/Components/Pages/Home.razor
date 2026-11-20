@@ -32,6 +32,10 @@
                         · @(d.Persistence?.Provider ?? "sin base de datos")
                         · @d.Entities.Count entidad(es)
                     </small>
+                    @if (State.IsExternal(service))
+                    {
+                        <small class="mono hint" title="Fuera de la carpeta del sistema (msg.workspace.json)">📁 @State.FullPath(service.Directory)</small>
+                    }
                 </button>
             }
 
@@ -40,8 +44,23 @@
                     Nuevo servicio
                     <input type="text" placeholder="Orders" @bind="newName" @bind:event="oninput" @onkeydown="OnKey" aria-describedby="new-hint" />
                 </label>
-                <span class="hint" id="new-hint">Se creará en la carpeta <span class="mono">@NewFolder</span></span>
+                <span class="field" style="gap: 4px">
+                    Ubicación
+                    <FolderPicker @bind-Value="newLocation" Label="Carpeta donde crear el servicio" />
+                </span>
+                <span class="hint" id="new-hint">
+                    Se creará en <span class="mono">@NewFolder</span>@if (!WorkspaceFile.IsInside(State.Workspace, newLocation)) {<span>: fuera de la carpeta del sistema, así que MSG lo apunta en <span class="mono">msg.workspace.json</span> para encontrarlo (y para el AppHost).</span>}
+                </span>
                 <button type="button" class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(newName)" @onclick="Create">+ Crear servicio</button>
+            </div>
+
+            <div class="card stack" style="border-style: dashed">
+                <span class="field" style="gap: 4px">
+                    Añadir un servicio de otra carpeta
+                    <FolderPicker @bind-Value="externalPath" Label="Carpeta del servicio (la que tiene msg.json)" />
+                </span>
+                <span class="hint">Un servicio de MSG que vive fuera de <span class="mono">@State.Workspace</span> (otro disco, otro repositorio). No se mueve ni se copia.</span>
+                <button type="button" class="btn" disabled="@string.IsNullOrWhiteSpace(externalPath)" @onclick="AddExternal">+ Añadir al sistema</button>
             </div>
         </div>
         @if (error is not null)
@@ -165,6 +184,8 @@
 
 @code {
     private string newName = string.Empty;
+    private string newLocation = string.Empty;
+    private string externalPath = string.Empty;
     private string? error;
     private string systemName = string.Empty;
     private AspireResult? aspire;
@@ -173,7 +194,7 @@
     {
         get
         {
-            try { return string.IsNullOrWhiteSpace(newName) ? "…" : ServiceName.ToKebab(ServiceName.Normalize(newName)); }
+            try { return Path.Combine(newLocation, string.IsNullOrWhiteSpace(newName) ? "…" : ServiceName.ToKebab(ServiceName.Normalize(newName))); }
             catch (MsgException) { return "…"; }
         }
     }
@@ -183,6 +204,8 @@
     protected override async Task OnInitializedAsync()
     {
         State.Initialize();
+        newLocation = State.Workspace;
+        externalPath = Path.GetDirectoryName(State.Workspace) ?? State.Workspace;
         systemName = SafeName(Path.GetFileName(State.Workspace));
         Runner.Changed += OnChanged;
         await CheckDockerAsync();
@@ -235,8 +258,22 @@
         {
             error = null;
             State.LastMessage = null;
-            State.StartNewService(newName);
+            State.StartNewService(newName, newLocation);
             Nav.NavigateTo("service");
+        }
+        catch (MsgException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private void AddExternal()
+    {
+        try
+        {
+            error = null;
+            State.AddExternalService(externalPath);
+            State.LastMessage = $"✔ Servicio de {externalPath} añadido al sistema.";
         }
         catch (MsgException ex)
         {

@@ -38,6 +38,9 @@ internal static partial class Cli
                                              Eventos de integración entre servicios (outbox, inbox, reintentos)
           msg events on|off <Entidad>... [--path] [--dry-run]
                                              Publica <Entidad>Created/Updated/Deleted para otros servicios
+          msg workspace list|add <carpeta>|remove <carpeta> [--path <sistema>]
+                                             Servicios de otras carpetas que forman parte del sistema
+                                             (msg.workspace.json; los usan msg aspire y msg studio)
           msg migration review [--path <carpeta>] [--dry-run]
                                              Revisa la última migración de EF Core: aplica los renombrados
                                              (RenameColumn) y avisa de lo que borra datos
@@ -112,6 +115,7 @@ internal static partial class Cli
             "feature" => Feature(args[1..], output),
             "messaging" => Messaging(args[1..], output),
             "events" => Events(args[1..], output),
+            "workspace" => WorkspaceCommand(args[1..], output),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
@@ -888,6 +892,66 @@ internal static partial class Cli
         if (!dryRun && plan.Changes.Count > 0)
         {
             plan.Apply();
+        }
+
+        return 0;
+    }
+
+    private static int WorkspaceCommand(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: msg workspace list | msg workspace add <carpeta> | msg workspace remove <carpeta>  [--path <sistema>]";
+        if (args.Length == 0 || args[0] is not ("list" or "add" or "remove"))
+        {
+            throw new MsgException(usage);
+        }
+
+        var root = ".";
+        string? target = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (args[i] == "--path")
+            {
+                root = Value(args, ref i, args[i]);
+            }
+            else if (target is null && args[0] != "list" && !args[i].StartsWith('-'))
+            {
+                target = args[i];
+            }
+            else
+            {
+                throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+            }
+        }
+
+        if (args[0] == "list")
+        {
+            var services = AspireGenerator.Discover(root);
+            if (services.Count == 0)
+            {
+                output.WriteLine("No hay servicios de MSG en el sistema.");
+            }
+
+            foreach (var service in services)
+            {
+                var full = Path.GetFullPath(Path.Combine(root, service.RelativeDirectory));
+                output.WriteLine($"  {service.Name,-20} {full}{(WorkspaceFile.IsInside(root, full) ? string.Empty : "   (msg.workspace.json)")}");
+            }
+
+            return 0;
+        }
+
+        var path = target ?? throw new MsgException($"Falta la carpeta del servicio. {usage}");
+        if (args[0] == "add")
+        {
+            output.WriteLine(WorkspaceFile.Add(root, path)
+                ? $"✔ {Path.GetFullPath(path)} forma parte del sistema (msg.workspace.json). Regenera el AppHost con msg aspire."
+                : "Nada que añadir: ya está en el sistema (o dentro de su carpeta, donde MSG lo encuentra solo).");
+        }
+        else
+        {
+            output.WriteLine(WorkspaceFile.Remove(root, path)
+                ? $"✔ {path} ya no forma parte del sistema (sus archivos siguen donde estaban). Regenera el AppHost con msg aspire."
+                : "No estaba en msg.workspace.json.");
         }
 
         return 0;
