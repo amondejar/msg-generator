@@ -28,6 +28,11 @@ internal static partial class Cli
                                              Elimina una entidad (tus archivos solo con --delete-own-files)
           msg entity convert <Entidad> [--path] [--dry-run]
                                              Pasa una entidad anterior a 0.10 al formato editable
+          msg feature list|on|off <feature>... [--path <carpeta>] [--dry-run]
+                                             Activa o desactiva features en un servicio existente
+                                             (observability, openApi, resilience, auth, tests, docker, ci)
+          msg feature convert [--path] [--dry-run]
+                                             Pasa un Program.cs anterior a 0.12 a MsgWiring.g.cs
           msg migration review [--path <carpeta>] [--dry-run]
                                              Revisa la última migración de EF Core: aplica los renombrados
                                              (RenameColumn) y avisa de lo que borra datos
@@ -99,6 +104,7 @@ internal static partial class Cli
             "add" => Add(args[1..], output),
             "entity" => Entity(args[1..], output),
             "migration" => Migration(args[1..], output),
+            "feature" => Feature(args[1..], output),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
@@ -697,6 +703,84 @@ internal static partial class Cli
                 output.WriteLine($"  dotnet ef migrations add <Nombre> {efProjects}");
                 output.WriteLine($"  msg migration review{(path == "." ? string.Empty : $" --path {path}")}");
             }
+        }
+
+        return 0;
+    }
+
+    private static int Feature(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: msg feature list|on|off <feature>... | msg feature convert  [--path <carpeta>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("list" or "on" or "off" or "convert"))
+        {
+            throw new MsgException(usage);
+        }
+
+        var action = args[0];
+        var path = ".";
+        var dryRun = false;
+        var names = new List<string>();
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    if (args[i].StartsWith('-') || action is "list" or "convert")
+                    {
+                        throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    names.Add(ResolveFeature(args[i], args[i]));
+                    break;
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        var team = TeamTemplates.Find(path);
+        var options = new GenerationOptions { Team = team };
+
+        if (action == "list")
+        {
+            foreach (var name in FeatureSet.Names)
+            {
+                output.WriteLine($"  [{(current.Features.IsEnabled(name) ? "x" : " ")}] {name}");
+            }
+
+            if (!ServicePlanner.UsesMsgWiring(path, current))
+            {
+                output.WriteLine();
+                output.WriteLine("Program.cs es anterior a MSG 0.12: para cambiar features, primero: msg feature convert --dry-run");
+            }
+
+            return 0;
+        }
+
+        ChangePlan plan;
+        if (action == "convert")
+        {
+            plan = ServicePlanner.ConvertWiring(path, current, options);
+        }
+        else
+        {
+            if (names.Count == 0)
+            {
+                throw new MsgException($"Indica qué features. Válidas: {string.Join(", ", FeatureSet.Names)}.");
+            }
+
+            var features = names.Aggregate(current.Features, (set, name) => set.With(name, action == "on"));
+            plan = ServicePlanner.Plan(path, current, ServicePlanner.SetFeatures(path, current, features), options);
+        }
+
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
         }
 
         return 0;

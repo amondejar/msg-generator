@@ -18,7 +18,7 @@ else
                 Lo que eliges aquí se guarda en <code>msg.json</code>. La vista previa muestra el código que se va a generar.
                 @if (!draft.CanEditStructure)
                 {
-                    <span>En un servicio que ya existe solo se pueden <a href="entities">añadir entidades</a>: el resto ya es código tuyo.</span>
+                    <span>En un servicio que ya existe puedes activar o desactivar features y <a href="entities">cambiar las entidades</a>; la arquitectura y la base de datos quedan fijas.</span>
                 }
             </p>
         </div>
@@ -53,13 +53,28 @@ else
 
         <section class="stack" aria-labelledby="h-features">
             <h2 class="section" id="h-features">Features</h2>
+            @if (!draft.CanEditFeatures)
+            {
+                <div class="msg warn" role="status">
+                    <b>Program.cs es de una versión de MSG anterior a la 0.12</b> y configura las features a mano, así que MSG no puede cambiarlas sin pisarlo.
+                    Al pasarlo a <span class="mono">MsgWiring.g.cs</span>, Program.cs queda en unas pocas líneas (<span class="mono">builder.AddMsgWiring()</span>, <span class="mono">app.UseMsgWiring()</span>) y las features se activan y desactivan desde aquí.
+                    Si habías añadido código propio en Program.cs, el diff te enseña tu versión para volver a ponerlo.
+                    <div class="row" style="margin-top: 10px">
+                        <button type="button" class="btn btn-primary" @onclick="() => { draft.ConvertWiring = true; State.Recompute(); }">Pasar Program.cs a MsgWiring</button>
+                    </div>
+                </div>
+            }
+            else if (!draft.IsNew)
+            {
+                <span class="hint">Al desactivar una feature, MSG quita sus paquetes y borra sus archivos solo si siguen como él los generó; si los cambiaste, te avisa en lugar de borrarlos.</span>
+            }
             <div class="grid">
                 @foreach (var (key, name, description, package) in FeatureList)
                 {
                     var on = draft.Features.IsEnabled(key);
                     <div class="card feature">
                         <button type="button" class="switch" aria-pressed="@(on ? "true" : "false")" aria-label="@((on ? "Desactivar " : "Activar ") + name)"
-                                disabled="@(!draft.CanEditStructure)" @onclick="() => Toggle(key, !on)"></button>
+                                disabled="@(!draft.CanEditFeatures)" @onclick="() => Toggle(key, !on)"></button>
                         <div class="stack" style="gap: 4px; min-width: 0">
                             <b>@name</b>
                             <small>@description</small>

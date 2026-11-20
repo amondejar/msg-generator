@@ -276,6 +276,54 @@ public sealed partial class Product
     Invoke-Dotnet $MsgDll entity update Category --path $full --props 'Title:string, Position:int?, Color:string?'
     Pass 'legacy entity: blocked, converted (shows user files), then editable'
 
+    Step 'Features on/off in an existing service (msg feature)'
+    $fs = Join-Path $Work 'features'
+    Invoke-Dotnet $MsgDll new Shop -o $fs --package-source $Pkgs
+    Invoke-Dotnet $MsgDll add entity Product --path $fs --props 'Name:string'
+    Invoke-Dotnet $MsgDll feature off docker openApi --path $fs
+    $apiProj = Join-Path $fs 'src\Shop.Api\Shop.Api.csproj'
+    $wiring = Join-Path $fs 'src\Shop.Api\MsgWiring.g.cs'
+    if (-not (Test-Path (Join-Path $fs 'Dockerfile')) -and (Get-Content $apiProj -Raw) -notlike '*Scalar.AspNetCore*' -and (Get-Content $wiring -Raw) -notlike '*Scalar.AspNetCore*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Program.cs') -Raw) -like '*AddMsgWiring()*') {
+        Pass 'feature off removes its files, packages and wiring (Program.cs untouched)'
+    } else { Fail 'feature off' }
+    Invoke-Dotnet $MsgDll feature on docker openApi --path $fs
+    if ((Test-Path (Join-Path $fs 'Dockerfile')) -and (Get-Content $apiProj -Raw) -like '*Include="Scalar.AspNetCore"*' -and (Get-Content $wiring -Raw) -like '*MapScalarApiReference*') {
+        Pass 'feature on brings them back'
+    } else { Fail 'feature on' }
+    $w = Get-Content $wiring -Raw
+    [System.IO.File]::WriteAllText($wiring, $w.Replace('builder.AddFeatures();', 'builder.AddFeatures(); // tweak'))
+    $out = Get-DotnetOutput $MsgDll feature on auth --path $fs --dry-run
+    if ($out -like '*Has editado a mano*') { Pass 'a hand-edited .g.cs is detected before overwriting it' } else { $out | Out-Host; Fail 'hand-edit detection' }
+    Invoke-Dotnet $MsgDll feature on auth --path $fs
+    $lp = Join-Path $Work 'legacy-program'
+    Copy-Item -Recurse $fs $lp
+    $legacyProgram = @'
+using Shop.Api;
+using Shop.Api.Endpoints;
+using Shop.Api.Features;
+using Msg.ServiceDefaults;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.AddMsgServiceDefaults();
+builder.Services.AddValidatedOptions<ServiceOptions>(ServiceOptions.SectionName);
+builder.Services.AddValidation();
+builder.AddFeatures();
+var app = builder.Build();
+app.UseMsgServiceDefaults();
+app.MapMsgDefaultEndpoints();
+var v1 = app.MapGroup("/api/v1");
+v1.MapPingEndpoints();
+v1.MapFeatures();
+await app.RunAsync().ConfigureAwait(false);
+'@
+    Set-Content -Path (Join-Path $lp 'src\Shop.Api\Program.cs') -Value $legacyProgram -Encoding UTF8
+    $out = Get-DotnetOutput $MsgDll feature off docker --path $lp
+    if ($LASTEXITCODE -eq 0) { Fail 'features changed with a Program.cs from before 0.12' }
+    Invoke-Dotnet $MsgDll feature convert --path $lp
+    if ((Get-Content (Join-Path $lp 'src\Shop.Api\Program.cs') -Raw) -notlike '*AddMsgWiring()*') { Fail 'feature convert' }
+    Invoke-Dotnet $MsgDll feature off docker --path $lp
+    Pass 'Program.cs from before 0.12: blocked, converted, then editable'
+
     Step 'Guided migrations (msg migration review)'
     $mig = Join-Path $Work 'migration'
     Copy-Item -Recurse $clean $mig
@@ -406,7 +454,7 @@ namespace Catalog.Infrastructure.Migrations
     Stop-Process -Id $studio.Id -Force
 
     Step 'Full services'
-    foreach ($s in 'full', 'auth', 'regen', 'clean', 'team\services\orders') {
+    foreach ($s in 'full', 'auth', 'regen', 'clean', 'features', 'team\services\orders') {
         Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
         Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
     }

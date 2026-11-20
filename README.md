@@ -137,6 +137,33 @@ msg entity convert Product                 # entidades creadas antes de MSG 0.10
   reemplaza la entidad y los endpoints por clases `partial` vacías y borra contratos, configuración, comandos, queries y tests
   (pasan a `.g.cs`); eventos, handlers y repositorio se quedan como están. Revisa el `--dry-run` y pasa tus cambios a las partial.
 
+## Features en un servicio existente (`msg feature`)
+
+```bash
+msg feature list
+msg feature off docker openApi --dry-run
+msg feature on auth
+msg feature convert --dry-run     # Program.cs de antes de la 0.12
+```
+
+Desde la 0.12, `Program.cs` solo llama a `builder.AddMsgWiring()` y `app.UseMsgWiring()`; lo que activa cada feature
+(Msg.ServiceDefaults.*, OpenAPI + Scalar, auth, validación, entidades) está en `MsgWiring.g.cs`, que MSG regenera.
+Tus servicios y middleware van en `Program.cs`, después de esas llamadas.
+
+Al activar o desactivar una feature, MSG:
+
+- regenera `MsgWiring.g.cs` y el resto de `.g.cs`;
+- añade o quita sus paquetes en `.csproj` y `Directory.Packages.props` (solo los que puso él; los tuyos no los toca);
+- crea sus archivos (Dockerfile, workflow de CI, proyecto de tests…) y, al desactivarla, los borra **solo si siguen como él los
+  generó**; si los cambiaste, te avisa en lugar de borrarlos o actualizarlos.
+
+En el Studio, los interruptores de Features funcionan también en servicios existentes, con el mismo plan y diff antes de aplicar.
+
+### `.g.cs` editados a mano
+
+Cada `.g.cs` termina con `// msg-hash: …`. Si lo editas a mano, MSG lo detecta y te avisa antes de regenerarlo (y marca el
+archivo como tuyo en la revisión): pasa ese cambio a la clase `partial` o a las plantillas del equipo.
+
 ## Migraciones guiadas
 
 Después de cambiar entidades, la migración de EF Core tiene que reflejarlo sin perder datos:
@@ -256,5 +283,6 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 4. ✅ **Fase 3**: editor visual `msg studio` (Blazor Server sobre `Msg.Core`).
 5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`msg entity`, Studio).
 6. ✅ Migraciones guiadas: renombrados sin perder datos, avisos de lo que borra datos, SQL y deshacer (`msg migration review`, Studio).
-7. Siguiente: quitar paquetes que ya no se usan, detectar `.g.cs` editados a mano; métodos propios del agregado y relaciones entre entidades desde el Studio, mensajería entre servicios (outbox), publicar en nuget.org.
+7. ✅ Features editables en servicios existentes (`msg feature`, Studio), paquetes y archivos que sobran se quitan, `.g.cs` editados a mano detectados.
+8. Siguiente: métodos propios del agregado y relaciones entre entidades desde el Studio, mensajería entre servicios (outbox), publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

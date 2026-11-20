@@ -28,8 +28,14 @@ public sealed record FileChange(string Path, ChangeKind Kind, string Content, st
 {
     public bool IsGenerated => Path.EndsWith(".g.cs", StringComparison.Ordinal) || Path == ServiceGenerator.DefinitionFileName;
 
+    /// <summary>A generated file the user edited by hand (its msg-hash doesn't match): regenerating loses those edits.</summary>
+    public bool HandEdited { get; init; }
+
     /// <summary>True when the change rewrites or removes code written by the user.</summary>
-    public bool TouchesUserCode => Kind is ChangeKind.Replace || (Kind is ChangeKind.Delete && !IsGenerated);
+    public bool TouchesUserCode => HandEdited || Kind is ChangeKind.Replace || (Kind is ChangeKind.Delete && !IsGenerated && Previous is not null && !IsUnchangedDelete);
+
+    /// <summary>Set by the planner when a deleted file is exactly as MSG generated it (nothing of the user's is lost).</summary>
+    public bool IsUnchangedDelete { get; init; }
 }
 
 /// <summary>Every change MSG would make in a service folder. Previewable, then applied as a whole.</summary>

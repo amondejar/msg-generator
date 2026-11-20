@@ -5,8 +5,8 @@ using System.Text.RegularExpressions;
 namespace Msg.Core.Generation;
 
 /// <summary>
-/// Merge-only edits of files the user owns: adds what MSG would render but is missing.
-/// Never removes or rewrites anything. Pure functions over text, so changes can be previewed.
+/// Edits of files the user owns: adds what MSG would render but is missing, and removes only items MSG itself
+/// rendered for something that is now turned off. Pure functions over text, so changes can be previewed.
 /// </summary>
 internal static partial class ProjectFileMerger
 {
@@ -52,6 +52,34 @@ internal static partial class ProjectFileMerger
         }
 
         return text;
+    }
+
+    /// <summary>
+    /// Removes the items MSG rendered before (<paramref name="oldRendered"/>) but no longer renders
+    /// (<paramref name="newRendered"/>), e.g. the OpenAPI packages when OpenAPI is turned off. Items the user added are kept.
+    /// </summary>
+    /// <returns>The new text, or null when nothing is removed.</returns>
+    public static string? RemoveItems(string text, string oldRendered, string newRendered)
+    {
+        var keep = Item().Matches(newRendered)
+            .Select(m => $"{m.Groups["item"].Value}|{Normalize(m.Groups["id"].Value)}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var obsolete = Item().Matches(oldRendered)
+            .Select(m => $"{m.Groups["item"].Value}|{Normalize(m.Groups["id"].Value)}")
+            .Where(k => !keep.Contains(k))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (obsolete.Count == 0)
+        {
+            return null;
+        }
+
+        var result = Regex.Replace(text, """[ \t]*<(?<item>PackageVersion|PackageReference|ProjectReference)\s+Include="(?<id>[^"]+)"[^>]*/>[ \t]*\r?\n?""", m =>
+            obsolete.Contains($"{m.Groups["item"].Value}|{Normalize(m.Groups["id"].Value)}") ? string.Empty : m.Value);
+
+        // ItemGroups left empty.
+        result = Regex.Replace(result, @"[ \t]*<ItemGroup>\s*</ItemGroup>[ \t]*\r?\n(?:[ \t]*\r?\n)?", string.Empty);
+        return result == text ? null : result;
     }
 
     /// <summary>Adds the ConnectionStrings entries of <paramref name="rendered"/> missing in an appsettings file.</summary>
