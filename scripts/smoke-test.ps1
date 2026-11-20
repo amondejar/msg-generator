@@ -1,6 +1,6 @@
 # End-to-end check for Windows (PowerShell 5.1 or 7+): build + test + pack MSG, generate services
 # that consume the local Msg.* packages, build them with warnings-as-errors, run one and hit its
-# endpoints, check "msg upgrade", then build and test the full variants.
+# endpoints, check "stratum upgrade", then build and test the full variants.
 #
 # Usage (from the repo root):
 #   powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
@@ -12,7 +12,7 @@ Add-Type -AssemblyName System.Net.Http
 
 $Root   = Split-Path -Parent $PSScriptRoot
 $Work   = Join-Path ([IO.Path]::GetTempPath()) ("msg-smoke-" + [guid]::NewGuid().ToString('N'))
-$MsgDll = Join-Path $Root 'src\Msg.Cli\bin\Release\net10.0\msg.dll'
+$MsgDll = Join-Path $Root 'src\Msg.Cli\bin\Release\net10.0\stratum.dll'
 $Pkgs   = Join-Path $Work 'packages'
 $Port   = 5987
 $Base   = "http://127.0.0.1:$Port"
@@ -172,7 +172,7 @@ try {
     $badLog = (Get-Content (Join-Path $Work 'bad.out.log') -Raw) + (Get-Content (Join-Path $Work 'bad.err.log') -Raw)
     if ($badApp.ExitCode -ne 0 -and $badLog -like '*SemVer*') { Pass 'invalid Service:Version stops startup with a clear message' } else { Fail 'no validation message' }
 
-    Step 'msg upgrade'
+    Step 'stratum upgrade'
     $upgraded = Join-Path $Work 'upgraded'
     Copy-Item (Join-Path $Work 'core') $upgraded -Recurse
     Invoke-Dotnet $MsgDll upgrade --path $upgraded --to 9.9.9
@@ -182,7 +182,7 @@ try {
         Pass 'upgrade bumps Msg.* packages and msg.json'
     } else { Fail 'upgrade' }
 
-    Step 'msg add entity'
+    Step 'stratum add entity'
     $full = Join-Path $Work 'full'
     Invoke-Dotnet $MsgDll add entity Product  --path $full --props 'Name:string, Price:decimal, Description:string?, Stock:int'
     Invoke-Dotnet $MsgDll add entity Category --path $full --props 'Title:string, Position:int?' --plural Categories
@@ -202,7 +202,7 @@ try {
     } else { Fail 'entity wiring' }
 
     Invoke-Dotnet $MsgDll new --from (Join-Path $full 'msg.json') -o (Join-Path $Work 'regen') --package-source $Pkgs
-    Pass 'msg new --from regenerates the entities'
+    Pass 'stratum new --from regenerates the entities'
 
     Step 'Clean Architecture + DDD'
     $clean = Join-Path $Work 'clean'
@@ -222,7 +222,7 @@ try {
     if ($cleanLeft) { $cleanLeft | Out-Host; Fail 'unrendered markers in clean-ddd' }
     Pass 'no template markers left in clean-ddd'
 
-    Step 'Editable entities (msg entity)'
+    Step 'Editable entities (stratum entity)'
     $cp = Join-Path $clean 'src\Catalog.Domain\Products\Product.cs'
     $gp = Join-Path $clean 'src\Catalog.Domain\Products\Product.g.cs'
     # User code in the partial class: must survive every regeneration.
@@ -276,7 +276,7 @@ public sealed partial class Product
     Invoke-Dotnet $MsgDll entity update Category --path $full --props 'Title:string, Position:int?, Color:string?'
     Pass 'legacy entity: blocked, converted (shows user files), then editable'
 
-    Step 'Features on/off in an existing service (msg feature)'
+    Step 'Features on/off in an existing service (stratum feature)'
     $fs = Join-Path $Work 'features'
     Invoke-Dotnet $MsgDll new Shop -o $fs --package-source $Pkgs
     Invoke-Dotnet $MsgDll add entity Product --path $fs --props 'Name:string'
@@ -324,7 +324,7 @@ await app.RunAsync().ConfigureAwait(false);
     Invoke-Dotnet $MsgDll feature off docker --path $lp
     Pass 'Program.cs from before 0.12: blocked, converted, then editable'
 
-    Step 'Messaging (msg messaging / msg events)'
+    Step 'Messaging (stratum messaging / stratum events)'
     $out = Get-DotnetOutput $MsgDll events on Product --path $fs
     if ($LASTEXITCODE -eq 0) { Fail 'events published without messaging' }
     Invoke-Dotnet $MsgDll messaging on --broker kafka --path $fs
@@ -357,8 +357,14 @@ await app.RunAsync().ConfigureAwait(false);
     if ($out -like '*ha cambiado los datos de ProductCreated*' -and $sync -like '*IntegrationEvents/Shop/ProductCreated.g.cs*' -and (Get-Content (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\Shop\ProductCreated.g.cs') -Raw) -like '*string? Sku*') {
         Pass 'a changed contract is detected and --sync copies it again'
     } else { Fail 'subscribe --sync' }
+    Invoke-Dotnet $MsgDll events off Product --path $fs
+    Invoke-Dotnet $MsgDll subscribe --sync --prune --path $clean
+    if (-not (Test-Path (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\Shop')) -and (Get-Content (Join-Path $clean 'msg.json') -Raw) -notlike '*"service": "Shop"*') {
+        Pass '--prune drops subscriptions to events no longer published'
+    } else { Fail 'subscribe --prune' }
+    Invoke-Dotnet $MsgDll events on Product --path $fs
 
-    Step 'Guided migrations (msg migration review)'
+    Step 'Guided migrations (stratum migration review)'
     $mig = Join-Path $Work 'migration'
     Copy-Item -Recurse $clean $mig
     $migDir = Join-Path $mig 'src\Catalog.Infrastructure\Migrations'
@@ -442,7 +448,7 @@ namespace Catalog.Infrastructure.Migrations
         Pass 'team templates: replace, add, remove and tokens (found walking up)'
     } else { Fail "team templates (first line: $firstLine, CODEOWNERS: $owners)" }
 
-    Step 'msg aspire'
+    Step 'stratum aspire'
     $sys = Join-Path $Work 'system'
     New-Item -ItemType Directory -Path $sys | Out-Null
     Invoke-Dotnet $MsgDll new Orders  -o (Join-Path $sys 'orders')  --package-source $Pkgs
@@ -463,7 +469,7 @@ namespace Catalog.Infrastructure.Migrations
         Pass 'AppHost with both services, their databases and health checks'
     } else { Fail 'AppHost content' }
     $again = (& dotnet $MsgDll aspire --path $sys --name Shop | Out-String)
-    if ($again -notmatch '(?m)^  [+~]') { Pass 'msg aspire is idempotent' } else { Fail 'msg aspire rewrote files' }
+    if ($again -notmatch '(?m)^  [+~]') { Pass 'stratum aspire is idempotent' } else { Fail 'stratum aspire rewrote files' }
     $elsewhere = Join-Path $Work 'elsewhere\payments'
     Invoke-Dotnet $MsgDll new Payments -o $elsewhere --package-source $Pkgs
     Invoke-Dotnet $MsgDll workspace add $elsewhere --path $sys
@@ -474,11 +480,19 @@ namespace Catalog.Infrastructure.Migrations
     } else { Fail 'workspace add' }
     Invoke-Dotnet $MsgDll new Notifications -o (Join-Path $sys 'notifications') --package-source $Pkgs
     Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
+    $legacy = Join-Path $sys 'legacy'
+    Invoke-Dotnet $MsgDll new Legacy -o $legacy --package-source $Pkgs
+    Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
+    $out = Get-DotnetOutput $MsgDll service remove $legacy --path $sys
+    if ($out -notlike '*No se ha tocado nada*' -or -not (Test-Path $legacy)) { $out | Out-Host; Fail 'service remove (dry run)' }
+    Invoke-Dotnet $MsgDll service remove $legacy --path $sys --yes
+    $appHostFiles = (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) + (Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw) + (Get-Content (Join-Path $sys 'Shop.slnx') -Raw)
+    if (-not (Test-Path $legacy) -and $appHostFiles -notlike '*Legacy*') { Pass 'service remove: dry run first, then folder and AppHost references gone' } else { Fail 'service remove' }
     $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw
     $hostProj = Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw
     if ($hostCode -like '*Notifications_Api*' -and $hostProj -like '*Notifications.Api.csproj*') { Pass 'a new service is added to the AppHost' } else { Fail 'new service not added' }
 
-    Step 'msg studio'
+    Step 'stratum studio'
     $studioPort = 5988
     $studio = Start-Process dotnet -ArgumentList $MsgDll, 'studio', '--path', $sys, '--port', $studioPort, '--no-browser' -PassThru -NoNewWindow `
         -RedirectStandardOutput (Join-Path $Work 'studio.out.log') -RedirectStandardError (Join-Path $Work 'studio.err.log')
@@ -493,7 +507,7 @@ namespace Catalog.Infrastructure.Migrations
         if ($homeHtml -notlike "*>$s<*") { Fail "studio: $s missing on the system page" }
     }
     Pass 'studio lists the services of the system'
-    foreach ($p in 'service', 'entities', 'apply', '_framework/blazor.web.js') {
+    foreach ($p in 'services', 'events', 'run', 'templates', 'service', 'entities', 'service/data', 'service/messaging', 'service/code', 'service/remove', 'apply', '_framework/blazor.web.js') {
         $code = [int]$Http.GetAsync("$studioBase/$p").GetAwaiter().GetResult().StatusCode
         if ($code -ne 200) { Stop-Process -Id $studio.Id -Force; Fail "studio: /$p returned $code" }
     }

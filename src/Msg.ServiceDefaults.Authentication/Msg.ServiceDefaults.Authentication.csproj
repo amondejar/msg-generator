@@ -3,7 +3,7 @@
   <PropertyGroup>
     <RootNamespace>Msg.ServiceDefaults</RootNamespace>
     <IsPackable>true</IsPackable>
-    <Description>MSG service defaults: JWT bearer authentication, secure by default (authenticated fallback policy).</Description>
+    <Description>Stratum service defaults: JWT bearer authentication, secure by default (authenticated fallback policy).</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -6,7 +6,7 @@ namespace Msg.Core.Generation;
 
 public enum FindingLevel
 {
-    /// <summary>Nothing to worry about (e.g. a rename MSG fixed).</summary>
+    /// <summary>Nothing to worry about (e.g. a rename Stratum fixed).</summary>
     Info,
 
     /// <summary>Can fail or change data with some rows (type change, column made required...).</summary>
@@ -19,7 +19,7 @@ public enum FindingLevel
 public sealed record MigrationFinding(FindingLevel Level, string Message);
 
 /// <summary>Result of reviewing one EF Core migration.</summary>
-/// <param name="Source">The migration source after MSG's fixes (equal to the original when <paramref name="Changed"/> is false).</param>
+/// <param name="Source">The migration source after Stratum's fixes (equal to the original when <paramref name="Changed"/> is false).</param>
 /// <param name="Renames">Renames from msg.json that this migration now performs (to restore them if the migration is removed).</param>
 public sealed record MigrationReview(
     string Name,
@@ -128,7 +128,7 @@ public static partial class MigrationReviewer
         var down = Body(source, "Down");
         if (up is null || down is null)
         {
-            return new MigrationReview(name, path, [new MigrationFinding(FindingLevel.Warning, "No se reconoce el formato de la migración: MSG no la ha revisado.")], [], false, source);
+            return new MigrationReview(name, path, [new MigrationFinding(FindingLevel.Warning, "No se reconoce el formato de la migración: Stratum no la ha revisado.")], [], false, source);
         }
 
         var nl = source.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
@@ -177,9 +177,9 @@ public static partial class MigrationReviewer
             applied.Add(rename);
 
             findings.Add(sameColumn
-                ? new MigrationFinding(FindingLevel.Info, $"Renombrado {label}: MSG ha cambiado DropColumn + AddColumn por RenameColumn, los datos se conservan.")
+                ? new MigrationFinding(FindingLevel.Info, $"Renombrado {label}: Stratum ha cambiado DropColumn + AddColumn por RenameColumn, los datos se conservan.")
                 : new MigrationFinding(FindingLevel.Warning,
-                    $"Renombrado {label} con cambio de tipo: MSG usa RenameColumn + AlterColumn. Los datos se conservan si la base de datos puede convertir los valores; si no, la migración fallará al aplicarse."));
+                    $"Renombrado {label} con cambio de tipo: Stratum usa RenameColumn + AlterColumn. Los datos se conservan si la base de datos puede convertir los valores; si no, la migración fallará al aplicarse."));
         }
 
         // 2. Everything else that deletes or may break data (renames already fixed are skipped).

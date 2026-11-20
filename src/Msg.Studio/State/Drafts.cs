@@ -21,7 +21,7 @@ public sealed class PropertyDraft
 }
 
 /// <summary>
-/// Editable entity. Existing entities with the editable layout (MSG 0.10+) can change their properties or be removed;
+/// Editable entity. Existing entities with the editable layout (Stratum 0.10+) can change their properties or be removed;
 /// older ones must be converted first.
 /// </summary>
 public sealed class EntityDraft
@@ -32,7 +32,7 @@ public sealed class EntityDraft
 
     public bool IsNew { get; init; }
 
-    /// <summary>False for entities created before MSG 0.10 (until <see cref="Convert"/> is set).</summary>
+    /// <summary>False for entities created before Stratum 0.10 (until <see cref="Convert"/> is set).</summary>
     public bool IsLegacy { get; init; }
 
     /// <summary>Marked to be removed when the changes are applied.</summary>
@@ -97,7 +97,7 @@ public sealed class ServiceDraft
 
     public bool CanEditStructure => IsNew;
 
-    /// <summary>Program.cs delegates to MsgWiring.g.cs (MSG 0.12+): features can be turned on and off.</summary>
+    /// <summary>Program.cs delegates to MsgWiring.g.cs (Stratum 0.12+): features can be turned on and off.</summary>
     public bool UsesWiring { get; set; }
 
     /// <summary>Program.cs from before 0.12 marked to be rewritten to use MsgWiring.g.cs.</summary>

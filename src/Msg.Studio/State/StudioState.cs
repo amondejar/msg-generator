@@ -13,7 +13,7 @@ public sealed class StudioOptions
     /// <summary>Service folder to open on start, relative to <see cref="Workspace"/>.</summary>
     public string? OpenService { get; init; }
 
-    /// <summary>Local folder with packed Msg.* packages, passed to new services (see "msg new --package-source").</summary>
+    /// <summary>Local folder with packed Msg.* packages, passed to new services (see "stratum new --package-source").</summary>
     public string? PackageSource { get; init; }
 }
 
@@ -203,7 +203,7 @@ public sealed class StudioState(StudioOptions options)
     /// <summary>True for services outside the workspace folder (listed in msg.workspace.json).</summary>
     public bool IsExternal(WorkspaceService service) => !WorkspaceFile.IsInside(Workspace, FullPath(service.Directory));
 
-    /// <summary>Adds an existing MSG service from another folder to this system.</summary>
+    /// <summary>Adds an existing Stratum service from another folder to this system.</summary>
     public void AddExternalService(string directory)
     {
         var full = Path.GetFullPath(Path.Combine(Workspace, directory.Trim()));
@@ -248,6 +248,35 @@ public sealed class StudioState(StudioOptions options)
             Subscriptions = [.. draft.Subscriptions],
         };
         return ServicePlanner.CheckSubscriptions(probe, Services.Select(s => s.Definition));
+    }
+
+    /// <summary>Everything removing the open service implies (nothing is touched).</summary>
+    public ServiceRemovalPlan PlanRemoval(ServiceDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        return ServiceRemoval.Plan(Workspace, FullPath(draft.Directory));
+    }
+
+    /// <summary>Removes the service (see <see cref="ServiceRemoval"/>) and closes it.</summary>
+    public IReadOnlyList<string> RemoveService(ServiceRemovalPlan plan, bool deleteFolder)
+    {
+        var done = ServiceRemoval.Apply(plan, deleteFolder);
+        Current = null;
+        SelectedEntity = null;
+        Plan = null;
+        Reload();
+        LastMessage = $"✔ {plan.ServiceName} eliminado. " + string.Join(" ", done);
+        Changed?.Invoke();
+        return done;
+    }
+
+    /// <summary>Other services subscribed to the events of an entity of the open service.</summary>
+    public IReadOnlyList<string> ConsumersOf(ServiceDraft draft, string entity)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        return [.. Services
+            .Where(s => (s.Definition.Subscriptions ?? []).Any(sub => sub.Service == draft.Name && sub.Entity == entity))
+            .Select(s => s.Definition.Service.Name)];
     }
 
     public IReadOnlyList<EventRoute> EventRoutes() => EventMap.Build(Services.Select(s => s.Definition));
@@ -325,7 +354,7 @@ public sealed class StudioState(StudioOptions options)
             }
         }
 
-        // Existing entities: convert, remove or update them (same rules as "msg entity ...").
+        // Existing entities: convert, remove or update them (same rules as "stratum entity ...").
         foreach (var entity in draft.Entities.Where(e => !e.IsNew))
         {
             try

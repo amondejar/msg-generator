@@ -68,7 +68,7 @@ public static partial class PropertyTypes
 
             if (ReservedProperties.Contains(name))
             {
-                throw new MsgException($"'{name}' lo genera MSG automáticamente (Id, CreatedAt, UpdatedAt). Quítalo de --props.");
+                throw new MsgException($"'{name}' lo genera Stratum automáticamente (Id, CreatedAt, UpdatedAt). Quítalo de --props.");
             }
 
             if (result.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))

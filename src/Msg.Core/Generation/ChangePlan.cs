@@ -5,15 +5,15 @@ public enum ChangeKind
     /// <summary>A file that doesn't exist yet. If it isn't a *.g.cs file, from then on it belongs to the user.</summary>
     Create,
 
-    /// <summary>A *.g.cs file (or msg.json) owned by MSG, rewritten from msg.json.</summary>
+    /// <summary>A *.g.cs file (or msg.json) owned by Stratum, rewritten from msg.json.</summary>
     Regenerate,
 
     /// <summary>A user file that only gets missing entries added (packages, connection strings).</summary>
     Merge,
 
     /// <summary>
-    /// A user file rewritten by MSG. Only happens when the user explicitly converts an entity created
-    /// before MSG 0.10 to the editable layout.
+    /// A user file rewritten by Stratum. Only happens when the user explicitly converts an entity created
+    /// before Stratum 0.10 to the editable layout.
     /// </summary>
     Replace,
 
@@ -34,11 +34,11 @@ public sealed record FileChange(string Path, ChangeKind Kind, string Content, st
     /// <summary>True when the change rewrites or removes code written by the user.</summary>
     public bool TouchesUserCode => HandEdited || Kind is ChangeKind.Replace || (Kind is ChangeKind.Delete && !IsGenerated && Previous is not null && !IsUnchangedDelete);
 
-    /// <summary>Set by the planner when a deleted file is exactly as MSG generated it (nothing of the user's is lost).</summary>
+    /// <summary>Set by the planner when a deleted file is exactly as Stratum generated it (nothing of the user's is lost).</summary>
     public bool IsUnchangedDelete { get; init; }
 }
 
-/// <summary>Every change MSG would make in a service folder. Previewable, then applied as a whole.</summary>
+/// <summary>Every change Stratum would make in a service folder. Previewable, then applied as a whole.</summary>
 public sealed record ChangePlan(string Directory, IReadOnlyList<FileChange> Changes, IReadOnlyList<string> Warnings)
 {
     public void Apply()

@@ -3,14 +3,13 @@
 @inject StudioState State
 @inject NavigationManager Nav
 @inject ProcessRunner Runner
-@inject Toolchain Tools
 
-<PageTitle>Sistema · msg studio</PageTitle>
+<PageTitle>Resumen · Stratum Studio</PageTitle>
 
 <main class="content">
     <div>
-        <h1>Sistema</h1>
-        <p class="lead">Los servicios MSG de <span class="mono">@State.Workspace</span>. Abre uno para añadirle entidades o crea uno nuevo.</p>
+        <h1>Resumen del sistema</h1>
+        <p class="lead">Cada servicio se describe en su <span class="mono">msg.json</span> y Stratum genera el código. Desde aquí lo diseñas, ves cómo se comunican y lo ejecutas.</p>
     </div>
 
     @if (State.LastMessage is { } message)
@@ -18,330 +17,98 @@
         <div class="msg ok" role="status">@message</div>
     }
 
-    <section class="stack" aria-labelledby="h-services">
-        <h2 class="section" id="h-services">Servicios</h2>
-        <div class="grid">
-            @foreach (var service in State.Services)
-            {
-                var d = service.Definition;
-                <button type="button" class="card" @onclick="() => Open(service)">
-                    <b style="font-size: 15px">@d.Service.Name</b>
-                    <small class="mono">@service.Directory</small>
-                    <small>
-                        @(d.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")
-                        · @(d.Persistence?.Provider ?? "sin base de datos")
-                        · @d.Entities.Count entidad(es)
-                    </small>
-                    @if (State.IsExternal(service))
-                    {
-                        <small class="mono hint" title="Fuera de la carpeta del sistema (msg.workspace.json)">📁 @State.FullPath(service.Directory)</small>
-                    }
-                </button>
-            }
+    @{
+        var services = State.Services;
+        var routes = State.EventRoutes();
+        var entities = services.Sum(s => s.Definition.Entities.Count);
+        var listening = services.Sum(s => s.Definition.Subscriptions?.Count ?? 0);
+        var running = Runner.IsRunning(ServiceCommands.DashboardJob);
+        var problems = routes.Count(r => r.Problem is not null);
+    }
 
-            <div class="card stack" style="border-style: dashed">
-                <label class="field">
-                    Nuevo servicio
-                    <input type="text" placeholder="Orders" @bind="newName" @bind:event="oninput" @onkeydown="OnKey" aria-describedby="new-hint" />
-                </label>
-                <span class="field" style="gap: 4px">
-                    Ubicación
-                    <FolderPicker @bind-Value="newLocation" Label="Carpeta donde crear el servicio" />
-                </span>
-                <span class="hint" id="new-hint">
-                    Se creará en <span class="mono">@NewFolder</span>@if (!WorkspaceFile.IsInside(State.Workspace, newLocation)) {<span>: fuera de la carpeta del sistema, así que MSG lo apunta en <span class="mono">msg.workspace.json</span> para encontrarlo (y para el AppHost).</span>}
-                </span>
-                <button type="button" class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(newName)" @onclick="Create">+ Crear servicio</button>
-            </div>
-
-            <div class="card stack" style="border-style: dashed">
-                <span class="field" style="gap: 4px">
-                    Añadir un servicio de otra carpeta
-                    <FolderPicker @bind-Value="externalPath" Label="Carpeta del servicio (la que tiene msg.json)" />
-                </span>
-                <span class="hint">Un servicio de MSG que vive fuera de <span class="mono">@State.Workspace</span> (otro disco, otro repositorio). No se mueve ni se copia.</span>
-                <button type="button" class="btn" disabled="@string.IsNullOrWhiteSpace(externalPath)" @onclick="AddExternal">+ Añadir al sistema</button>
-            </div>
-        </div>
-        @if (error is not null)
+    <section class="kpis" aria-label="Cifras del sistema">
+        <a class="kpi" href="services"><b>@services.Count</b><span>servicio(s)</span></a>
+        <div class="kpi"><b>@entities</b><span>entidad(es)</span></div>
+        <a class="kpi" href="events"><b>@routes.Count</b><span>evento(s) · @listening suscripción(es)</span></a>
+        <a class="kpi" href="run"><b style="color: @(running ? "var(--ok)" : "var(--muted)")">@(running ? "En marcha" : "Parado")</b><span>sistema con Aspire</span></a>
+        @if (problems > 0)
         {
-            <div class="msg err" role="alert">@error</div>
+            <a class="kpi" href="events" style="border-color: #5C4410"><b style="color: var(--warn)">@problems</b><span>aviso(s) en el mapa de eventos</span></a>
         }
     </section>
 
-    @{
-        var routes = State.EventRoutes();
-    }
-    @if (routes.Count > 0)
-    {
-        <section class="stack" aria-labelledby="h-events-map">
-            <h2 class="section" id="h-events-map">Mapa de eventos</h2>
-            <div class="table">
-                <div class="tr head" style="grid-template-columns: 1fr 2fr 1.6fr"><span>Publica</span><span>Evento (topic)</span><span>Lo escuchan</span></div>
-                @foreach (var route in routes)
-                {
-                    <div class="tr" style="grid-template-columns: 1fr 2fr 1.6fr; align-items: center">
-                        <span>@(route.Publisher ?? "¿?")</span>
-                        <span>
-                            <span class="mono">@route.EventClass</span> <small class="hint mono">@route.Topic</small>
-                            @if (route.Problem is { } problem)
-                            {
-                                <br /><small style="color: var(--warn)">⚠ @problem</small>
-                            }
-                        </span>
-                        <span>
-                            @if (route.Consumers.Count == 0)
-                            {
-                                <small class="hint">nadie todavía</small>
-                            }
-                            else
-                            {
-                                <span>→ @string.Join(", ", route.Consumers)</span>
-                            }
-                        </span>
-                    </div>
-                }
-            </div>
-            <span class="hint">Un servicio publica los eventos de una entidad en <em>Entidades → Eventos para otros servicios</em>; otro los escucha en <em>Servicio → Eventos que escucha</em>.</span>
-        </section>
-    }
-
-    <section class="stack" aria-labelledby="h-team">
-        <h2 class="section" id="h-team">Plantillas del equipo</h2>
-        <div class="card stack">
-            @if (State.Team is { } team)
-            {
-                var custom = team.CustomizedFiles();
-                <p style="margin: 0">
-                    MSG está usando las convenciones de tu equipo de <span class="mono">@team.Root</span>:
-                    @custom.Count plantilla(s) personalizada(s)@(team.Tokens.Count > 0 ? $" y {team.Tokens.Count} token(s)" : "").
-                </p>
-                @if (team.Tokens.Count > 0)
-                {
-                    <small class="mono">@string.Join("  ", team.Tokens.Select(t => "{{" + t.Key + "}} = " + t.Value))</small>
-                }
-                @if (custom.Count > 0)
-                {
-                    <div class="files">
-                        @foreach (var file in custom)
-                        {
-                            <div class="mono" style="padding: 8px 16px; border-bottom: 1px solid #1F2330; font-size: 12.5px">@file</div>
-                        }
-                    </div>
-                }
-            }
-            else
-            {
-                <p style="margin: 0">
-                    Sin plantillas del equipo: MSG usa las suyas. Para imponer tus convenciones (logging, nombres, pipeline…),
-                    copia una plantilla y edítala; el Studio la usará en la vista previa y al aplicar:
-                </p>
-                <span class="mono hint">msg templates eject service/src/__Service__.Api/Program.cs --path "@State.Workspace"</span>
-            }
+    <section class="stack" aria-labelledby="h-start">
+        <h2 class="section" id="h-start">Qué quieres hacer</h2>
+        <div class="actions">
+            <a class="action" href="services"><Icon Name="plus" Size="20" /><span><b>Crear un servicio</b><small>Vertical slice o Clean + DDD, en esta carpeta o en otra.</small></span></a>
+            <a class="action" href="events"><Icon Name="events" Size="20" /><span><b>Conectar servicios</b><small>Quién publica cada evento y quién lo escucha.</small></span></a>
+            <a class="action" href="run"><Icon Name="run" Size="20" /><span><b>Ejecutar el sistema</b><small>Aspire con bases de datos, Kafka y dashboard.</small></span></a>
+            <a class="action" href="templates"><Icon Name="templates" Size="20" /><span><b>Convenciones del equipo</b><small>Plantillas y tokens propios para todos los servicios.</small></span></a>
         </div>
     </section>
 
-    <section class="stack" aria-labelledby="h-aspire">
-        <h2 class="section" id="h-aspire">Ejecutar con Aspire</h2>
-        <div class="card stack">
-            @{ var job = Runner.Get(ServiceCommands.DashboardJob); var running = job?.Status == JobStatus.Running; }
-            <div class="row">
-                @if (running)
+    <section class="stack" aria-labelledby="h-list">
+        <div class="row" style="justify-content: space-between">
+            <h2 class="section" id="h-list">Servicios</h2>
+            <a href="services" style="font-weight: 600; text-decoration: none">Gestionar →</a>
+        </div>
+        @if (services.Count == 0)
+        {
+            <div class="card stack">
+                <b>El sistema está vacío.</b>
+                <span class="hint">Crea el primer servicio en <a href="services">Servicios</a>.</span>
+            </div>
+        }
+        else
+        {
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 1.4fr 1.2fr 1fr .8fr 1.4fr"><span>Servicio</span><span>Arquitectura</span><span>Base de datos</span><span>Entidades</span><span>Mensajería</span></div>
+                @foreach (var service in services)
                 {
-                    <button type="button" class="btn" style="color: var(--err)" @onclick="StopSystem">■ Detener sistema</button>
-                    @if (job!.DetectedUrl is { } dashboard)
-                    {
-                        <a class="btn btn-primary" href="@dashboard" target="_blank" rel="noopener">Abrir dashboard de Aspire ↗</a>
-                    }
-                    else
-                    {
-                        <span class="hint">Arrancando… la primera vez compila y descarga las imágenes de las bases de datos, puede tardar unos minutos.</span>
-                    }
-                }
-                else
-                {
-                    <button type="button" class="btn btn-primary" disabled="@(State.Services.Count == 0 || dockerMissing)" @onclick="RunSystem">▶ Ejecutar sistema</button>
-                    <span class="hint">Genera o actualiza el AppHost y arranca todos los servicios con sus bases de datos.</span>
+                    var d = service.Definition;
+                    var publishes = d.Entities.Count(e => e.Publishes);
+                    <div class="tr" style="grid-template-columns: 1.4fr 1.2fr 1fr .8fr 1.4fr; cursor: pointer" @onclick="() => Open(service)" role="button" tabindex="0">
+                        <span><b>@d.Service.Name</b>@if (State.IsExternal(service)) { <br /><small class="hint mono">@State.FullPath(service.Directory)</small> }</span>
+                        <span>@(d.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")</span>
+                        <span class="hint">@(d.Persistence?.Provider ?? "—")</span>
+                        <span>@d.Entities.Count</span>
+                        <span class="hint">
+                            @if (d.Messaging is null)
+                            {
+                                <span>—</span>
+                            }
+                            else
+                            {
+                                <span>@d.Messaging.Broker · publica @publishes · escucha @(d.Subscriptions?.Count ?? 0)</span>
+                            }
+                        </span>
+                    </div>
                 }
             </div>
-            @if (dockerMissing)
-            {
-                <div class="msg warn" role="alert">Hay servicios con base de datos y no se encuentra Docker. Arranca Docker Desktop (o Podman) y <button type="button" class="btn" style="min-height: 30px; padding: 0 10px" @onclick="RecheckDocker">vuelve a comprobar</button>.</div>
-            }
-            @if (running)
-            {
-                <div class="grid">
-                    @foreach (var service in State.Services)
-                    {
-                        var port = ServiceName.DevPort(service.Definition.Service.Name);
-                        <div class="card" style="padding: 10px 14px">
-                            <b>@service.Definition.Service.Name</b>
-                            <small class="row" style="gap: 10px">
-                                @if (service.Definition.Features.OpenApi)
-                                {
-                                    <a href="http://localhost:@port/scalar" target="_blank" rel="noopener">Scalar ↗</a>
-                                }
-                                <a href="http://localhost:@port/health/ready" target="_blank" rel="noopener">Health ↗</a>
-                                <span class="mono">:@port</span>
-                            </small>
-                        </div>
-                    }
-                </div>
-            }
-            <JobOutput Key="@ServiceCommands.DashboardJob" Lines="12" />
-        </div>
-        <div class="card stack">
-            <p style="margin: 0">
-                Un AppHost que arranca todos los servicios con sus bases de datos, el dashboard de telemetría y el service discovery.
-                @if (State.ExistingAppHost is { } appHost)
-                {
-                    <span> Ya existe <b class="mono">@appHost</b>: al regenerarlo se incorporan los servicios nuevos sin tocar tu <span class="mono">AppHost.cs</span>.</span>
-                }
-            </p>
-            <div class="row">
-                <label class="field" style="flex: 0 1 260px">
-                    Nombre del sistema
-                    <input type="text" @bind="systemName" />
-                </label>
-                <button type="button" class="btn" style="align-self: flex-end" disabled="@(State.Services.Count == 0)" @onclick="GenerateAppHost">
-                    @(State.ExistingAppHost is null ? "Generar AppHost" : "Actualizar AppHost")
-                </button>
-            </div>
-            @if (aspire is not null)
-            {
-                <div class="msg ok" role="status">
-                    ✔ @aspire.AppHostName con @aspire.Services.Count servicio(s).
-                    @(aspire.Created.Count + aspire.Updated.Count == 0 ? "Ya estaba al día." : $"{aspire.Created.Count} archivo(s) nuevos, {aspire.Updated.Count} actualizados.")
-                    Arráncalo con <span class="mono">aspire run</span> (necesita Docker o Podman).
-                </div>
-            }
-        </div>
+        }
     </section>
 </main>
 
 @code {
-    private string newName = string.Empty;
-    private string newLocation = string.Empty;
-    private string externalPath = string.Empty;
-    private string? error;
-    private string systemName = string.Empty;
-    private AspireResult? aspire;
-
-    private string NewFolder
-    {
-        get
-        {
-            try { return Path.Combine(newLocation, string.IsNullOrWhiteSpace(newName) ? "…" : ServiceName.ToKebab(ServiceName.Normalize(newName))); }
-            catch (MsgException) { return "…"; }
-        }
-    }
-
-    private bool dockerMissing;
-
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         State.Initialize();
-        newLocation = State.Workspace;
-        externalPath = Path.GetDirectoryName(State.Workspace) ?? State.Workspace;
-        systemName = SafeName(Path.GetFileName(State.Workspace));
+        State.Changed += OnChanged;
         Runner.Changed += OnChanged;
-        await CheckDockerAsync();
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Runner.Changed -= OnChanged;
-
-    private async Task CheckDockerAsync()
+    public void Dispose()
     {
-        var needsDocker = State.Services.Any(s => s.Definition.Persistence is not null);
-        dockerMissing = needsDocker && !await Tools.HasDockerAsync();
+        State.Changed -= OnChanged;
+        Runner.Changed -= OnChanged;
     }
-
-    private async Task RecheckDocker()
-    {
-        Tools.Reset();
-        await CheckDockerAsync();
-    }
-
-    private void RunSystem()
-    {
-        try
-        {
-            error = null;
-            aspire = State.GenerateAppHost(systemName);   // always up to date with the services on disk
-            var project = Path.Combine(State.Workspace, aspire.AppHostName, $"{aspire.AppHostName}.csproj");
-            Runner.Start(ServiceCommands.DashboardJob, "Sistema (Aspire)", State.Workspace, "dotnet",
-                ["run", "--project", project], ServiceCommands.DashboardUrl());
-        }
-        catch (Exception ex) when (ex is MsgException or InvalidOperationException)
-        {
-            error = ex.Message;
-        }
-    }
-
-    private void StopSystem() => Runner.Stop(ServiceCommands.DashboardJob);
 
     private void Open(WorkspaceService service)
     {
         State.LastMessage = null;
         State.Open(service);
         Nav.NavigateTo("service");
-    }
-
-    private void Create()
-    {
-        try
-        {
-            error = null;
-            State.LastMessage = null;
-            State.StartNewService(newName, newLocation);
-            Nav.NavigateTo("service");
-        }
-        catch (MsgException ex)
-        {
-            error = ex.Message;
-        }
-    }
-
-    private void AddExternal()
-    {
-        try
-        {
-            error = null;
-            State.AddExternalService(externalPath);
-            State.LastMessage = $"✔ Servicio de {externalPath} añadido al sistema.";
-        }
-        catch (MsgException ex)
-        {
-            error = ex.Message;
-        }
-    }
-
-    private void OnKey(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(newName))
-        {
-            Create();
-        }
-    }
-
-    private void GenerateAppHost()
-    {
-        try
-        {
-            error = null;
-            aspire = State.GenerateAppHost(systemName);
-        }
-        catch (MsgException ex)
-        {
-            error = ex.Message;
-        }
-    }
-
-    private static string SafeName(string? folder)
-    {
-        try { return ServiceName.Normalize(folder ?? "System"); }
-        catch (MsgException) { return "System"; }
     }
 }

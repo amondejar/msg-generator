@@ -5,7 +5,7 @@ namespace Msg.Core;
 public static class MsgInfo
 {
     /// <summary>
-    /// MSG version, taken from &lt;Version&gt; in Directory.Build.props (single source of truth).
+    /// Stratum version, taken from &lt;Version&gt; in Directory.Build.props (single source of truth).
     /// It is also the version of the Msg.ServiceDefaults.* packages that generated services reference.
     /// </summary>
     public static string Version { get; } = ReadVersion();

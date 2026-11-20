@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Msg.Messaging.Kafka;
 
 /// <summary>
-/// Kafka transport. The event JSON is the message value; MSG's metadata travels in headers (msg-id, msg-source,
+/// Kafka transport. The event JSON is the message value; Stratum's metadata travels in headers (msg-id, msg-source,
 /// msg-occurred-at, msg-correlation-id, traceparent). Each service consumes with its own consumer group, so
 /// every service gets every event; offsets are committed only after the message was handled (at-least-once).
 /// </summary>

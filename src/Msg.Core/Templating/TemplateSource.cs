@@ -9,7 +9,7 @@ public static class TemplateSource
 {
     public static IReadOnlyList<string> Sets { get; } = ["service", "entity", "entity-clean", "entity-tests", "subscription"];
 
-    /// <summary>MSG's templates for a set, with the team's files replacing or adding to them.</summary>
+    /// <summary>Stratum's templates for a set, with the team's files replacing or adding to them.</summary>
     public static IReadOnlyList<TemplateFile> Load(string templateName, TeamTemplates? team = null)
     {
         var files = LoadEmbedded(templateName).ToDictionary(f => f.Path, StringComparer.Ordinal);
@@ -34,7 +34,7 @@ public static class TemplateSource
         "service/tests/__Service__.Api.Tests/ApiFactory.Database.g.cs",
     };
 
-    /// <summary>MSG's own templates only (what "msg templates eject" copies).</summary>
+    /// <summary>Stratum's own templates only (what "stratum templates eject" copies).</summary>
     public static IReadOnlyList<TemplateFile> LoadEmbedded(string templateName)
     {
         var assembly = typeof(TemplateSource).Assembly;
@@ -51,7 +51,7 @@ public static class TemplateSource
             throw new MsgException($"No se encontró la plantilla '{templateName}'.");
         }
 
-        // X.cs next to X.g.cs: a template of an older MSG left behind (e.g. a zip unpacked over another version).
+        // X.cs next to X.g.cs: a template of an older Stratum left behind (e.g. a zip unpacked over another version).
         var stale = files
             .Where(f => f.Path.EndsWith(".g.cs", StringComparison.Ordinal)
                         && files.Any(o => o.Path == f.Path[..^".g.cs".Length] + ".cs" && !IsPartialStub(o.Content)))
@@ -62,8 +62,8 @@ public static class TemplateSource
         if (stale.Count > 0)
         {
             throw new MsgException(
-                $"La plantilla '{templateName}' mezcla archivos de dos versiones de MSG: {string.Join(", ", stale)} " +
-                $"{(stale.Count == 1 ? "es" : "son")} de una versión anterior y ya no se usa. Borra la carpeta templates del repositorio de MSG, " +
+                $"La plantilla '{templateName}' mezcla archivos de dos versiones de Stratum: {string.Join(", ", stale)} " +
+                $"{(stale.Count == 1 ? "es" : "son")} de una versión anterior y ya no se usa. Borra la carpeta templates del repositorio de Stratum, " +
                 "vuelve a copiar la de esta versión y recompila.");
         }
 

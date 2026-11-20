@@ -15,7 +15,7 @@ public sealed class KafkaOptions
     public bool CreateTopics { get; set; } = true;
 
     /// <summary>
-    /// Partitions of the topics MSG creates. 1 keeps every event of a topic in order; more partitions spread the
+    /// Partitions of the topics Stratum creates. 1 keeps every event of a topic in order; more partitions spread the
     /// load across the instances of a consumer, but events are only ordered within a partition.
     /// </summary>
     public int Partitions { get; set; } = 1;

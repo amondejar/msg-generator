@@ -1,6 +1,6 @@
 @* Right-hand panel: tabs over a set of generated files, with syntax highlighting. *@
 
-<aside class="preview" aria-label="@Label">
+<aside class="preview" aria-label="@Label" style="@(Wide ? "max-width: none; border-left: 0; flex: 1 1 100%" : null)">
     <div class="tabs" role="toolbar" aria-label="Archivos">
         @foreach (var tab in Tabs)
         {
@@ -29,6 +29,9 @@
     [Parameter] public string Empty { get; set; } = "Nada que mostrar todavía.";
 
     [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Fills the page (Código generado) instead of being a side panel.</summary>
+    [Parameter] public bool Wide { get; set; }
 
     private string? selectedPath;
 

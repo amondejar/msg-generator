@@ -1,0 +1,52 @@
+@page "/service/code"
+@implements IDisposable
+@inject StudioState State
+
+<PageTitle>Código generado · Stratum Studio</PageTitle>
+
+@if (State.Current is not { } draft)
+{
+    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+}
+else
+{
+    <main class="content" style="flex-basis: 100%; gap: 16px">
+        <div>
+            <h1>Código generado</h1>
+            <p class="lead">Lo que Stratum generaría ahora mismo para este servicio, con los cambios sin aplicar incluidos. Los cambios archivo por archivo, con su diff, están en <a href="apply">Revisar y aplicar</a>.</p>
+        </div>
+        <div style="border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex">
+            <CodePanel Tabs="Tabs" Wide="true" />
+        </div>
+    </main>
+}
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+    private IReadOnlyList<CodePanel.Tab> Tabs
+    {
+        get
+        {
+            var files = State.Preview;
+            var program = files.FirstOrDefault(f => f.Path.EndsWith("Api/Program.cs", StringComparison.Ordinal));
+            var json = files.FirstOrDefault(f => f.Path == ServiceGenerator.DefinitionFileName);
+            var tree = string.Join("\n", files.Select(f => f.Path).Order(StringComparer.Ordinal));
+
+            var tabs = new List<CodePanel.Tab>();
+            if (program is not null) { tabs.Add(new("Program.cs", program.Path, program.Content)); }
+            if (files.FirstOrDefault(f => f.Path.EndsWith("Api/MsgWiring.g.cs", StringComparison.Ordinal)) is { } wiring) { tabs.Add(new("MsgWiring.g.cs", wiring.Path, wiring.Content)); }
+            tabs.Add(new($"Archivos ({files.Count})", "(árbol de archivos)", tree));
+            if (json is not null) { tabs.Add(new("msg.json", json.Path, json.Content)); }
+            return tabs;
+        }
+    }
+
+}

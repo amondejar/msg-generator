@@ -5,7 +5,7 @@ namespace Msg.Core.Generation;
 public sealed record UpgradeResult(string FromVersion, string ToVersion, IReadOnlyList<string> Packages, IReadOnlyList<string> Hints);
 
 /// <summary>
-/// Upgrades an existing service to another MSG version without touching its code:
+/// Upgrades an existing service to another Stratum version without touching its code:
 /// bumps every Msg.* package in Directory.Packages.props and msgVersion in msg.json.
 /// </summary>
 public static partial class ServiceUpgrader
@@ -25,7 +25,7 @@ public static partial class ServiceUpgrader
 
         if (!File.Exists(definitionPath))
         {
-            throw new MsgException($"No hay {ServiceGenerator.DefinitionFileName} en '{Path.GetFullPath(serviceDirectory)}'. ¿Es un servicio generado con MSG?");
+            throw new MsgException($"No hay {ServiceGenerator.DefinitionFileName} en '{Path.GetFullPath(serviceDirectory)}'. ¿Es un servicio generado con Stratum?");
         }
 
         var definition = ServiceGenerator.Deserialize(File.ReadAllText(definitionPath));
@@ -35,8 +35,8 @@ public static partial class ServiceUpgrader
         if (packages.Count == 0)
         {
             throw new MsgException(
-                $"Este servicio (MSG {definition.MsgVersion}) no usa los paquetes Msg.ServiceDefaults: se generó antes de la 0.2.0 " +
-                "con el código común copiado dentro. Regenera la base con 'msg new --from msg.json -o <carpeta-nueva>' " +
+                $"Este servicio (Stratum {definition.MsgVersion}) no usa los paquetes Msg.ServiceDefaults: se generó antes de la 0.2.0 " +
+                "con el código común copiado dentro. Regenera la base con 'stratum new --from msg.json -o <carpeta-nueva>' " +
                 "y mueve tus endpoints al nuevo proyecto.");
         }
 
@@ -48,7 +48,7 @@ public static partial class ServiceUpgrader
     }
 
     /// <summary>
-    /// Improvements of newer templates that live in user-owned files (Program.cs, .csproj): MSG can't apply
+    /// Improvements of newer templates that live in user-owned files (Program.cs, .csproj): Stratum can't apply
     /// them without overwriting your code, so it tells you exactly what to add.
     /// </summary>
     private static List<string> Hints(string directory, Msg.Core.Model.ServiceDefinition definition)
@@ -61,15 +61,15 @@ public static partial class ServiceUpgrader
         if (!usesWiring && File.Exists(program))
         {
             hints.Add(
-                "Desde MSG 0.12 las features (OpenAPI, auth, telemetría…) se configuran en MsgWiring.g.cs y se pueden activar o " +
-                "desactivar después de crear el servicio. Para pasar tu Program.cs a ese formato: msg feature convert --dry-run");
+                "Desde Stratum 0.12 las features (OpenAPI, auth, telemetría…) se configuran en MsgWiring.g.cs y se pueden activar o " +
+                "desactivar después de crear el servicio. Para pasar tu Program.cs a ese formato: stratum feature convert --dry-run");
         }
 
         if (!usesWiring && definition.Features.OpenApi && File.Exists(program)
             && !File.ReadAllText(program).Contains("MapScalarApiReference", StringComparison.Ordinal))
         {
             hints.Add(
-                "Scalar (explorar y probar la API en /scalar) llegó en MSG 0.7.0. Para añadirlo:\n" +
+                "Scalar (explorar y probar la API en /scalar) llegó en Stratum 0.7.0. Para añadirlo:\n" +
                 "      Directory.Packages.props:  <PackageVersion Include=\"Scalar.AspNetCore\" Version=\"2.21.0\" />\n" +
                 $"      src/{service}.Api/{service}.Api.csproj:  <PackageReference Include=\"Scalar.AspNetCore\" />\n" +
                 "      Program.cs:  using Scalar.AspNetCore;   y, junto a app.MapOpenApi():  app.MapScalarApiReference();");
@@ -88,8 +88,8 @@ public static partial class ServiceUpgrader
         if (legacy.Count > 0)
         {
             hints.Add(
-                $"Entidades creadas antes de MSG 0.10 ({string.Join(", ", legacy)}): MSG no puede editarlas. Para cambiar sus " +
-                "propiedades desde el Studio o con 'msg entity update', conviértelas antes: msg entity convert <Entidad> --dry-run");
+                $"Entidades creadas antes de Stratum 0.10 ({string.Join(", ", legacy)}): Stratum no puede editarlas. Para cambiar sus " +
+                "propiedades desde el Studio o con 'stratum entity update', conviértelas antes: stratum entity convert <Entidad> --dry-run");
         }
 
         return hints;

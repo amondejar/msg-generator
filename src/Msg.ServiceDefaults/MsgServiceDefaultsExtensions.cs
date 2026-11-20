@@ -8,7 +8,7 @@ using Microsoft.Extensions.Hosting;
 namespace Msg.ServiceDefaults;
 
 /// <summary>
-/// What every MSG service does the same way. A generated Program.cs calls, in this order:
+/// What every Stratum service does the same way. A generated Program.cs calls, in this order:
 /// <c>builder.AddMsgServiceDefaults()</c>, <c>app.UseMsgServiceDefaults()</c>, <c>app.MapMsgDefaultEndpoints()</c>.
 /// </summary>
 public static class MsgServiceDefaultsExtensions

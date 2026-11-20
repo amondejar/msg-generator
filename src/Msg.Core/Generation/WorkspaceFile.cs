@@ -50,7 +50,7 @@ public sealed class WorkspaceFile
         var full = Path.GetFullPath(serviceDirectory);
         if (!File.Exists(Path.Combine(full, ServiceGenerator.DefinitionFileName)))
         {
-            throw new MsgException($"'{full}' no es un servicio de MSG (no tiene msg.json).");
+            throw new MsgException($"'{full}' no es un servicio de Stratum (no tiene msg.json).");
         }
 
         if (IsInside(rootFull, full))

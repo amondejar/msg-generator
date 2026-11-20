@@ -3,11 +3,11 @@ using Msg.Core.Model;
 namespace Msg.Core.Generation;
 
 /// <summary>
-/// Computes what MSG would change in a service folder, without touching the disk. Used by the CLI
-/// ("msg add entity") and by the Studio's review screen, so both always agree.
+/// Computes what Stratum would change in a service folder, without touching the disk. Used by the CLI
+/// ("stratum add entity") and by the Studio's review screen, so both always agree.
 /// Ownership rules, so user code is never overwritten:
 /// <list type="bullet">
-/// <item><c>*.g.cs</c> and <c>msg.json</c> belong to MSG and are regenerated.</item>
+/// <item><c>*.g.cs</c> and <c>msg.json</c> belong to Stratum and are regenerated.</item>
 /// <item>Entity, persistence and test-infrastructure files are created only if they don't exist.</item>
 /// <item>Project files and appsettings only get the missing entries added.</item>
 /// <item>Everything else is left untouched.</item>
@@ -187,7 +187,7 @@ public static class ServicePlanner
         };
     }
 
-    /// <summary>An entity created before MSG 0.10 moves to the editable layout (*.g.cs + partial classes).</summary>
+    /// <summary>An entity created before Stratum 0.10 moves to the editable layout (*.g.cs + partial classes).</summary>
     public static ServiceDefinition ConvertEntity(ServiceDefinition current, string entityName)
     {
         ArgumentNullException.ThrowIfNull(current);
@@ -203,7 +203,7 @@ public static class ServicePlanner
         };
     }
 
-    /// <summary>True when Program.cs delegates to the generated MsgWiring.g.cs (services from MSG 0.12 on, or converted).</summary>
+    /// <summary>True when Program.cs delegates to the generated MsgWiring.g.cs (services from Stratum 0.12 on, or converted).</summary>
     public static bool UsesMsgWiring(string directory, ServiceDefinition definition)
     {
         ArgumentNullException.ThrowIfNull(definition);
@@ -220,9 +220,9 @@ public static class ServicePlanner
         if (features != current.Features && !UsesMsgWiring(directory, current))
         {
             throw new MsgException(
-                $"src/{current.Service.Name}.Api/Program.cs es de una versión de MSG anterior a la 0.12 y configura las features a mano, " +
-                "así que MSG no puede activarlas ni desactivarlas sin pisarlo. Pásalo a MsgWiring.g.cs primero " +
-                "(msg feature convert --dry-run, o desde el Studio); MSG te enseñará el cambio antes de escribir nada.");
+                $"src/{current.Service.Name}.Api/Program.cs es de una versión de Stratum anterior a la 0.12 y configura las features a mano, " +
+                "así que Stratum no puede activarlas ni desactivarlas sin pisarlo. Pásalo a MsgWiring.g.cs primero " +
+                "(stratum feature convert --dry-run, o desde el Studio); Stratum te enseñará el cambio antes de escribir nada.");
         }
 
         return current with { Features = features };
@@ -241,8 +241,8 @@ public static class ServicePlanner
         if (!UsesMsgWiring(directory, current))
         {
             throw new MsgException(
-                $"src/{current.Service.Name}.Api/Program.cs es de una versión de MSG anterior a la 0.12: pásalo a MsgWiring.g.cs " +
-                "primero (msg feature convert --dry-run, o desde el Studio) para que MSG pueda configurar la mensajería.");
+                $"src/{current.Service.Name}.Api/Program.cs es de una versión de Stratum anterior a la 0.12: pásalo a MsgWiring.g.cs " +
+                "primero (stratum feature convert --dry-run, o desde el Studio) para que Stratum pueda configurar la mensajería.");
         }
 
         return current with { Messaging = messaging };
@@ -258,7 +258,7 @@ public static class ServicePlanner
         if (publish && current.Messaging is null)
         {
             throw new MsgException(
-                "Para publicar eventos el servicio necesita mensajería. Actívala antes: msg messaging on --broker kafka");
+                "Para publicar eventos el servicio necesita mensajería. Actívala antes: stratum messaging on --broker kafka");
         }
 
         return current with
@@ -279,7 +279,7 @@ public static class ServicePlanner
         {
             throw new MsgException(
                 $"{publisher.Service.Name} no publica los eventos de {entity.Name}. Actívalo en ese servicio: " +
-                $"msg events on {entity.Name} (y msg messaging on si no tiene mensajería).");
+                $"stratum events on {entity.Name} (y stratum messaging on si no tiene mensajería).");
         }
 
         return new Subscription
@@ -298,7 +298,7 @@ public static class ServicePlanner
 
         if (current.Messaging is null)
         {
-            throw new MsgException($"{current.Service.Name} necesita mensajería para escuchar eventos: msg messaging on --broker kafka");
+            throw new MsgException($"{current.Service.Name} necesita mensajería para escuchar eventos: stratum messaging on --broker kafka");
         }
 
         var existing = current.Subscriptions ?? [];
@@ -360,26 +360,30 @@ public static class ServicePlanner
     }
 
     /// <summary>Copies again the contracts of the subscriptions from their publishers.</summary>
-    public static ServiceDefinition SyncSubscriptions(ServiceDefinition consumer, IEnumerable<ServiceDefinition> services)
+    /// <param name="prune">Also drop subscriptions to events their publisher no longer publishes (entity removed, events off).</param>
+    public static ServiceDefinition SyncSubscriptions(ServiceDefinition consumer, IEnumerable<ServiceDefinition> services, bool prune = false)
     {
         ArgumentNullException.ThrowIfNull(consumer);
-        var updates = CheckSubscriptions(consumer, services).Where(c => c.Current is not null).ToList();
-        if (updates.Count == 0)
+        var checks = CheckSubscriptions(consumer, services);
+        var updates = checks.Where(c => c.Current is not null).ToList();
+        var gone = prune ? checks.Where(c => c.Current is null).Select(c => c.Subscription).ToHashSet() : [];
+        if (updates.Count == 0 && gone.Count == 0)
         {
             return consumer;
         }
 
-        return consumer with
-        {
-            Subscriptions = [.. (consumer.Subscriptions ?? []).Select(s => updates.FirstOrDefault(u => u.Subscription == s).Current ?? s)],
-        };
+        var remaining = (consumer.Subscriptions ?? [])
+            .Where(s => !gone.Contains(s))
+            .Select(s => updates.FirstOrDefault(u => u.Subscription == s).Current ?? s)
+            .ToList();
+        return consumer with { Subscriptions = remaining.Count == 0 ? null : remaining };
     }
 
     private static bool SameProperties(IReadOnlyList<PropertyDefinition> a, IReadOnlyList<PropertyDefinition> b) =>
         a.Count == b.Count && a.Zip(b).All(p => p.First == p.Second);
 
     /// <summary>
-    /// Rewrites a Program.cs from before MSG 0.12 so it delegates to MsgWiring.g.cs. The user's own lines must be
+    /// Rewrites a Program.cs from before Stratum 0.12 so it delegates to MsgWiring.g.cs. The user's own lines must be
     /// added back (the plan shows the previous file).
     /// </summary>
     public static ChangePlan ConvertWiring(string directory, ServiceDefinition current, GenerationOptions? options = null)
@@ -387,7 +391,7 @@ public static class ServicePlanner
         ArgumentNullException.ThrowIfNull(current);
         if (UsesMsgWiring(directory, current))
         {
-            throw new MsgException("Program.cs ya usa MsgWiring: las features se pueden cambiar con 'msg feature on|off'.");
+            throw new MsgException("Program.cs ya usa MsgWiring: las features se pueden cambiar con 'stratum feature on|off'.");
         }
 
         var service = current.Service.Name;
@@ -425,19 +429,19 @@ public static class ServicePlanner
         if (!entity.IsEditable)
         {
             throw new MsgException(
-                $"La entidad '{entity.Name}' se creó con una versión de MSG anterior a la 0.10: su código es tuyo y MSG no puede " +
-                $"cambiarla sin pisarlo. Conviértela primero al formato editable (msg entity convert {entity.Name}, o desde el Studio); " +
-                "MSG te enseñará qué archivos cambia antes de escribir nada.");
+                $"La entidad '{entity.Name}' se creó con una versión de Stratum anterior a la 0.10: su código es tuyo y Stratum no puede " +
+                $"cambiarla sin pisarlo. Conviértela primero al formato editable (stratum entity convert {entity.Name}, o desde el Studio); " +
+                "Stratum te enseñará qué archivos cambia antes de escribir nada.");
         }
     }
 
     /// <summary>
-    /// Everything MSG has to write, replace or delete to go from <paramref name="current"/> to
+    /// Everything Stratum has to write, replace or delete to go from <paramref name="current"/> to
     /// <paramref name="updated"/> (the msg.json on disk and the one designed in the CLI or Studio).
     /// </summary>
     /// <remarks>
-    /// Rules: *.g.cs are always rewritten (with a warning if edited by hand). Any other file MSG generated is
-    /// updated or deleted only while it is exactly as MSG left it; once the user changed it, MSG reports instead.
+    /// Rules: *.g.cs are always rewritten (with a warning if edited by hand). Any other file Stratum generated is
+    /// updated or deleted only while it is exactly as Stratum left it; once the user changed it, Stratum reports instead.
     /// Project files get missing items added and the items of disabled features removed.
     /// </remarks>
     /// <param name="deleteOwnFiles">Also delete the user's (modified) files of removed entities.</param>
@@ -549,7 +553,7 @@ public static class ServicePlanner
 
             if (path.EndsWith(".g.cs", StringComparison.Ordinal) || Same(previous, oldRender))
             {
-                // Generated, or exactly as MSG left it: nothing of the user's is lost.
+                // Generated, or exactly as Stratum left it: nothing of the user's is lost.
                 changes.Add(new FileChange(path, ChangeKind.Delete, string.Empty, previous) { IsUnchangedDelete = true });
             }
             else if (IsCreateOnce(path, service))
@@ -576,21 +580,21 @@ public static class ServicePlanner
         if (ownLeft.Count > 0)
         {
             warnings.Add(
-                "Estos archivos tuyos son de entidades eliminadas y los has modificado, así que MSG no los borra: probablemente ya no compilen. " +
+                "Estos archivos tuyos son de entidades eliminadas y los has modificado, así que Stratum no los borra: probablemente ya no compilen. " +
                 "Bórralos tú o marca \"borrar también mis archivos\":\n" + string.Join("\n", ownLeft.Select(p => "      " + p)));
         }
 
         if (modifiedLeft.Count > 0)
         {
             warnings.Add(
-                "Estos archivos cambiarían con este cambio, pero los has modificado y MSG no los pisa. Revisa a mano lo que necesitan " +
-                "(la vista previa muestra cómo los generaría MSG):\n" + string.Join("\n", modifiedLeft.Select(p => "      " + p)));
+                "Estos archivos cambiarían con este cambio, pero los has modificado y Stratum no los pisa. Revisa a mano lo que necesitan " +
+                "(la vista previa muestra cómo los generaría Stratum):\n" + string.Join("\n", modifiedLeft.Select(p => "      " + p)));
         }
 
         if (obsoleteLeft.Count > 0)
         {
             warnings.Add(
-                "Estos archivos ya no hacen falta, pero los has modificado y MSG no los borra. Bórralos tú si ya no los usas:\n" +
+                "Estos archivos ya no hacen falta, pero los has modificado y Stratum no los borra. Bórralos tú si ya no los usas:\n" +
                 string.Join("\n", obsoleteLeft.Select(p => "      " + p)));
         }
 
@@ -741,7 +745,7 @@ public static class ServicePlanner
         var path = Path.Combine(directory, ServiceGenerator.DefinitionFileName);
         if (!File.Exists(path))
         {
-            throw new MsgException($"No hay {ServiceGenerator.DefinitionFileName} en '{Path.GetFullPath(directory)}'. ¿Es un servicio generado con MSG?");
+            throw new MsgException($"No hay {ServiceGenerator.DefinitionFileName} en '{Path.GetFullPath(directory)}'. ¿Es un servicio generado con Stratum?");
         }
 
         return ServiceGenerator.Deserialize(File.ReadAllText(path));

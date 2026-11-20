@@ -23,7 +23,7 @@ public static class EntityFrameworkMessagingExtensions
         services.Replace(ServiceDescriptor.Scoped<IInbox, EfInbox<TContext>>());
         services.TryAddScoped<IntegrationEventsInterceptor>();
 
-        // Picked up by DbContexts that add the IInterceptor services (MSG's clean + DDD services do), and in
+        // Picked up by DbContexts that add the IInterceptor services (Stratum's clean + DDD services do), and in
         // registration order: registered before the domain events interceptor, it sees the events first.
         services.AddScoped<IInterceptor>(sp => sp.GetRequiredService<IntegrationEventsInterceptor>());
         return messaging;

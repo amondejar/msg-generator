@@ -24,7 +24,7 @@ public sealed record AddEntityResult(
     IReadOnlyList<string> Warnings,
     string? TeamTemplates = null);
 
-/// <summary>"msg add entity": plans with <see cref="ServicePlanner"/> and applies the plan.</summary>
+/// <summary>"stratum add entity": plans with <see cref="ServicePlanner"/> and applies the plan.</summary>
 public static class EntityAdder
 {
     public static AddEntityResult Add(AddEntityRequest request)

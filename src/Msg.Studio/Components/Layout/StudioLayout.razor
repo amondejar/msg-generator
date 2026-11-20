@@ -1,66 +1,150 @@
 @inherits LayoutComponentBase
 @implements IDisposable
 @inject StudioState State
+@inject ProcessRunner Runner
 @inject NavigationManager Nav
 
-<div class="shell">
-    <header class="top">
-        <a class="logo" href="/"><i>m</i> msg studio</a>
-        @if (State.Current is { } current)
-        {
-            <span class="chip"><b>@(string.IsNullOrWhiteSpace(current.Name) ? "Servicio" : current.Name)</b><span class="mono hint">@current.Directory</span></span>
-            <span class="pill">@(current.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")</span>
-        }
-        else
-        {
-            <span class="chip mono hint">@State.Workspace</span>
-        }
-        <span class="pill">MSG @MsgInfo.Version</span>
-        @if (State.Team is not null)
-        {
-            <span class="pill" style="color: #C4B5FD; border-color: #4C3F99" title="@State.Team.Root">Plantillas del equipo</span>
-        }
-        <div class="spacer"></div>
-        @if (State.Current is not null)
-        {
-            @if (State.Errors.Count > 0)
-            {
-                <span class="pending" style="color: var(--err)">● @State.Errors.Count problema(s)</span>
-            }
-            else if (State.Plan is { Changes.Count: > 0 } plan)
-            {
-                <span class="pending">● @(State.Current.IsNew ? "Servicio nuevo" : $"{plan.Changes.Count} cambio(s) sin aplicar")</span>
-            }
-            <a class="btn btn-primary" href="apply">Revisar y aplicar</a>
-        }
-    </header>
+<div class="app">
+    <aside class="sidebar" aria-label="Menú">
+        <a class="brand" href="/"><Logo /> <b>Stratum</b> <small>Studio</small></a>
+        <a class="ws" href="services" title="Sistema: @State.Workspace" style="text-decoration: none"><Icon Name="folder" Size="15" /><span><b>@(Path.GetFileName(State.Workspace.TrimEnd('/', '\\')))</b></span></a>
 
-    <div class="layout">
-        <nav class="side" aria-label="Secciones">
-            <NavLink href="/" Match="NavLinkMatch.All" ActiveClass="active">Sistema <span class="hint">@State.Services.Count</span></NavLink>
-            @if (State.Current is { } c)
+        <nav class="stack" style="gap: 2px">
+            <div class="nav-group">Sistema</div>
+            <NavLink class="nav" href="/" Match="NavLinkMatch.All" ActiveClass="active"><Icon Name="home" /> Resumen</NavLink>
+            <NavLink class="nav" href="services" ActiveClass="active"><Icon Name="services" /> Servicios <span class="badge">@State.Services.Count</span></NavLink>
+            <NavLink class="nav" href="events" ActiveClass="active"><Icon Name="events" /> Mapa de eventos</NavLink>
+            <NavLink class="nav" href="run" ActiveClass="active">
+                <Icon Name="run" /> Ejecutar
+                @if (Runner.IsRunning(ServiceCommands.DashboardJob))
+                {
+                    <span class="badge live">● en marcha</span>
+                }
+            </NavLink>
+            <NavLink class="nav" href="templates" ActiveClass="active">
+                <Icon Name="templates" /> Plantillas
+                @if (State.Team is not null)
+                {
+                    <span class="badge">equipo</span>
+                }
+            </NavLink>
+
+            @if (State.Current is { } current)
             {
-                <div class="label">@(c.IsNew ? "Servicio nuevo" : c.Name)</div>
-                <NavLink href="service" ActiveClass="active">Servicio</NavLink>
-                <NavLink href="entities" ActiveClass="active">Entidades <span class="hint">@c.Entities.Count</span></NavLink>
-                <NavLink href="apply" ActiveClass="active">Aplicar cambios <span class="hint" style="color: var(--warn)">@(State.Plan?.Changes.Count ?? 0)</span></NavLink>
+                <div class="nav-group">Servicio</div>
+                <div class="switcher">
+                    <select aria-label="Servicio abierto" value="@SelectedKey" @onchange="Switch">
+                        @if (current.IsNew)
+                        {
+                            <option value="@NewKey">@(string.IsNullOrWhiteSpace(current.Name) ? "Servicio nuevo" : current.Name) (nuevo)</option>
+                        }
+                        @foreach (var service in State.Services)
+                        {
+                            <option value="@service.Directory">@service.Definition.Service.Name</option>
+                        }
+                    </select>
+                </div>
+                <NavLink class="nav" href="service" Match="NavLinkMatch.All" ActiveClass="active"><Icon Name="general" /> General</NavLink>
+                <NavLink class="nav" href="entities" ActiveClass="active"><Icon Name="entities" /> Entidades <span class="badge">@current.Entities.Count</span></NavLink>
+                <NavLink class="nav" href="service/data" ActiveClass="active"><Icon Name="data" /> Datos y migraciones</NavLink>
+                <NavLink class="nav" href="service/messaging" ActiveClass="active">
+                    <Icon Name="messaging" /> Mensajería
+                    @if (current.Broker is not null)
+                    {
+                        <span class="badge">@(current.Broker == MessagingSettings.Kafka ? "kafka" : "memoria")</span>
+                    }
+                </NavLink>
+                <NavLink class="nav" href="service/code" ActiveClass="active"><Icon Name="code" /> Código generado</NavLink>
+                <NavLink class="nav" href="apply" ActiveClass="active">
+                    <Icon Name="review" /> Revisar y aplicar
+                    @if (State.Plan is { Changes.Count: > 0 } plan)
+                    {
+                        <span class="badge warn">@plan.Changes.Count</span>
+                    }
+                </NavLink>
             }
-            <div class="label">Archivo fuente</div>
-            <span class="mono hint" style="padding: 0 12px">msg.json</span>
         </nav>
 
-        @Body
+        <div class="sidebar-foot">
+            <span>Stratum @MsgInfo.Version</span>
+            <span class="mono">Fuente: msg.json de cada servicio</span>
+        </div>
+    </aside>
+
+    <div class="main">
+        <header class="topbar">
+            <div class="crumbs">
+                <span>Sistema</span>
+                @if (State.Current is { } c)
+                {
+                    <span>›</span>
+                    <b>@(string.IsNullOrWhiteSpace(c.Name) ? "Servicio nuevo" : c.Name)</b>
+                    <span class="layer-tag">@(c.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")</span>
+                    @if (c.IsNew)
+                    {
+                        <span class="layer-tag" style="color: var(--warn); border-color: #5C4410">sin crear</span>
+                    }
+                }
+            </div>
+            <div class="spacer"></div>
+            @if (State.Current is not null)
+            {
+                @if (State.Errors.Count > 0)
+                {
+                    <span class="pending" style="color: var(--err)">● @State.Errors.Count problema(s)</span>
+                }
+                else if (State.Plan is { Changes.Count: > 0 } pending)
+                {
+                    <span class="pending">● @(State.Current.IsNew ? "Servicio nuevo sin crear" : $"{pending.Changes.Count} cambio(s) sin aplicar")</span>
+                }
+                else
+                {
+                    <span class="hint">Sin cambios pendientes</span>
+                }
+                <a class="btn btn-primary" href="apply">Revisar y aplicar</a>
+            }
+            else
+            {
+                <a class="btn" href="services"><Icon Name="plus" Size="16" /> Nuevo servicio</a>
+            }
+        </header>
+
+        <div class="page">
+            @Body
+        </div>
     </div>
 </div>
 
 @code {
+    private const string NewKey = "::new";
+
+    private string SelectedKey => State.Current is { IsNew: true } ? NewKey : State.Current?.Directory ?? string.Empty;
+
     protected override void OnInitialized()
     {
         State.Initialize();
         State.Changed += OnChanged;
+        Runner.Changed += OnChanged;
+    }
+
+    private void Switch(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString();
+        if (key == NewKey || State.Services.FirstOrDefault(s => s.Directory == key) is not { } service)
+        {
+            return;
+        }
+
+        State.LastMessage = null;
+        State.Open(service);
+        Nav.NavigateTo("service");
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => State.Changed -= OnChanged;
+    public void Dispose()
+    {
+        State.Changed -= OnChanged;
+        Runner.Changed -= OnChanged;
+    }
 }

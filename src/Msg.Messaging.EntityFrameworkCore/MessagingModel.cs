@@ -6,7 +6,7 @@ namespace Msg.Messaging.EntityFrameworkCore;
 /// <summary>Tables msg_outbox and msg_inbox. "dotnet ef migrations add" creates them.</summary>
 public static class MessagingModel
 {
-    /// <summary>Both tables, from OnModelCreating. (MSG generates IEntityTypeConfiguration classes instead.)</summary>
+    /// <summary>Both tables, from OnModelCreating. (Stratum generates IEntityTypeConfiguration classes instead.)</summary>
     public static ModelBuilder AddMsgMessaging(this ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);

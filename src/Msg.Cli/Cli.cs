@@ -14,52 +14,56 @@ namespace Msg.Cli;
 internal static partial class Cli
 {
     private const string Usage = """
-        MSG {0} — generador de microservicios .NET
+        Stratum {0} — generador de microservicios .NET
 
         Uso:
-          msg new <Nombre> [opciones]        Crea un servicio nuevo
-          msg new --from <msg.json> [opc.]   Crea un servicio a partir de una definición
-          msg add entity <Nombre> --props "Campo:tipo, ..." [--plural <P>] [--db postgres|sqlserver] [--path <carpeta>]
-                                             Añade una entidad con CRUD, EF Core y tests
-          msg entity list [--path <carpeta>]          Entidades del servicio y sus propiedades
-          msg entity update <Entidad> --props "..." [--rename Viejo=Nuevo]... [--path] [--dry-run]
-                                             Cambia las propiedades (las que falten se eliminan)
-          msg entity remove <Entidad> [--delete-own-files] [--path] [--dry-run]
-                                             Elimina una entidad (tus archivos solo con --delete-own-files)
-          msg entity convert <Entidad> [--path] [--dry-run]
-                                             Pasa una entidad anterior a 0.10 al formato editable
-          msg feature list|on|off <feature>... [--path <carpeta>] [--dry-run]
-                                             Activa o desactiva features en un servicio existente
-                                             (observability, openApi, resilience, auth, tests, docker, ci)
-          msg feature convert [--path] [--dry-run]
-                                             Pasa un Program.cs anterior a 0.12 a MsgWiring.g.cs
-          msg messaging on --broker kafka|inMemory [--path] [--dry-run]
-          msg messaging off [--path] [--dry-run]
-                                             Eventos de integración entre servicios (outbox, inbox, reintentos)
-          msg events on|off <Entidad>... [--path] [--dry-run]
-                                             Publica <Entidad>Created/Updated/Deleted para otros servicios
-          msg subscribe <carpeta del publicador> <Entidad>[.Created|.Updated|.Deleted] [--path] [--dry-run]
-                                             Este servicio escucha eventos de otro (contrato + handler tuyo)
-          msg subscribe --sync [--path] [--dry-run]
-                                             Vuelve a copiar los contratos si los publicadores cambiaron
-          msg unsubscribe <Publicador> <Entidad>[.<Evento>] [--path] [--dry-run]
-          msg events map [--path <sistema>]          Quién publica y quién escucha cada evento
-          msg workspace list|add <carpeta>|remove <carpeta> [--path <sistema>]
-                                             Servicios de otras carpetas que forman parte del sistema
-                                             (msg.workspace.json; los usan msg aspire y msg studio)
-          msg migration review [--path <carpeta>] [--dry-run]
-                                             Revisa la última migración de EF Core: aplica los renombrados
-                                             (RenameColumn) y avisa de lo que borra datos
-          msg aspire [--name <Sistema>] [--path <carpeta>]
-                                             AppHost de Aspire con todos los servicios de la carpeta
-          msg studio [--path <carpeta>] [--port 5150] [--no-browser]
-                                             Editor visual en el navegador
-          msg templates list [--path <carpeta>]        Plantillas de MSG y del equipo (.msg/templates)
-          msg templates eject <set>[/<archivo>] [--path <carpeta>] [--force]
-                                             Copia plantillas a .msg/templates para personalizarlas
-          msg upgrade [--path <carpeta>] [--to <versión>]
-                                             Actualiza los paquetes Msg.* de un servicio existente
-          msg --version
+          stratum new <Nombre> [opciones]        Crea un servicio nuevo
+          stratum new --from <msg.json> [opc.]   Crea un servicio a partir de una definición
+          stratum add entity <Nombre> --props "Campo:tipo, ..." [--plural <P>] [--db postgres|sqlserver] [--path <carpeta>]
+                                                 Añade una entidad con CRUD, EF Core y tests
+          stratum entity list [--path <carpeta>]          Entidades del servicio y sus propiedades
+          stratum entity update <Entidad> --props "..." [--rename Viejo=Nuevo]... [--path] [--dry-run]
+                                                 Cambia las propiedades (las que falten se eliminan)
+          stratum entity remove <Entidad> [--delete-own-files] [--path] [--dry-run]
+                                                 Elimina una entidad (tus archivos solo con --delete-own-files)
+          stratum entity convert <Entidad> [--path] [--dry-run]
+                                                 Pasa una entidad anterior a 0.10 al formato editable
+          stratum feature list|on|off <feature>... [--path <carpeta>] [--dry-run]
+                                                 Activa o desactiva features en un servicio existente
+                                                 (observability, openApi, resilience, auth, tests, docker, ci)
+          stratum feature convert [--path] [--dry-run]
+                                                 Pasa un Program.cs anterior a 0.12 a MsgWiring.g.cs
+          stratum messaging on --broker kafka|inMemory [--path] [--dry-run]
+          stratum messaging off [--path] [--dry-run]
+                                                 Eventos de integración entre servicios (outbox, inbox, reintentos)
+          stratum events on|off <Entidad>... [--path] [--dry-run]
+                                                 Publica <Entidad>Created/Updated/Deleted para otros servicios
+          stratum subscribe <carpeta del publicador> <Entidad>[.Created|.Updated|.Deleted] [--path] [--dry-run]
+                                                 Este servicio escucha eventos de otro (contrato + handler tuyo)
+          stratum subscribe --sync [--prune] [--path] [--dry-run]
+                                                 Vuelve a copiar los contratos si los publicadores cambiaron
+                                                 (--prune quita las de eventos que ya no se publican)
+          stratum unsubscribe <Publicador> <Entidad>[.<Evento>] [--path] [--dry-run]
+          stratum events map [--path <sistema>]          Quién publica y quién escucha cada evento
+          stratum service remove <carpeta del servicio> [--path <sistema>] [--keep-files] [--yes]
+                                                 Elimina un servicio y lo que cuelga de él (suscripciones de otros
+                                                 servicios, AppHost, msg.workspace.json). Sin --yes solo lo muestra
+          stratum workspace list|add <carpeta>|remove <carpeta> [--path <sistema>]
+                                                 Servicios de otras carpetas que forman parte del sistema
+                                                 (msg.workspace.json; los usan stratum aspire y stratum studio)
+          stratum migration review [--path <carpeta>] [--dry-run]
+                                                 Revisa la última migración de EF Core: aplica los renombrados
+                                                 (RenameColumn) y avisa de lo que borra datos
+          stratum aspire [--name <Sistema>] [--path <carpeta>]
+                                                 AppHost de Aspire con todos los servicios de la carpeta
+          stratum studio [--path <carpeta>] [--port 5150] [--no-browser]
+                                                 Editor visual en el navegador
+          stratum templates list [--path <carpeta>]        Plantillas de Stratum y del equipo (.msg/templates)
+          stratum templates eject <set>[/<archivo>] [--path <carpeta>] [--force]
+                                                 Copia plantillas a .msg/templates para personalizarlas
+          stratum upgrade [--path <carpeta>] [--to <versión>]
+                                                 Actualiza los paquetes Msg.* de un servicio existente
+          stratum --version
 
         Opciones:
           -o, --output <carpeta>   Carpeta de salida (por defecto ./<Nombre>)
@@ -81,10 +85,10 @@ internal static partial class Cli
 
         Siempre incluido: estructura de solución, Central Package Management, health checks,
         ProblemDetails, correlation id, logs estructurados y configuración validada.
-        Lo común llega como paquetes Msg.ServiceDefaults.*: 'msg upgrade' lo actualiza sin regenerar.
+        Lo común llega como paquetes Msg.ServiceDefaults.*: 'stratum upgrade' lo actualiza sin regenerar.
 
         Tipos de --props: string, int, long, decimal, bool, guid, date, datetime. Añade ? si es opcional.
-          msg add entity Product --props "Name:string, Price:decimal, Description:string?"
+          stratum add entity Product --props "Name:string, Price:decimal, Description:string?"
         """;
 
     public static async Task<int> RunAsync(string[] args, TextWriter output)
@@ -122,11 +126,12 @@ internal static partial class Cli
             "messaging" => Messaging(args[1..], output),
             "events" => Events(args[1..], output),
             "workspace" => WorkspaceCommand(args[1..], output),
+            "service" => ServiceCommand(args[1..], output),
             "subscribe" => Subscribe(args[1..], output, subscribe: true),
             "unsubscribe" => Subscribe(args[1..], output, subscribe: false),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
-            _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
+            _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'stratum --help'."),
         };
     }
 
@@ -193,7 +198,7 @@ internal static partial class Cli
             {
                 Service = new ServiceInfo
                 {
-                    Name = ServiceName.Normalize(name ?? throw new MsgException("Falta el nombre del servicio: msg new <Nombre>")),
+                    Name = ServiceName.Normalize(name ?? throw new MsgException("Falta el nombre del servicio: stratum new <Nombre>")),
                 },
             };
 
@@ -234,7 +239,7 @@ internal static partial class Cli
     {
         if (args.Length == 0 || args[0] != "entity")
         {
-            throw new MsgException("Uso: msg add entity <Nombre> --props \"Campo:tipo, ...\"");
+            throw new MsgException("Uso: stratum add entity <Nombre> --props \"Campo:tipo, ...\"");
         }
 
         string? name = null, props = null, plural = null, db = null;
@@ -270,7 +275,7 @@ internal static partial class Cli
         var result = EntityAdder.Add(new AddEntityRequest
         {
             ServiceDirectory = path,
-            Name = name ?? throw new MsgException("Falta el nombre de la entidad: msg add entity <Nombre> --props \"...\""),
+            Name = name ?? throw new MsgException("Falta el nombre de la entidad: stratum add entity <Nombre> --props \"...\""),
             Properties = props ?? throw new MsgException("Falta --props \"Campo:tipo, ...\" (p. ej. \"Name:string, Price:decimal\")."),
             Plural = plural,
             Provider = db,
@@ -339,7 +344,7 @@ internal static partial class Cli
                     packageSource = Path.GetFullPath(Value(args, ref i, args[i]));
                     break;
                 default:
-                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: msg studio [--path <carpeta>] [--port 5150] [--no-browser]");
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: stratum studio [--path <carpeta>] [--port 5150] [--no-browser]");
             }
         }
 
@@ -358,7 +363,7 @@ internal static partial class Cli
         {
             throw new MsgException(
                 $"'{full}' es un proyecto .NET, no una carpeta de servicios (¿lo lanzaste con dotnet run?). " +
-                "Indica la carpeta con --path, p. ej.: msg studio --path C:\\Repos\\servicios");
+                "Indica la carpeta con --path, p. ej.: stratum studio --path C:\\Repos\\servicios");
         }
         var options = new StudioOptions
         {
@@ -386,7 +391,7 @@ internal static partial class Cli
     {
         if (args.Length == 0 || args[0] is not ("list" or "eject"))
         {
-            throw new MsgException("Uso: msg templates list | msg templates eject <set>[/<archivo>]  (sets: " + string.Join(", ", TemplateSource.Sets) + ")");
+            throw new MsgException("Uso: stratum templates list | stratum templates eject <set>[/<archivo>]  (sets: " + string.Join(", ", TemplateSource.Sets) + ")");
         }
 
         var path = ".";
@@ -420,12 +425,12 @@ internal static partial class Cli
     private static int ListTemplates(TextWriter output, TeamTemplates? team)
     {
         output.WriteLine(team is null
-            ? "Sin plantillas del equipo (crea una con: msg templates eject <set>/<archivo>)."
+            ? "Sin plantillas del equipo (crea una con: stratum templates eject <set>/<archivo>)."
             : $"Plantillas del equipo: {team.Root}");
         if (team is not null && team.Tokens.Count > 0)
         {
             output.WriteLine($"  tokens: {string.Join(", ", team.Tokens.Keys.Select(k =>
-                "{{" + k + "}}" + (ServiceGenerator.ReservedTokens.Contains(k) ? " (ignorado: es de MSG)" : string.Empty)))}");
+                "{{" + k + "}}" + (ServiceGenerator.ReservedTokens.Contains(k) ? " (ignorado: es de Stratum)" : string.Empty)))}");
         }
 
         foreach (var set in TemplateSource.Sets)
@@ -454,7 +459,7 @@ internal static partial class Cli
     {
         if (string.IsNullOrEmpty(target))
         {
-            throw new MsgException("Indica qué copiar: msg templates eject service/src/__Service__.Api/Program.cs  (o un set entero: msg templates eject service)");
+            throw new MsgException("Indica qué copiar: stratum templates eject service/src/__Service__.Api/Program.cs  (o un set entero: stratum templates eject service)");
         }
 
         var slash = target.IndexOf('/', StringComparison.Ordinal);
@@ -469,7 +474,7 @@ internal static partial class Cli
         var selected = TemplateSource.LoadEmbedded(set).Where(f => file is null || f.Path == file).ToList();
         if (selected.Count == 0)
         {
-            throw new MsgException($"No existe la plantilla '{target}'. Míralas con: msg templates list");
+            throw new MsgException($"No existe la plantilla '{target}'. Míralas con: stratum templates list");
         }
 
         var msgFolder = team?.Root ?? Path.Combine(Path.GetFullPath(path), TeamTemplates.FolderName);
@@ -504,8 +509,8 @@ internal static partial class Cli
         }
 
         output.WriteLine();
-        output.WriteLine("Edítalas y haz commit de .msg: msg new, msg add entity y msg studio las usarán en todo el repo.");
-        output.WriteLine("Un archivo vacío desactiva esa plantilla; un archivo nuevo se añade a lo que genera MSG.");
+        output.WriteLine("Edítalas y haz commit de .msg: stratum new, stratum add entity y stratum studio las usarán en todo el repo.");
+        output.WriteLine("Un archivo vacío desactiva esa plantilla; un archivo nuevo se añade a lo que genera Stratum.");
         return 0;
     }
 
@@ -525,14 +530,14 @@ internal static partial class Cli
                     name = Value(args, ref i, args[i]);
                     break;
                 default:
-                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: msg aspire [--name <Sistema>] [--path <carpeta>]");
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: stratum aspire [--name <Sistema>] [--path <carpeta>]");
             }
         }
 
         // A service folder is not a system: run it from the folder that contains the services.
         if (File.Exists(Path.Combine(root, ServiceGenerator.DefinitionFileName)))
         {
-            throw new MsgException("Esta carpeta es un servicio. Ejecuta 'msg aspire' en la carpeta que contiene tus servicios (o usa --path).");
+            throw new MsgException("Esta carpeta es un servicio. Ejecuta 'stratum aspire' en la carpeta que contiene tus servicios (o usa --path).");
         }
 
         var appHostName = ServiceName.Normalize(name ?? Path.GetFileName(Path.GetFullPath(root)));
@@ -584,7 +589,7 @@ internal static partial class Cli
 
                     break;
                 default:
-                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: msg upgrade [--path <carpeta>] [--to <versión>]");
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: stratum upgrade [--path <carpeta>] [--to <versión>]");
             }
         }
 
@@ -592,11 +597,11 @@ internal static partial class Cli
 
         if (result.FromVersion == result.ToVersion)
         {
-            output.WriteLine($"✔ Ya está en MSG {result.ToVersion} ({string.Join(", ", result.Packages)}).");
+            output.WriteLine($"✔ Ya está en Stratum {result.ToVersion} ({string.Join(", ", result.Packages)}).");
             return 0;
         }
 
-        output.WriteLine($"✔ MSG {result.FromVersion} → {result.ToVersion}");
+        output.WriteLine($"✔ Stratum {result.FromVersion} → {result.ToVersion}");
         foreach (var package in result.Packages)
         {
             output.WriteLine($"  {package} {result.ToVersion}");
@@ -631,7 +636,7 @@ internal static partial class Cli
 
     private static int Entity(string[] args, TextWriter output)
     {
-        const string usage = "Uso: msg entity list|update|remove|convert <Entidad> [opciones]. Usa 'msg --help'.";
+        const string usage = "Uso: stratum entity list|update|remove|convert <Entidad> [opciones]. Usa 'stratum --help'.";
         if (args.Length == 0)
         {
             throw new MsgException(usage);
@@ -720,7 +725,7 @@ internal static partial class Cli
                 output.WriteLine();
                 output.WriteLine("Siguiente paso: crea la migración y revísala (o hazlo desde el Studio, que hace las dos cosas):");
                 output.WriteLine($"  dotnet ef migrations add <Nombre> {efProjects}");
-                output.WriteLine($"  msg migration review{(path == "." ? string.Empty : $" --path {path}")}");
+                output.WriteLine($"  stratum migration review{(path == "." ? string.Empty : $" --path {path}")}");
             }
         }
 
@@ -729,7 +734,7 @@ internal static partial class Cli
 
     private static int Feature(string[] args, TextWriter output)
     {
-        const string usage = "Uso: msg feature list|on|off <feature>... | msg feature convert  [--path <carpeta>] [--dry-run]";
+        const string usage = "Uso: stratum feature list|on|off <feature>... | stratum feature convert  [--path <carpeta>] [--dry-run]";
         if (args.Length == 0 || args[0] is not ("list" or "on" or "off" or "convert"))
         {
             throw new MsgException(usage);
@@ -774,7 +779,7 @@ internal static partial class Cli
             if (!ServicePlanner.UsesMsgWiring(path, current))
             {
                 output.WriteLine();
-                output.WriteLine("Program.cs es anterior a MSG 0.12: para cambiar features, primero: msg feature convert --dry-run");
+                output.WriteLine("Program.cs es anterior a Stratum 0.12: para cambiar features, primero: stratum feature convert --dry-run");
             }
 
             return 0;
@@ -807,7 +812,7 @@ internal static partial class Cli
 
     private static int Messaging(string[] args, TextWriter output)
     {
-        const string usage = "Uso: msg messaging on --broker kafka|inMemory | msg messaging off  [--path <carpeta>] [--dry-run]";
+        const string usage = "Uso: stratum messaging on --broker kafka|inMemory | stratum messaging off  [--path <carpeta>] [--dry-run]";
         if (args.Length == 0 || args[0] is not ("on" or "off"))
         {
             throw new MsgException(usage);
@@ -854,7 +859,7 @@ internal static partial class Cli
 
             if (updated.Messaging?.Broker == MessagingSettings.Kafka)
             {
-                output.WriteLine("Para ejecutarlo con Kafka, regenera el AppHost (msg aspire, o desde el Studio): añade Kafka y Kafka UI.");
+                output.WriteLine("Para ejecutarlo con Kafka, regenera el AppHost (stratum aspire, o desde el Studio): añade Kafka y Kafka UI.");
             }
         }
 
@@ -868,7 +873,7 @@ internal static partial class Cli
             return EventsMap(args[1..], output);
         }
 
-        const string usage = "Uso: msg events on|off <Entidad>... [--path <carpeta>] [--dry-run]";
+        const string usage = "Uso: stratum events on|off <Entidad>... [--path <carpeta>] [--dry-run]";
         if (args.Length < 2 || args[0] is not ("on" or "off"))
         {
             throw new MsgException(usage);
@@ -913,10 +918,10 @@ internal static partial class Cli
     private static int Subscribe(string[] args, TextWriter output, bool subscribe)
     {
         var usage = subscribe
-            ? "Uso: msg subscribe <carpeta del publicador> <Entidad>[.Evento] | msg subscribe --sync  [--path <servicio>] [--dry-run]"
-            : "Uso: msg unsubscribe <Publicador> <Entidad>[.Evento] [--path <servicio>] [--dry-run]";
+            ? "Uso: stratum subscribe <carpeta del publicador> <Entidad>[.Evento] | stratum subscribe --sync  [--path <servicio>] [--dry-run]"
+            : "Uso: stratum unsubscribe <Publicador> <Entidad>[.Evento] [--path <servicio>] [--dry-run]";
         var path = ".";
-        bool dryRun = false, sync = false;
+        bool dryRun = false, sync = false, prune = false;
         var positional = new List<string>();
         for (var i = 0; i < args.Length; i++)
         {
@@ -930,6 +935,9 @@ internal static partial class Cli
                     break;
                 case "--sync" when subscribe:
                     sync = true;
+                    break;
+                case "--prune" when subscribe:
+                    prune = true;
                     break;
                 default:
                     if (args[i].StartsWith('-'))
@@ -947,10 +955,10 @@ internal static partial class Cli
         if (sync)
         {
             var others = Neighbours(path);
-            updated = ServicePlanner.SyncSubscriptions(current, others);
+            updated = ServicePlanner.SyncSubscriptions(current, others, prune);
             foreach (var (subscription, latest, problem) in ServicePlanner.CheckSubscriptions(current, others).Where(c => c.Current is null))
             {
-                output.WriteLine($"⚠ {subscription.Topic}: {problem}");
+                output.WriteLine(prune ? $"✔ {subscription.Topic}: se quita ({problem})" : $"⚠ {subscription.Topic}: {problem} (--prune la quita)");
             }
         }
         else
@@ -1014,14 +1022,14 @@ internal static partial class Cli
             }
             else
             {
-                throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: msg events map [--path <sistema>]");
+                throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: stratum events map [--path <sistema>]");
             }
         }
 
         var routes = EventMap.Build(AspireGenerator.Discover(root).Select(s => s.Definition));
         if (routes.Count == 0)
         {
-            output.WriteLine("Ningún servicio publica ni escucha eventos todavía (msg events on <Entidad>, msg subscribe ...).");
+            output.WriteLine("Ningún servicio publica ni escucha eventos todavía (stratum events on <Entidad>, stratum subscribe ...).");
             return 0;
         }
 
@@ -1038,9 +1046,85 @@ internal static partial class Cli
         return 0;
     }
 
+    private static int ServiceCommand(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum service remove <carpeta del servicio> [--path <sistema>] [--keep-files] [--yes]";
+        if (args.Length < 2 || args[0] != "remove")
+        {
+            throw new MsgException(usage);
+        }
+
+        string? root = null;
+        bool keepFiles = false, yes = false;
+        for (var i = 2; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    root = Value(args, ref i, args[i]);
+                    break;
+                case "--keep-files":
+                    keepFiles = true;
+                    break;
+                case "--yes":
+                    yes = true;
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+            }
+        }
+
+        var serviceDirectory = Path.GetFullPath(args[1]);
+        // The system: --path, or the folder that contains the service.
+        root ??= Path.GetDirectoryName(serviceDirectory) ?? ".";
+        var plan = ServiceRemoval.Plan(root, serviceDirectory);
+
+        output.WriteLine($"Eliminar {plan.ServiceName} ({plan.Directory}):");
+        output.WriteLine(keepFiles
+            ? "  · La carpeta y sus archivos se conservan (solo sale del sistema)."
+            : $"  - Se borra la carpeta con sus {plan.FileCount} archivo(s).");
+        foreach (var consumer in plan.Consumers)
+        {
+            output.WriteLine($"  - {consumer.Service} deja de escuchar {string.Join(", ", consumer.Subscriptions.Select(s => s.Topic))}:");
+            foreach (var change in consumer.Plan.Changes)
+            {
+                output.WriteLine($"      {(change.Kind == ChangeKind.Delete ? "-" : "~")} {change.Path}");
+            }
+
+            foreach (var warning in consumer.Plan.Warnings)
+            {
+                output.WriteLine($"      ⚠ {warning.Split('\n')[0]}");
+            }
+        }
+
+        if (plan.AppHost is { } appHost)
+        {
+            output.WriteLine($"  ~ {appHost}: se regenera sin el servicio.");
+        }
+
+        foreach (var note in plan.Notes)
+        {
+            output.WriteLine($"  ⚠ {note}");
+        }
+
+        if (!yes)
+        {
+            output.WriteLine();
+            output.WriteLine("No se ha tocado nada. Para eliminarlo de verdad, repite el comando con --yes.");
+            return 0;
+        }
+
+        foreach (var line in ServiceRemoval.Apply(plan, deleteFolder: !keepFiles))
+        {
+            output.WriteLine($"✔ {line}");
+        }
+
+        return 0;
+    }
+
     private static int WorkspaceCommand(string[] args, TextWriter output)
     {
-        const string usage = "Uso: msg workspace list | msg workspace add <carpeta> | msg workspace remove <carpeta>  [--path <sistema>]";
+        const string usage = "Uso: stratum workspace list | stratum workspace add <carpeta> | stratum workspace remove <carpeta>  [--path <sistema>]";
         if (args.Length == 0 || args[0] is not ("list" or "add" or "remove"))
         {
             throw new MsgException(usage);
@@ -1069,7 +1153,7 @@ internal static partial class Cli
             var services = AspireGenerator.Discover(root);
             if (services.Count == 0)
             {
-                output.WriteLine("No hay servicios de MSG en el sistema.");
+                output.WriteLine("No hay servicios de Stratum en el sistema.");
             }
 
             foreach (var service in services)
@@ -1085,13 +1169,13 @@ internal static partial class Cli
         if (args[0] == "add")
         {
             output.WriteLine(WorkspaceFile.Add(root, path)
-                ? $"✔ {Path.GetFullPath(path)} forma parte del sistema (msg.workspace.json). Regenera el AppHost con msg aspire."
-                : "Nada que añadir: ya está en el sistema (o dentro de su carpeta, donde MSG lo encuentra solo).");
+                ? $"✔ {Path.GetFullPath(path)} forma parte del sistema (msg.workspace.json). Regenera el AppHost con stratum aspire."
+                : "Nada que añadir: ya está en el sistema (o dentro de su carpeta, donde Stratum lo encuentra solo).");
         }
         else
         {
             output.WriteLine(WorkspaceFile.Remove(root, path)
-                ? $"✔ {path} ya no forma parte del sistema (sus archivos siguen donde estaban). Regenera el AppHost con msg aspire."
+                ? $"✔ {path} ya no forma parte del sistema (sus archivos siguen donde estaban). Regenera el AppHost con stratum aspire."
                 : "No estaba en msg.workspace.json.");
         }
 
@@ -1102,7 +1186,7 @@ internal static partial class Cli
     {
         if (args.Length == 0 || args[0] != "review")
         {
-            throw new MsgException("Uso: msg migration review [--path <carpeta>] [--dry-run]");
+            throw new MsgException("Uso: stratum migration review [--path <carpeta>] [--dry-run]");
         }
 
         var path = ".";
@@ -1160,14 +1244,14 @@ internal static partial class Cli
     {
         if (definition.Entities.Count == 0)
         {
-            output.WriteLine("El servicio no tiene entidades. Añade una con: msg add entity <Nombre> --props \"...\"");
+            output.WriteLine("El servicio no tiene entidades. Añade una con: stratum add entity <Nombre> --props \"...\"");
             return;
         }
 
         foreach (var entity in definition.Entities)
         {
             var props = string.Join(", ", entity.Properties.Select(p => $"{p.Name}:{p.Type}{(p.Nullable ? "?" : string.Empty)}"));
-            output.WriteLine($"{entity.Name} ({entity.Plural}){(entity.IsEditable ? string.Empty : "  [anterior a 0.10: msg entity convert " + entity.Name + "]")}");
+            output.WriteLine($"{entity.Name} ({entity.Plural}){(entity.IsEditable ? string.Empty : "  [anterior a 0.10: stratum entity convert " + entity.Name + "]")}");
             output.WriteLine($"  --props \"{props}\"");
         }
 
@@ -1208,7 +1292,7 @@ internal static partial class Cli
 
     private static string ResolveFeature(string input, string arg) =>
         FeatureSet.Names.FirstOrDefault(n => n.Equals(input, StringComparison.OrdinalIgnoreCase))
-        ?? throw new MsgException($"Opción desconocida '{arg}'. Usa 'msg --help'.");
+        ?? throw new MsgException($"Opción desconocida '{arg}'. Usa 'stratum --help'.");
 
     private static string Value(string[] args, ref int i, string option)
     {

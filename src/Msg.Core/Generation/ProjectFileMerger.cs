@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace Msg.Core.Generation;
 
 /// <summary>
-/// Edits of files the user owns: adds what MSG would render but is missing, and removes only items MSG itself
+/// Edits of files the user owns: adds what Stratum would render but is missing, and removes only items Stratum itself
 /// rendered for something that is now turned off. Pure functions over text, so changes can be previewed.
 /// </summary>
 internal static partial class ProjectFileMerger
@@ -55,7 +55,7 @@ internal static partial class ProjectFileMerger
     }
 
     /// <summary>
-    /// Removes the items MSG rendered before (<paramref name="oldRendered"/>) but no longer renders
+    /// Removes the items Stratum rendered before (<paramref name="oldRendered"/>) but no longer renders
     /// (<paramref name="newRendered"/>), e.g. the OpenAPI packages when OpenAPI is turned off. Items the user added are kept.
     /// </summary>
     /// <returns>The new text, or null when nothing is removed.</returns>
@@ -116,7 +116,7 @@ internal static partial class ProjectFileMerger
         return changed ? settings.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n" : null;
     }
 
-    /// <summary>File-based helper used by "msg aspire".</summary>
+    /// <summary>File-based helper used by "stratum aspire".</summary>
     public static bool Merge(string path, string rendered)
     {
         var merged = MergeItems(File.ReadAllText(path), rendered);

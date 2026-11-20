@@ -58,7 +58,7 @@ public abstract class AggregateRoot<TId> : Entity<TId>, IHasDomainEvents
     }
 }
 
-/// <summary>A business rule was violated. MSG services turn it into a 422 ProblemDetails with the message.</summary>
+/// <summary>A business rule was violated. Stratum services turn it into a 422 ProblemDetails with the message.</summary>
 public sealed class DomainException : Exception
 {
     public DomainException() { }

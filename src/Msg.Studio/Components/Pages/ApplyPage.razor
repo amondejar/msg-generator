@@ -2,11 +2,11 @@
 @implements IDisposable
 @inject StudioState State
 
-<PageTitle>Aplicar cambios · msg studio</PageTitle>
+<PageTitle>Revisar y aplicar · Stratum Studio</PageTitle>
 
 @if (State.Current is not { } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio abierto. <a href="/">Elige uno en Sistema</a>.</p></main>
+    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
 }
 else
 {
@@ -15,10 +15,10 @@ else
     <main class="content">
         <div class="row" style="justify-content: space-between; align-items: flex-end">
             <div>
-                <h1>Aplicar cambios</h1>
+                <h1>Revisar y aplicar</h1>
                 <p class="lead">
                     @(draft.IsNew ? $"Servicio nuevo {draft.Name} en la carpeta {draft.Directory}." : $"Cambios en {draft.Name}.")
-                    Revisa qué va a escribir MSG en tu repositorio.
+                    Revisa qué va a escribir Stratum en tu repositorio.
                 </p>
             </div>
             <div class="stack" style="gap: 4px; align-items: flex-end">
@@ -43,9 +43,9 @@ else
                 <div class="row" style="margin-top: 10px">
                     @if (draft.Entities.Count > 0)
                     {
-                        <a class="btn" href="service#migrations">Crear la migración →</a>
+                        <a class="btn" href="service/data">Crear la migración →</a>
                     }
-                    <a class="btn" href="/">Ejecutar el sistema →</a>
+                    <a class="btn" href="run">Ejecutar el sistema →</a>
                     <span class="mono hint">o: dotnet test @(draft.Directory)</span>
                 </div>
             </div>
@@ -57,14 +57,14 @@ else
         {
             <div class="stats">
                 <div class="card"><b style="color: var(--ok)">@Count(changes, ChangeKind.Create)</b>archivos nuevos</div>
-                <div class="card"><b style="color: var(--warn)">@Count(changes, ChangeKind.Regenerate)</b>regenerados por MSG</div>
+                <div class="card"><b style="color: var(--warn)">@Count(changes, ChangeKind.Regenerate)</b>regenerados por Stratum</div>
                 <div class="card"><b style="color: #67E8F9">@Count(changes, ChangeKind.Merge)</b>completados (solo se añade)</div>
                 <div class="card"><b style="@(changes.Any(c => c.TouchesUserCode) ? "color: var(--err)" : "")">@changes.Count(c => c.TouchesUserCode)</b>archivos tuyos reemplazados o borrados</div>
             </div>
 
             @if (changes.Count == 0)
             {
-                <p class="lead">No hay cambios pendientes. Añade una entidad en el <a href="entities">diseñador</a>.</p>
+                <p class="lead">No hay cambios pendientes: el código del servicio coincide con su msg.json. Cambia algo en <a href="service">General</a>, <a href="entities">Entidades</a> o <a href="service/messaging">Mensajería</a> y vuelve aquí.</p>
             }
 
             @foreach (var (kind, title, css, symbol) in Groups)
@@ -109,7 +109,7 @@ else
     private static readonly (ChangeKind Kind, string Title, string Css, string Symbol)[] Groups =
     [
         (ChangeKind.Create, "Nuevos · a partir de ahora son tuyos", "k-create", "+"),
-        (ChangeKind.Regenerate, "Regenerados · gestionados por MSG (*.g.cs, msg.json)", "k-regen", "~"),
+        (ChangeKind.Regenerate, "Regenerados · gestionados por Stratum (*.g.cs, msg.json)", "k-regen", "~"),
         (ChangeKind.Merge, "Completados · solo se añade lo que falta", "k-merge", "±"),
         (ChangeKind.Replace, "Reemplazados · archivos tuyos de la entidad que conviertes al formato editable", "k-del", "!"),
         (ChangeKind.Delete, "Eliminados", "k-del", "−"),

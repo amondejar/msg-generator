@@ -1,0 +1,65 @@
+@page "/events"
+@implements IDisposable
+@inject StudioState State
+
+<PageTitle>Mapa de eventos · Stratum Studio</PageTitle>
+
+<main class="content">
+    <div>
+        <h1>Mapa de eventos</h1>
+        <p class="lead">Qué servicio publica cada evento de integración y quién lo escucha. Los avisos señalan contratos copiados que el publicador ha cambiado o eventos que ya nadie publica.</p>
+    </div>
+    @{
+        var routes = State.EventRoutes();
+    }
+    @if (routes.Count == 0)
+    {
+        <div class="card stack"><b>Todavía no hay eventos entre servicios.</b><span class="hint">1. En un servicio, activa la mensajería (<em>Mensajería</em>). 2. En sus <em>Entidades</em>, marca <em>Publicar eventos</em>. 3. En otro servicio, en <em>Mensajería → Eventos que escucha</em>, elige el evento.</span></div>
+    }
+    else
+    {
+        <section class="stack" aria-labelledby="h-events-map">
+            <h2 class="section" id="h-events-map">@routes.Count evento(s)</h2>
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 1fr 2fr 1.6fr"><span>Publica</span><span>Evento (topic)</span><span>Lo escuchan</span></div>
+                @foreach (var route in routes)
+                {
+                    <div class="tr" style="grid-template-columns: 1fr 2fr 1.6fr; align-items: center">
+                        <span>@(route.Publisher ?? "¿?")</span>
+                        <span>
+                            <span class="mono">@route.EventClass</span> <small class="hint mono">@route.Topic</small>
+                            @if (route.Problem is { } problem)
+                            {
+                                <br /><small style="color: var(--warn)">⚠ @problem</small>
+                            }
+                        </span>
+                        <span>
+                            @if (route.Consumers.Count == 0)
+                            {
+                                <small class="hint">nadie todavía</small>
+                            }
+                            else
+                            {
+                                <span>→ @string.Join(", ", route.Consumers)</span>
+                            }
+                        </span>
+                    </div>
+                }
+            </div>
+            <span class="hint">Un servicio publica los eventos de una entidad en <em>Entidades → Eventos para otros servicios</em>; otro los escucha en <em>Mensajería → Eventos que escucha</em>.</span>
+        </section>
+    }
+
+</main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

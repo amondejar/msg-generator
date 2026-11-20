@@ -6,7 +6,7 @@ namespace Msg.Core.Templating;
 /// <summary>
 /// A team's own conventions, versioned with its code in a <c>.msg</c> folder:
 /// <list type="bullet">
-/// <item><c>.msg/templates/&lt;set&gt;/&lt;path&gt;</c> replaces MSG's template with the same path, or adds a new file.
+/// <item><c>.msg/templates/&lt;set&gt;/&lt;path&gt;</c> replaces Stratum's template with the same path, or adds a new file.
 /// An empty file removes it. Sets: <c>service</c>, <c>entity</c> (vertical slice), <c>entity-clean</c>, <c>entity-tests</c>.</item>
 /// <item><c>.msg/config.json</c>: <c>{ "tokens": { "Company": "Acme" } }</c> → <c>{{Company}}</c> in any template.</item>
 /// </list>

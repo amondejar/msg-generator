@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end check: build + test + pack MSG, generate services that consume the local Msg.* packages,
-# build them with warnings-as-errors, run one and hit its endpoints, check "msg upgrade",
+# build them with warnings-as-errors, run one and hit its endpoints, check "stratum upgrade",
 # then build and test the full variants. Usage: scripts/smoke-test.sh
 set -euo pipefail
 
@@ -31,7 +31,7 @@ else
   dotnet pack  "$ROOT/src/Msg.Messaging" -c Release -o "$PKGS" -v q -nologo >/dev/null
 fi
 pass "packed: $(ls "$PKGS" | tr '\n' ' ')"
-MSG=(dotnet "$ROOT/src/Msg.Cli/bin/Release/net10.0/msg.dll")
+MSG=(dotnet "$ROOT/src/Msg.Cli/bin/Release/net10.0/stratum.dll")
 VERSION="$("${MSG[@]}" --version)"
 
 # The global NuGet cache keeps packages by id+version: drop old Msg.* builds so we test the ones just packed.
@@ -96,14 +96,14 @@ if (cd "$APP_DIR" && Service__Version=banana timeout 10 dotnet Catalog.Api.dll \
 fi
 grep -q "SemVer" "$WORK/bad.log" && pass "invalid Service:Version stops startup with a clear message" || fail "no validation message"
 
-echo "▶ msg upgrade"
+echo "▶ stratum upgrade"
 cp -r "$WORK/core" "$WORK/upgraded"
 "${MSG[@]}" upgrade --path "$WORK/upgraded" --to 9.9.9 >/dev/null
 grep -q 'Include="Msg.ServiceDefaults" Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
   && grep -q '"msgVersion": "9.9.9"' "$WORK/upgraded/msg.json" \
   && pass "upgrade bumps Msg.* packages and msg.json" || fail "upgrade"
 
-echo "▶ msg add entity"
+echo "▶ stratum add entity"
 "${MSG[@]}" add entity Product  --path "$WORK/full" --props "Name:string, Price:decimal, Description:string?, Stock:int" >/dev/null
 "${MSG[@]}" add entity Category --path "$WORK/full" --props "Title:string, Position:int?" --plural Categories >/dev/null
 "${MSG[@]}" add entity Invoice  --path "$WORK/auth" --db sqlserver --props "Number:string, Total:decimal, Paid:bool" >/dev/null
@@ -114,7 +114,7 @@ grep -q "MapProductEndpoints" "$WORK/full/src/Orders.Api/Features/FeatureRegistr
   && grep -q "Npgsql.EntityFrameworkCore.PostgreSQL" "$WORK/full/Directory.Packages.props" \
   && grep -q '"Database"' "$WORK/full/src/Orders.Api/appsettings.Development.json" \
   && pass "registration, packages and connection string wired" || fail "entity wiring"
-"${MSG[@]}" new --from "$WORK/full/msg.json" -o "$WORK/regen" --package-source "$PKGS" >/dev/null && pass "msg new --from regenerates the entities"
+"${MSG[@]}" new --from "$WORK/full/msg.json" -o "$WORK/regen" --package-source "$PKGS" >/dev/null && pass "stratum new --from regenerates the entities"
 
 echo "▶ Clean Architecture + DDD"
 "${MSG[@]}" new Catalog -o "$WORK/clean" --architecture clean-ddd --package-source "$PKGS" >/dev/null
@@ -130,7 +130,7 @@ grep -q "AggregateRoot<Guid>" "$WORK/clean/src/Catalog.Domain/Products/Product.g
 if grep -rn "@msg:\|{{Service}}\|{{Entity}}\|__Entity__" "$WORK/clean"; then fail "unrendered markers in clean-ddd"; fi
 pass "no template markers left in clean-ddd"
 
-echo "▶ Editable entities (msg entity)"
+echo "▶ Editable entities (stratum entity)"
 CP="$WORK/clean/src/Catalog.Domain/Products/Product.cs"
 # User code in the partial class: must survive every regeneration.
 cat > "$CP" <<'CS'
@@ -180,7 +180,7 @@ if "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string"
   && "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string, Position:int?, Color:string?" >/dev/null \
   && pass "legacy entity: blocked, converted (shows user files), then editable" || fail "entity convert"
 
-echo "▶ Features on/off in an existing service (msg feature)"
+echo "▶ Features on/off in an existing service (stratum feature)"
 FS="$WORK/features"
 "${MSG[@]}" new Shop -o "$FS" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" add entity Product --path "$FS" --props "Name:string" >/dev/null
@@ -220,7 +220,7 @@ if "${MSG[@]}" feature off docker --path "$LP" >/dev/null 2>&1; then fail "featu
   && "${MSG[@]}" feature off docker --path "$LP" >/dev/null \
   && pass "Program.cs from before 0.12: blocked, converted, then editable" || fail "feature convert"
 
-echo "▶ Messaging (msg messaging / msg events)"
+echo "▶ Messaging (stratum messaging / stratum events)"
 if "${MSG[@]}" events on Product --path "$FS" >/dev/null 2>&1; then fail "events published without messaging"; fi
 "${MSG[@]}" messaging on --broker kafka --path "$FS" >/dev/null
 "${MSG[@]}" events on Product --path "$FS" >/dev/null
@@ -254,8 +254,13 @@ grep -q 'IntegrationEvent("shop.product-deleted")' "$WORK/clean/src/Catalog.Appl
   && "${MSG[@]}" subscribe --sync --path "$WORK/clean" | grep -q "IntegrationEvents/Shop/ProductCreated.g.cs" \
   && grep -q "string? Sku" "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop/ProductCreated.g.cs" \
   && pass "a changed contract is detected and --sync copies it again" || fail "subscribe --sync"
+"${MSG[@]}" events off Product --path "$FS" >/dev/null
+"${MSG[@]}" subscribe --sync --prune --path "$WORK/clean" >/dev/null
+[[ ! -d "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop" ]] && ! grep -q '"service": "Shop"' "$WORK/clean/msg.json" \
+  && pass "--prune drops subscriptions to events no longer published" || fail "subscribe --prune"
+"${MSG[@]}" events on Product --path "$FS" >/dev/null
 
-echo "▶ Guided migrations (msg migration review)"
+echo "▶ Guided migrations (stratum migration review)"
 MIG="$WORK/migration"; cp -r "$WORK/clean" "$MIG"
 mkdir -p "$MIG/src/Catalog.Infrastructure/Migrations"
 MF="$MIG/src/Catalog.Infrastructure/Migrations/20990101000000_RenameTitle.cs"
@@ -332,7 +337,7 @@ echo '// @msg:if bogus' >> "$TEAM/.msg/templates/service/CODEOWNERS"
 { "${MSG[@]}" new Broken -o "$TEAM/services/broken" 2>&1 || true; } | grep -q ".msg/templates/service/CODEOWNERS, línea 2" \
   && pass "a broken team template is reported with file and line" || fail "broken template error"
 
-echo "▶ msg aspire"
+echo "▶ stratum aspire"
 SYS="$WORK/system"; mkdir -p "$SYS"
 "${MSG[@]}" new Orders  -o "$SYS/orders"  --package-source "$PKGS" >/dev/null
 "${MSG[@]}" add entity Order --path "$SYS/orders" --props "Number:string, Total:decimal" >/dev/null
@@ -351,7 +356,7 @@ grep -q 'AddProject<Projects.Orders_Api>("orders")' "$SYS/Shop.AppHost/MsgServic
   && grep -q 'connectionName: "Database"' "$SYS/Shop.AppHost/MsgServices.g.cs" \
   && grep -q 'AddPostgres' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'AddSqlServer' "$SYS/Shop.AppHost/MsgServices.g.cs" \
   && pass "AppHost with both services, their databases and health checks" || fail "AppHost content"
-[[ -z "$("${MSG[@]}" aspire --path "$SYS" --name Shop | grep '^  [+~]')" ]] && pass "msg aspire is idempotent" || fail "msg aspire rewrote files"
+[[ -z "$("${MSG[@]}" aspire --path "$SYS" --name Shop | grep '^  [+~]')" ]] && pass "stratum aspire is idempotent" || fail "stratum aspire rewrote files"
 "${MSG[@]}" new Payments -o "$WORK/elsewhere/payments" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" workspace add "$WORK/elsewhere/payments" --path "$SYS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
@@ -362,10 +367,16 @@ grep -q '"../elsewhere/payments"' "$SYS/msg.workspace.json" \
   && pass "a service in another folder joins the system (msg.workspace.json → AppHost)" || fail "workspace add"
 "${MSG[@]}" new Notifications -o "$SYS/notifications" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+"${MSG[@]}" new Legacy -o "$SYS/legacy" --package-source "$PKGS" >/dev/null
+"${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+"${MSG[@]}" service remove "$SYS/legacy" --path "$SYS" | grep -q "No se ha tocado nada" && [[ -d "$SYS/legacy" ]] \
+  && "${MSG[@]}" service remove "$SYS/legacy" --path "$SYS" --yes >/dev/null && [[ ! -d "$SYS/legacy" ]] \
+  && ! grep -q "Legacy" "$SYS/Shop.AppHost/Shop.AppHost.csproj" "$SYS/Shop.AppHost/MsgServices.g.cs" "$SYS/Shop.slnx" \
+  && pass "service remove: dry run first, then folder and AppHost references gone" || fail "service remove"
 grep -q 'Notifications_Api' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'Notifications.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
   && pass "a new service is added to the AppHost" || fail "new service not added"
 
-echo "▶ msg studio"
+echo "▶ stratum studio"
 STUDIO_PORT=5988
 "${MSG[@]}" studio --path "$SYS" --port $STUDIO_PORT --no-browser >"$WORK/studio.log" 2>&1 &
 PID=$!
@@ -375,7 +386,7 @@ for s in Orders Billing Notifications; do
   echo "$HOME_HTML" | grep -q ">$s<" || fail "studio: $s missing on the system page"
 done
 pass "studio lists the services of the system"
-for p in service entities apply; do
+for p in services events run templates service entities service/data service/messaging service/code service/remove apply; do
   [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$STUDIO_PORT/$p")" == 200 ]] || fail "studio: /$p"
 done
 pass "studio pages render"

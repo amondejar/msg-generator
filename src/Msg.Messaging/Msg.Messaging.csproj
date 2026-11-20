@@ -3,7 +3,7 @@
   <PropertyGroup>
     <RootNamespace>Msg.Messaging</RootNamespace>
     <IsPackable>true</IsPackable>
-    <Description>MSG messaging between services: integration events through an outbox (no event lost if the broker is down), idempotent consumers (inbox), retries and dead-letter, tracing across services. Broker-agnostic: add Msg.Messaging.Kafka or Msg.Messaging.AzureServiceBus. Framework-only.</Description>
+    <Description>Stratum messaging between services: integration events through an outbox (no event lost if the broker is down), idempotent consumers (inbox), retries and dead-letter, tracing across services. Broker-agnostic: add Msg.Messaging.Kafka or Msg.Messaging.AzureServiceBus. Framework-only.</Description>
   </PropertyGroup>
 
   <ItemGroup>

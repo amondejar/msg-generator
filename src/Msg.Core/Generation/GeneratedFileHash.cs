@@ -6,7 +6,7 @@ namespace Msg.Core.Generation;
 
 /// <summary>
 /// Last line of every *.g.cs: a hash of its content. If the content no longer matches, someone edited the
-/// generated file by hand and MSG warns before overwriting it.
+/// generated file by hand and Stratum warns before overwriting it.
 /// </summary>
 public static partial class GeneratedFileHash
 {
@@ -22,7 +22,7 @@ public static partial class GeneratedFileHash
         return $"{body}{Prefix}{Hash(body)}\n";
     }
 
-    /// <summary>True when the file has a footer and its content changed since MSG wrote it. Files without footer (older MSG): false.</summary>
+    /// <summary>True when the file has a footer and its content changed since Stratum wrote it. Files without footer (older Stratum): false.</summary>
     public static bool IsHandEdited(string content)
     {
         ArgumentNullException.ThrowIfNull(content);

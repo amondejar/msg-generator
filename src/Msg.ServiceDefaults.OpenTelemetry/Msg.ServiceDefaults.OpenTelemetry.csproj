@@ -3,7 +3,7 @@
   <PropertyGroup>
     <RootNamespace>Msg.ServiceDefaults</RootNamespace>
     <IsPackable>true</IsPackable>
-    <Description>MSG service defaults: OpenTelemetry traces, metrics and logs with OTLP export.</Description>
+    <Description>Stratum service defaults: OpenTelemetry traces, metrics and logs with OTLP export.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 
-  <!-- msg studio: the visual editor. Blazor Server components on top of Msg.Core (same engine as the CLI). -->
+  <!-- stratum studio: the visual editor. Blazor Server components on top of Msg.Core (same engine as the CLI). -->
 
   <PropertyGroup>
     <RootNamespace>Msg.Studio</RootNamespace>

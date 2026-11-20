@@ -12,7 +12,7 @@ public sealed record PersistenceSettings
 
 /// <summary>
 /// An event of another service this service reacts to. The event's data is copied here (the contract), so the
-/// service can be generated without the publisher at hand; "msg subscribe --sync" refreshes it.
+/// service can be generated without the publisher at hand; "stratum subscribe --sync" refreshes it.
 /// </summary>
 public sealed record Subscription
 {
@@ -74,9 +74,9 @@ public sealed record EntityDefinition
     public required IReadOnlyList<PropertyDefinition> Properties { get; init; }
 
     /// <summary>
-    /// File layout of the entity's code. Null (entities created before MSG 0.10): the files are the user's
-    /// and MSG can't edit the entity until it is converted. <see cref="CurrentLayout"/>: properties, contracts,
-    /// mapping and CRUD live in <c>*.g.cs</c> files that MSG regenerates; the user's code lives in partial classes.
+    /// File layout of the entity's code. Null (entities created before Stratum 0.10): the files are the user's
+    /// and Stratum can't edit the entity until it is converted. <see cref="CurrentLayout"/>: properties, contracts,
+    /// mapping and CRUD live in <c>*.g.cs</c> files that Stratum regenerates; the user's code lives in partial classes.
     /// </summary>
     public int? Layout { get; init; }
 

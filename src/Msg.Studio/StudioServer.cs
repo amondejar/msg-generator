@@ -9,7 +9,7 @@ using Msg.Studio.State;
 
 namespace Msg.Studio;
 
-/// <summary>Hosts msg studio on localhost: a Blazor Server app over the same engine as the CLI.</summary>
+/// <summary>Hosts stratum studio on localhost: a Blazor Server app over the same engine as the CLI.</summary>
 public static class StudioServer
 {
     public static WebApplication Build(StudioOptions options, int port, string[]? args = null)
@@ -49,7 +49,7 @@ public static class StudioServer
         await app.StartAsync(cancellationToken).ConfigureAwait(false);
 
         var url = $"http://localhost:{port}";
-        await output.WriteLineAsync($"✔ msg studio en {url}  (Ctrl+C para salir)").ConfigureAwait(false);
+        await output.WriteLineAsync($"✔ Stratum Studio en {url}  (Ctrl+C para salir)").ConfigureAwait(false);
         await output.WriteLineAsync($"  sistema: {Path.GetFullPath(options.Workspace)}").ConfigureAwait(false);
 
         if (openBrowser)
