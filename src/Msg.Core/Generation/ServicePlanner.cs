@@ -267,6 +267,117 @@ public static class ServicePlanner
         };
     }
 
+    /// <summary>The subscription to one event of <paramref name="publisher"/>, with the event's current data.</summary>
+    public static Subscription SubscriptionTo(ServiceDefinition publisher, string entityName, string eventName)
+    {
+        ArgumentNullException.ThrowIfNull(publisher);
+        var entity = FindEntity(publisher, entityName);
+        var name = Subscription.Events.FirstOrDefault(e => e.Equals(eventName?.Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? throw new MsgException($"Evento desconocido '{eventName}'. Válidos: {string.Join(", ", Subscription.Events)}.");
+
+        if (publisher.Messaging is null || !entity.Publishes)
+        {
+            throw new MsgException(
+                $"{publisher.Service.Name} no publica los eventos de {entity.Name}. Actívalo en ese servicio: " +
+                $"msg events on {entity.Name} (y msg messaging on si no tiene mensajería).");
+        }
+
+        return new Subscription
+        {
+            Service = publisher.Service.Name,
+            Entity = entity.Name,
+            Event = name,
+            Properties = name == Subscription.Deleted ? [] : entity.Properties,
+        };
+    }
+
+    public static ServiceDefinition Subscribe(ServiceDefinition current, Subscription subscription)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(subscription);
+
+        if (current.Messaging is null)
+        {
+            throw new MsgException($"{current.Service.Name} necesita mensajería para escuchar eventos: msg messaging on --broker kafka");
+        }
+
+        var existing = current.Subscriptions ?? [];
+        if (existing.Any(subscription.Matches))
+        {
+            return current;
+        }
+
+        return current with { Subscriptions = [.. existing, subscription] };
+    }
+
+    public static ServiceDefinition Unsubscribe(ServiceDefinition current, string service, string entity, string eventName)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var existing = current.Subscriptions ?? [];
+        var remaining = existing
+            .Where(s => !(s.Service.Equals(service, StringComparison.OrdinalIgnoreCase)
+                          && s.Entity.Equals(entity, StringComparison.OrdinalIgnoreCase)
+                          && s.Event.Equals(eventName, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (remaining.Count == existing.Count)
+        {
+            throw new MsgException($"{current.Service.Name} no escucha {service} {entity}{eventName}.");
+        }
+
+        return current with { Subscriptions = remaining.Count == 0 ? null : remaining };
+    }
+
+    /// <summary>Subscriptions whose copied contract no longer matches the publisher (or that it no longer publishes).</summary>
+    public static IReadOnlyList<(Subscription Subscription, Subscription? Current, string Problem)> CheckSubscriptions(
+        ServiceDefinition consumer, IEnumerable<ServiceDefinition> services)
+    {
+        ArgumentNullException.ThrowIfNull(consumer);
+        var all = services.ToList();
+        var result = new List<(Subscription, Subscription?, string)>();
+        foreach (var subscription in consumer.Subscriptions ?? [])
+        {
+            var publisher = all.FirstOrDefault(s => s.Service.Name == subscription.Service);
+            if (publisher is null)
+            {
+                continue;   // not in this workspace: nothing to compare with
+            }
+
+            try
+            {
+                var latest = SubscriptionTo(publisher, subscription.Entity, subscription.Event);
+                if (!SameProperties(latest.Properties, subscription.Properties))
+                {
+                    result.Add((subscription, latest, $"{subscription.Service} ha cambiado los datos de {subscription.EventClass}"));
+                }
+            }
+            catch (MsgException ex)
+            {
+                result.Add((subscription, null, ex.Message));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Copies again the contracts of the subscriptions from their publishers.</summary>
+    public static ServiceDefinition SyncSubscriptions(ServiceDefinition consumer, IEnumerable<ServiceDefinition> services)
+    {
+        ArgumentNullException.ThrowIfNull(consumer);
+        var updates = CheckSubscriptions(consumer, services).Where(c => c.Current is not null).ToList();
+        if (updates.Count == 0)
+        {
+            return consumer;
+        }
+
+        return consumer with
+        {
+            Subscriptions = [.. (consumer.Subscriptions ?? []).Select(s => updates.FirstOrDefault(u => u.Subscription == s).Current ?? s)],
+        };
+    }
+
+    private static bool SameProperties(IReadOnlyList<PropertyDefinition> a, IReadOnlyList<PropertyDefinition> b) =>
+        a.Count == b.Count && a.Zip(b).All(p => p.First == p.Second);
+
     /// <summary>
     /// Rewrites a Program.cs from before MSG 0.12 so it delegates to MsgWiring.g.cs. The user's own lines must be
     /// added back (the plan shows the previous file).
@@ -639,6 +750,7 @@ public static class ServicePlanner
     private static bool IsCreateOnce(string path, string service) =>
         path.StartsWith($"src/{service}.Api/Features/", StringComparison.Ordinal)
         || path.StartsWith($"src/{service}.Api/Data/", StringComparison.Ordinal)
+        || path.StartsWith($"src/{service}.Api/Events/", StringComparison.Ordinal)
         || path.StartsWith($"src/{service}.Domain/", StringComparison.Ordinal)
         || path.StartsWith($"src/{service}.Application/", StringComparison.Ordinal)
         || path.StartsWith($"src/{service}.Infrastructure/", StringComparison.Ordinal)

@@ -121,6 +121,75 @@ else
             </span>
         </section>
 
+        @if (draft.Broker is not null)
+        {
+            var available = State.AvailableEvents(draft).Where(e => !draft.Subscriptions.Any(e.Matches)).ToList();
+            var problems = State.SubscriptionProblems(draft);
+            <section class="stack" aria-labelledby="h-subscriptions">
+                <h2 class="section" id="h-subscriptions">Eventos que escucha</h2>
+                @if (draft.Subscriptions.Count == 0)
+                {
+                    <span class="hint">Todavía no reacciona a eventos de otros servicios.</span>
+                }
+                else
+                {
+                    <div class="table">
+                        @foreach (var subscription in draft.Subscriptions.ToList())
+                        {
+                            var problem = problems.FirstOrDefault(p => p.Subscription == subscription);
+                            <div class="tr" style="grid-template-columns: 2.2fr 1.6fr auto; align-items: center">
+                                <span>
+                                    <span class="mono">@subscription.Topic</span>
+                                    @if (problem.Problem is { } text)
+                                    {
+                                        <br /><small style="color: var(--warn)">⚠ @text</small>
+                                    }
+                                </span>
+                                <span class="hint mono">@(subscription.EventClass)Handler @(draft.Architecture == Architectures.CleanDdd ? "· Application" : "· Api")/Events/@subscription.Service</span>
+                                <span class="row" style="gap: 6px">
+                                    @if (problem.Current is { } latest)
+                                    {
+                                        <button type="button" class="btn" @onclick="() => ReplaceSubscription(subscription, latest)">Actualizar contrato</button>
+                                    }
+                                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => RemoveSubscription(subscription)">Quitar</button>
+                                </span>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (available.Count > 0)
+                {
+                    <div class="row" style="gap: 8px; align-items: flex-end">
+                        <label class="field" style="flex: 0 1 380px">
+                            Escuchar un evento de otro servicio
+                            <select @bind="selectedTopic">
+                                <option value="">Elige un evento…</option>
+                                @foreach (var group in available.GroupBy(e => e.Service))
+                                {
+                                    <optgroup label="@group.Key">
+                                        @foreach (var e in group)
+                                        {
+                                            <option value="@e.Topic">@e.EventClass (@e.Topic)</option>
+                                        }
+                                    </optgroup>
+                                }
+                            </select>
+                        </label>
+                        <button type="button" class="btn btn-primary" disabled="@string.IsNullOrEmpty(selectedTopic)" @onclick="() => AddSubscription(available)">+ Escuchar</button>
+                    </div>
+                    <span class="hint">MSG copia el contrato del evento y crea un handler vacío para tu lógica (tuyo: no lo vuelve a tocar). Cada evento se procesa una vez, con reintentos y dead-letter.</span>
+                }
+                else if (draft.Subscriptions.Count == 0)
+                {
+                    <span class="hint">Ningún otro servicio del sistema publica eventos. Actívalo en sus <em>Entidades → Eventos para otros servicios</em>.</span>
+                }
+                @if (draft.Broker == MessagingSettings.InMemory && draft.Subscriptions.Count > 0)
+                {
+                    <span class="hint" style="color: var(--warn)">Con el broker en memoria no llegan eventos de otros servicios: usa Kafka.</span>
+                }
+            </section>
+        }
+
         <section class="stack" aria-labelledby="h-entities">
             <div class="row" style="justify-content: space-between">
                 <h2 class="section" id="h-entities">Entidades</h2>
@@ -200,6 +269,31 @@ else
         State.Recompute();
     }
 
+    private string selectedTopic = string.Empty;
+
+    private void AddSubscription(IReadOnlyList<Subscription> available)
+    {
+        if (available.FirstOrDefault(e => e.Topic == selectedTopic) is { } subscription)
+        {
+            State.Current!.Subscriptions.Add(subscription);
+            selectedTopic = string.Empty;
+            State.Recompute();
+        }
+    }
+
+    private void RemoveSubscription(Subscription subscription)
+    {
+        State.Current!.Subscriptions.Remove(subscription);
+        State.Recompute();
+    }
+
+    private void ReplaceSubscription(Subscription old, Subscription latest)
+    {
+        var list = State.Current!.Subscriptions;
+        list[list.IndexOf(old)] = latest;
+        State.Recompute();
+    }
+
     private void SetBroker(string? broker)
     {
         State.Current!.Broker = broker;
@@ -209,6 +303,8 @@ else
             {
                 entity.PublishEvents = false;
             }
+
+            State.Current.Subscriptions.Clear();
         }
 
         State.Recompute();

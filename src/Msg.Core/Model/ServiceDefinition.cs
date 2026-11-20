@@ -24,6 +24,9 @@ public sealed record ServiceDefinition
     /// <summary>Integration events between services. Null: the service doesn't use messaging.</summary>
     public MessagingSettings? Messaging { get; init; }
 
+    /// <summary>Events of other services this one reacts to. Null when there are none.</summary>
+    public IReadOnlyList<Subscription>? Subscriptions { get; init; }
+
     /// <summary>
     /// Property renames not yet captured by a migration. Without them EF Core would drop the column and
     /// create a new one (losing data); MSG turns them into <c>RenameColumn</c>. Null when there are none.

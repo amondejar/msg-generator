@@ -215,6 +215,22 @@ Qué genera:
 - Tests: el broker se sustituye por uno en memoria (`ApiFactory.g.cs`), no hace falta Kafka.
 - AppHost: `AddKafka("kafka").WithKafkaUI()` y `WithReference(kafka).WaitFor(kafka)` en cada servicio con Kafka.
 
+### Escuchar eventos de otro servicio
+
+```bash
+msg subscribe ../orders Order.Created --path billing   # o "Order" para Created, Updated y Deleted
+msg unsubscribe Orders Order.Created --path billing
+msg subscribe --sync --path billing                    # si Orders cambió los datos del evento
+msg events map                                         # quién publica y quién escucha cada evento
+```
+
+- MSG copia el contrato en `IntegrationEvents/Orders/OrderCreated.g.cs` (en `msg.json` queda una copia de sus datos, así que
+  el servicio se genera aunque `orders` esté en otro repositorio) y crea `Events/Orders/OrderCreatedHandler.cs`, que es tuyo.
+- El handler se ejecuta una vez por evento (inbox), con reintentos y dead-letter; lo que guardes en él se confirma junto con
+  el registro del inbox.
+- En el Studio: **Servicio → Eventos que escucha** (elegir de los eventos que publican los demás servicios, actualizar el
+  contrato cuando cambia) y **Sistema → Mapa de eventos**, que avisa de contratos desactualizados.
+
 Paquetes:
 
 | Paquete | Qué hace |
@@ -325,6 +341,6 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`msg entity`, Studio).
 6. ✅ Migraciones guiadas: renombrados sin perder datos, avisos de lo que borra datos, SQL y deshacer (`msg migration review`, Studio).
 7. ✅ Features editables en servicios existentes (`msg feature`, Studio), paquetes y archivos que sobran se quitan, `.g.cs` editados a mano detectados.
-8. En curso: mensajería entre servicios. ✅ `Msg.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). Siguiente: suscribirse a eventos de otros servicios y mapa de eventos en el Studio; Azure Service Bus; `Idempotency-Key` en la API.
+8. En curso: mensajería entre servicios. ✅ `Msg.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). ✅ Suscripciones y mapa de eventos. Siguiente: Azure Service Bus; `Idempotency-Key` en la API.
 9. Después: métodos propios del agregado y relaciones entre entidades desde el Studio; publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

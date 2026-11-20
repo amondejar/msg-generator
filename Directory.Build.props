@@ -12,7 +12,7 @@
       Single source of truth for the MSG version: the CLI, the Msg.* packages and the
       version written into generated services (msg.json, Directory.Packages.props) all come from here.
     -->
-    <Version>0.15.0</Version>
+    <Version>0.16.0</Version>
     <Authors>MSG</Authors>
     <PackageTags>dotnet;microservices;aspnetcore;service-defaults;msg</PackageTags>
 

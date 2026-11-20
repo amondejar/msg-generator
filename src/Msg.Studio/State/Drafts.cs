@@ -108,6 +108,9 @@ public sealed class ServiceDraft
     /// <summary>Broker for integration events (MessagingSettings.Kafka / InMemory), or null: no messaging.</summary>
     public string? Broker { get; set; }
 
+    /// <summary>Events of other services this one listens to.</summary>
+    public List<Subscription> Subscriptions { get; } = [];
+
     public static ServiceDraft ForExisting(string directory, ServiceDefinition definition)
     {
         var draft = new ServiceDraft
@@ -123,6 +126,7 @@ public sealed class ServiceDraft
             MsgVersion = definition.MsgVersion,
         };
         draft.Entities.AddRange(definition.Entities.Select(EntityDraft.From));
+        draft.Subscriptions.AddRange(definition.Subscriptions ?? []);
         return draft;
     }
 }

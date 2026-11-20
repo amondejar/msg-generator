@@ -224,6 +224,34 @@ public sealed class StudioState(StudioOptions options)
         Changed?.Invoke();
     }
 
+    /// <summary>Events published by the other services of the system, ready to subscribe to.</summary>
+    public IReadOnlyList<Subscription> AvailableEvents(ServiceDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var own = draft.IsNew ? null : FullPath(draft.Directory);
+        return [.. Services
+            .Where(s => FullPath(s.Directory) != own && s.Definition.Messaging is not null)
+            .SelectMany(s => s.Definition.Entities
+                .Where(e => e.IsEditable && e.Publishes)
+                .SelectMany(e => Subscription.Events.Select(name => ServicePlanner.SubscriptionTo(s.Definition, e.Name, name))))
+            .OrderBy(s => s.Topic, StringComparer.Ordinal)];
+    }
+
+    /// <summary>Subscriptions of the draft whose contract changed in the publisher (or that it no longer publishes).</summary>
+    public IReadOnlyList<(Subscription Subscription, Subscription? Current, string Problem)> SubscriptionProblems(ServiceDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var probe = new ServiceDefinition
+        {
+            Service = new ServiceInfo { Name = draft.Name },
+            Architecture = draft.Architecture,
+            Subscriptions = [.. draft.Subscriptions],
+        };
+        return ServicePlanner.CheckSubscriptions(probe, Services.Select(s => s.Definition));
+    }
+
+    public IReadOnlyList<EventRoute> EventRoutes() => EventMap.Build(Services.Select(s => s.Definition));
+
     public AspireResult GenerateAppHost(string name)
     {
         var result = AspireGenerator.Generate(Workspace, ServiceName.Normalize(name), [.. AspireGenerator.Discover(Workspace)]);
@@ -282,6 +310,19 @@ public sealed class StudioState(StudioOptions options)
             definition = draft.ConvertWiring
                 ? definition with { Messaging = draft.Broker is null ? null : new MessagingSettings { Broker = draft.Broker } }
                 : ServicePlanner.SetMessaging(Path.Combine(Workspace, draft.Directory), definition, draft.Broker);
+        }
+
+        var subscriptions = draft.Subscriptions.Count == 0 ? null : draft.Subscriptions.ToList();
+        if (!(subscriptions ?? []).SequenceEqual(definition.Subscriptions ?? []))
+        {
+            if (subscriptions is not null && definition.Messaging is null)
+            {
+                errors.Add("Para escuchar eventos de otros servicios, activa la mensajería (Servicio → Mensajería).");
+            }
+            else
+            {
+                definition = definition with { Subscriptions = subscriptions };
+            }
         }
 
         // Existing entities: convert, remove or update them (same rules as "msg entity ...").

@@ -31,6 +31,7 @@ public static class ServiceGenerator
     public const string EntityTemplateName = "entity";
     public const string CleanEntityTemplateName = "entity-clean";
     public const string EntityTestsTemplateName = "entity-tests";
+    public const string SubscriptionTemplateName = "subscription";
     public const string DefinitionFileName = "msg.json";
 
     // Whole files/folders that only exist when a feature is enabled.
@@ -75,6 +76,22 @@ public static class ServiceGenerator
         foreach (var entity in definition.Entities.Where(e => e.IsEditable))
         {
             RenderEntity(definition, entity, tokens, isEnabled, result, team);
+        }
+
+        if (definition.Messaging is not null)
+        {
+            foreach (var subscription in definition.Subscriptions ?? [])
+            {
+                var subscriptionTokens = new Dictionary<string, string>(tokens, StringComparer.Ordinal)
+                {
+                    ["Publisher"] = subscription.Service,
+                    ["Entity"] = subscription.Entity,
+                    ["EventClass"] = subscription.EventClass,
+                    ["Topic"] = subscription.Topic,
+                    ["EventParameters"] = string.Join(", ", ["Guid Id", .. subscription.Properties.Select(p => $"{PropertyTypes.ToCSharp(p)} {p.Name}")]),
+                };
+                RenderTemplateSet(SubscriptionTemplateName, subscriptionTokens, isEnabled, result, team);
+            }
         }
 
         result.Add(new GeneratedFile(DefinitionFileName, Serialize(definition)));

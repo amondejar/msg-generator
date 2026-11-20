@@ -10,6 +10,42 @@ public sealed record PersistenceSettings
     public required string Provider { get; init; }
 }
 
+/// <summary>
+/// An event of another service this service reacts to. The event's data is copied here (the contract), so the
+/// service can be generated without the publisher at hand; "msg subscribe --sync" refreshes it.
+/// </summary>
+public sealed record Subscription
+{
+    public const string Created = "Created";
+    public const string Updated = "Updated";
+    public const string Deleted = "Deleted";
+
+    public static IReadOnlyList<string> Events { get; } = [Created, Updated, Deleted];
+
+    /// <summary>Publishing service (its name in its msg.json, e.g. "Orders").</summary>
+    public required string Service { get; init; }
+
+    public required string Entity { get; init; }
+
+    /// <summary>Created, Updated or Deleted.</summary>
+    public required string Event { get; init; }
+
+    /// <summary>Data of the event besides Id (empty for Deleted).</summary>
+    public IReadOnlyList<PropertyDefinition> Properties { get; init; } = [];
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string EventClass => Entity + Event;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Topic => TopicFor(Service, Entity, Event);
+
+    public static string TopicFor(string service, string entity, string eventName) =>
+        $"{ServiceName.ToKebab(service)}.{Generation.EntityCodeGen.Kebab(entity)}-{eventName.ToLowerInvariant()}";
+
+    public bool Matches(Subscription other) =>
+        other is not null && other.Service == Service && other.Entity == Entity && other.Event == Event;
+}
+
 /// <summary>Integration events between services (Msg.Messaging). Null in msg.json: no messaging.</summary>
 public sealed record MessagingSettings
 {

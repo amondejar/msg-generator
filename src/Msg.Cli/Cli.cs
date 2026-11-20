@@ -38,6 +38,12 @@ internal static partial class Cli
                                              Eventos de integración entre servicios (outbox, inbox, reintentos)
           msg events on|off <Entidad>... [--path] [--dry-run]
                                              Publica <Entidad>Created/Updated/Deleted para otros servicios
+          msg subscribe <carpeta del publicador> <Entidad>[.Created|.Updated|.Deleted] [--path] [--dry-run]
+                                             Este servicio escucha eventos de otro (contrato + handler tuyo)
+          msg subscribe --sync [--path] [--dry-run]
+                                             Vuelve a copiar los contratos si los publicadores cambiaron
+          msg unsubscribe <Publicador> <Entidad>[.<Evento>] [--path] [--dry-run]
+          msg events map [--path <sistema>]          Quién publica y quién escucha cada evento
           msg workspace list|add <carpeta>|remove <carpeta> [--path <sistema>]
                                              Servicios de otras carpetas que forman parte del sistema
                                              (msg.workspace.json; los usan msg aspire y msg studio)
@@ -116,6 +122,8 @@ internal static partial class Cli
             "messaging" => Messaging(args[1..], output),
             "events" => Events(args[1..], output),
             "workspace" => WorkspaceCommand(args[1..], output),
+            "subscribe" => Subscribe(args[1..], output, subscribe: true),
+            "unsubscribe" => Subscribe(args[1..], output, subscribe: false),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
@@ -855,6 +863,11 @@ internal static partial class Cli
 
     private static int Events(string[] args, TextWriter output)
     {
+        if (args.Length > 0 && args[0] == "map")
+        {
+            return EventsMap(args[1..], output);
+        }
+
         const string usage = "Uso: msg events on|off <Entidad>... [--path <carpeta>] [--dry-run]";
         if (args.Length < 2 || args[0] is not ("on" or "off"))
         {
@@ -892,6 +905,134 @@ internal static partial class Cli
         if (!dryRun && plan.Changes.Count > 0)
         {
             plan.Apply();
+        }
+
+        return 0;
+    }
+
+    private static int Subscribe(string[] args, TextWriter output, bool subscribe)
+    {
+        var usage = subscribe
+            ? "Uso: msg subscribe <carpeta del publicador> <Entidad>[.Evento] | msg subscribe --sync  [--path <servicio>] [--dry-run]"
+            : "Uso: msg unsubscribe <Publicador> <Entidad>[.Evento] [--path <servicio>] [--dry-run]";
+        var path = ".";
+        bool dryRun = false, sync = false;
+        var positional = new List<string>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                case "--sync" when subscribe:
+                    sync = true;
+                    break;
+                default:
+                    if (args[i].StartsWith('-'))
+                    {
+                        throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    positional.Add(args[i]);
+                    break;
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        ServiceDefinition updated;
+        if (sync)
+        {
+            var others = Neighbours(path);
+            updated = ServicePlanner.SyncSubscriptions(current, others);
+            foreach (var (subscription, latest, problem) in ServicePlanner.CheckSubscriptions(current, others).Where(c => c.Current is null))
+            {
+                output.WriteLine($"⚠ {subscription.Topic}: {problem}");
+            }
+        }
+        else
+        {
+            if (positional.Count != 2)
+            {
+                throw new MsgException(usage);
+            }
+
+            var parts = positional[1].Split('.', 2);
+            var events = parts.Length == 2 ? [parts[1]] : Subscription.Events;
+            updated = current;
+            if (subscribe)
+            {
+                var publisher = ServicePlanner.Load(positional[0]);
+                foreach (var name in events)
+                {
+                    updated = ServicePlanner.Subscribe(updated, ServicePlanner.SubscriptionTo(publisher, parts[0], name));
+                }
+
+                if (publisher.Messaging?.Broker != current.Messaging?.Broker)
+                {
+                    output.WriteLine($"⚠ {publisher.Service.Name} usa '{publisher.Messaging?.Broker}' y este servicio '{current.Messaging?.Broker}': " +
+                                     "para que los eventos lleguen, los dos deben usar el mismo broker (Kafka).");
+                }
+            }
+            else
+            {
+                foreach (var name in events)
+                {
+                    updated = ServicePlanner.Unsubscribe(updated, positional[0], parts[0], name);
+                }
+            }
+        }
+
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+        }
+
+        return 0;
+    }
+
+    /// <summary>The other services of the system the service belongs to (its parent folder, plus msg.workspace.json).</summary>
+    private static List<ServiceDefinition> Neighbours(string serviceDirectory)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(serviceDirectory)) ?? serviceDirectory;
+        return [.. AspireGenerator.Discover(parent).Select(s => s.Definition)];
+    }
+
+    private static int EventsMap(string[] args, TextWriter output)
+    {
+        var root = ".";
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--path")
+            {
+                root = Value(args, ref i, args[i]);
+            }
+            else
+            {
+                throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: msg events map [--path <sistema>]");
+            }
+        }
+
+        var routes = EventMap.Build(AspireGenerator.Discover(root).Select(s => s.Definition));
+        if (routes.Count == 0)
+        {
+            output.WriteLine("Ningún servicio publica ni escucha eventos todavía (msg events on <Entidad>, msg subscribe ...).");
+            return 0;
+        }
+
+        foreach (var route in routes)
+        {
+            var consumers = route.Consumers.Count == 0 ? "(nadie lo escucha)" : string.Join(", ", route.Consumers);
+            output.WriteLine($"  {route.Topic,-40} {route.Publisher ?? "¿?",-14} → {consumers}");
+            if (route.Problem is { } problem)
+            {
+                output.WriteLine($"    ⚠ {problem}");
+            }
         }
 
         return 0;

@@ -7,7 +7,7 @@ namespace Msg.Core.Generation;
 /// Code fragments that depend on an entity's properties. The template engine has no loops on purpose:
 /// lists are rendered here, in C#, and injected into the templates as tokens.
 /// </summary>
-internal static partial class EntityCodeGen
+public static partial class EntityCodeGen
 {
     private static readonly HashSet<string> CSharpKeywords = new(StringComparer.Ordinal)
     {
@@ -38,7 +38,7 @@ internal static partial class EntityCodeGen
             ["Entities"] = entity.Plural,
             ["entities-kebab"] = WordBoundary().Replace(entity.Plural, "-$1").ToLowerInvariant(),
             ["entities_snake"] = WordBoundary().Replace(entity.Plural, "_$1").ToLowerInvariant(),
-            ["entity-kebab"] = WordBoundary().Replace(entity.Name, "-$1").ToLowerInvariant(),
+            ["entity-kebab"] = Kebab(entity.Name),
             ["IntegrationEventParameters"] = string.Join(", ", props.Select(p => $"{PropertyTypes.ToCSharp(p)} {p.Name}")),
 
             // --- shared / vertical slice ---
@@ -93,6 +93,9 @@ internal static partial class EntityCodeGen
     }
 
     private static bool IsString(PropertyDefinition p) => p.Type.Equals("string", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>"OrderLine" → "order-line" (topics, routes).</summary>
+    public static string Kebab(string name) => WordBoundary().Replace(name, "-$1").ToLowerInvariant();
 
     internal static string Camel(string name)
     {

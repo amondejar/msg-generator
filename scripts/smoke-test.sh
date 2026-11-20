@@ -239,6 +239,21 @@ grep -q "ProductIntegrationEventsMapper : IIntegrationEventMapper" "$WORK/clean/
   && grep -q 'IntegrationEvent("catalog.product-created")' "$WORK/clean/src/Catalog.Application/IntegrationEvents/ProductIntegrationEvents.g.cs" \
   && pass "clean + DDD: domain events mapped to integration events" || fail "events on (clean)"
 python3 -m json.tool "$FS/src/Shop.Api/appsettings.Development.json" >/dev/null || fail "invalid appsettings.Development.json with Kafka"
+# Each one listens to the other: contracts copied, handlers created, names that collide on purpose (ProductCreated).
+"${MSG[@]}" subscribe "$FS" Product --path "$WORK/clean" >/dev/null
+"${MSG[@]}" subscribe "$WORK/clean" Product.Created --path "$FS" >/dev/null
+grep -q 'IntegrationEvent("shop.product-deleted")' "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop/ProductDeleted.g.cs" \
+  && grep -q "IIntegrationEventHandler<ProductCreated>" "$WORK/clean/src/Catalog.Application/Events/Shop/ProductCreatedHandler.cs" \
+  && grep -q 'IntegrationEvent("catalog.product-created")' "$FS/src/Shop.Api/IntegrationEvents/Catalog/ProductCreated.g.cs" \
+  && grep -q "IIntegrationEventHandler<ProductCreated>" "$FS/src/Shop.Api/Events/Catalog/ProductCreatedHandler.cs" \
+  && pass "subscribe: contract copied and handler created (both architectures)" || fail "subscribe"
+"${MSG[@]}" events map --path "$WORK" | grep -q "shop.product-created .*→ Catalog" \
+  && pass "events map shows who publishes and who listens" || { "${MSG[@]}" events map --path "$WORK"; fail "events map"; }
+"${MSG[@]}" entity update Product --path "$FS" --props "Name:string, Sku:string?" >/dev/null
+"${MSG[@]}" events map --path "$WORK" | grep -q "ha cambiado los datos de ProductCreated" \
+  && "${MSG[@]}" subscribe --sync --path "$WORK/clean" | grep -q "IntegrationEvents/Shop/ProductCreated.g.cs" \
+  && grep -q "string? Sku" "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop/ProductCreated.g.cs" \
+  && pass "a changed contract is detected and --sync copies it again" || fail "subscribe --sync"
 
 echo "▶ Guided migrations (msg migration review)"
 MIG="$WORK/migration"; cp -r "$WORK/clean" "$MIG"

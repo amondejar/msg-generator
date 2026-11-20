@@ -69,6 +69,43 @@
         }
     </section>
 
+    @{
+        var routes = State.EventRoutes();
+    }
+    @if (routes.Count > 0)
+    {
+        <section class="stack" aria-labelledby="h-events-map">
+            <h2 class="section" id="h-events-map">Mapa de eventos</h2>
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 1fr 2fr 1.6fr"><span>Publica</span><span>Evento (topic)</span><span>Lo escuchan</span></div>
+                @foreach (var route in routes)
+                {
+                    <div class="tr" style="grid-template-columns: 1fr 2fr 1.6fr; align-items: center">
+                        <span>@(route.Publisher ?? "¿?")</span>
+                        <span>
+                            <span class="mono">@route.EventClass</span> <small class="hint mono">@route.Topic</small>
+                            @if (route.Problem is { } problem)
+                            {
+                                <br /><small style="color: var(--warn)">⚠ @problem</small>
+                            }
+                        </span>
+                        <span>
+                            @if (route.Consumers.Count == 0)
+                            {
+                                <small class="hint">nadie todavía</small>
+                            }
+                            else
+                            {
+                                <span>→ @string.Join(", ", route.Consumers)</span>
+                            }
+                        </span>
+                    </div>
+                }
+            </div>
+            <span class="hint">Un servicio publica los eventos de una entidad en <em>Entidades → Eventos para otros servicios</em>; otro los escucha en <em>Servicio → Eventos que escucha</em>.</span>
+        </section>
+    }
+
     <section class="stack" aria-labelledby="h-team">
         <h2 class="section" id="h-team">Plantillas del equipo</h2>
         <div class="card stack">

@@ -344,6 +344,20 @@ await app.RunAsync().ConfigureAwait(false);
         Pass 'clean + DDD: domain events mapped to integration events'
     } else { Fail 'events on (clean)' }
 
+    Invoke-Dotnet $MsgDll subscribe $fs Product --path $clean
+    Invoke-Dotnet $MsgDll subscribe $clean Product.Created --path $fs
+    if ((Get-Content (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\Shop\ProductDeleted.g.cs') -Raw) -like '*IntegrationEvent("shop.product-deleted")*' -and (Get-Content (Join-Path $clean 'src\Catalog.Application\Events\Shop\ProductCreatedHandler.cs') -Raw) -like '*IIntegrationEventHandler<ProductCreated>*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\IntegrationEvents\Catalog\ProductCreated.g.cs') -Raw) -like '*IntegrationEvent("catalog.product-created")*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Events\Catalog\ProductCreatedHandler.cs') -Raw) -like '*IIntegrationEventHandler<ProductCreated>*') {
+        Pass 'subscribe: contract copied and handler created (both architectures)'
+    } else { Fail 'subscribe' }
+    $out = Get-DotnetOutput $MsgDll events map --path $Work
+    if ($out -match 'shop\.product-created .*-> Catalog' -or $out -match 'shop\.product-created .*Catalog') { Pass 'events map shows who publishes and who listens' } else { $out | Out-Host; Fail 'events map' }
+    Invoke-Dotnet $MsgDll entity update Product --path $fs --props 'Name:string, Sku:string?'
+    $out = Get-DotnetOutput $MsgDll events map --path $Work
+    $sync = Get-DotnetOutput $MsgDll subscribe --sync --path $clean
+    if ($out -like '*ha cambiado los datos de ProductCreated*' -and $sync -like '*IntegrationEvents/Shop/ProductCreated.g.cs*' -and (Get-Content (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\Shop\ProductCreated.g.cs') -Raw) -like '*string? Sku*') {
+        Pass 'a changed contract is detected and --sync copies it again'
+    } else { Fail 'subscribe --sync' }
+
     Step 'Guided migrations (msg migration review)'
     $mig = Join-Path $Work 'migration'
     Copy-Item -Recurse $clean $mig
