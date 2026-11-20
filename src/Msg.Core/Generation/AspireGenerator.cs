@@ -109,6 +109,31 @@ public static class AspireGenerator
         }
     }
 
+    /// <summary>
+    /// Name for the system's AppHost: the existing one ("Shop" for Shop.AppHost) so it is updated instead of
+    /// creating a second one; otherwise the folder name.
+    /// </summary>
+    public static string DefaultSystemName(string root)
+    {
+        var full = Path.GetFullPath(root);
+        var existing = Directory.Exists(full)
+            ? Directory.EnumerateDirectories(full, "*.AppHost").Select(Path.GetFileName).Order(StringComparer.Ordinal).FirstOrDefault()
+            : null;
+        if (existing is not null)
+        {
+            return existing[..^".AppHost".Length];
+        }
+
+        try
+        {
+            return ServiceName.Normalize(Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar)));
+        }
+        catch (MsgException)
+        {
+            return "System";
+        }
+    }
+
     public static AspireResult Generate(string root, string appHostName, IReadOnlyList<AspireService> services)
     {
         ArgumentNullException.ThrowIfNull(services);

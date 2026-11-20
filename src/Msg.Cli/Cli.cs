@@ -661,7 +661,7 @@ internal static partial class Cli
             throw new MsgException("Esta carpeta es un servicio. Ejecuta 'stratum aspire' en la carpeta que contiene tus servicios (o usa --path).");
         }
 
-        var appHostName = ServiceName.Normalize(name ?? Path.GetFileName(Path.GetFullPath(root)));
+        var appHostName = ServiceName.Normalize(name ?? AspireGenerator.DefaultSystemName(root));
         var services = AspireGenerator.Discover(root);
         var result = AspireGenerator.Generate(root, appHostName, services);
 

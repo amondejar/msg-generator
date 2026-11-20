@@ -102,7 +102,7 @@
     protected override async Task OnInitializedAsync()
     {
         State.Initialize();
-        systemName = SafeName(Path.GetFileName(State.Workspace));
+        systemName = AspireGenerator.DefaultSystemName(State.Workspace);   // the existing AppHost, if there is one
         Runner.Changed += OnChanged;
         await Task.CompletedTask;
     }
@@ -163,11 +163,5 @@
         {
             error = ex.Message;
         }
-    }
-
-    private static string SafeName(string? folder)
-    {
-        try { return ServiceName.Normalize(folder ?? "System"); }
-        catch (MsgException) { return "System"; }
     }
 }

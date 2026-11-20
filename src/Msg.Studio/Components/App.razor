@@ -105,6 +105,7 @@
 
         label.field, div.field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); flex: 1 1 200px; }
         div.field { flex: none; }
+        .stack > label.field { flex: none; }   /* in a column, flex-basis would become a 200px height */
         div.field input { font-weight: 400; }
         .feature small.mono { overflow-wrap: anywhere; }
         .form-grid { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(280px, 2fr); gap: 16px; align-items: start; }
