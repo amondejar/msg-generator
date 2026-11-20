@@ -104,7 +104,18 @@
         State.Initialize();
         systemName = SafeName(Path.GetFileName(State.Workspace));
         Runner.Changed += OnChanged;
-        await CheckDockerAsync();
+        await Task.CompletedTask;
+    }
+
+    // "docker info" can take seconds (or hang while Docker starts): checked after the first render, never while
+    // prerendering, so the page answers at once and the warning appears when the check finishes.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await CheckDockerAsync();
+            StateHasChanged();
+        }
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);

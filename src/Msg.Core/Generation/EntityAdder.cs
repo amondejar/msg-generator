@@ -14,6 +14,9 @@ public sealed record AddEntityRequest
 
     /// <summary>Only used for the first entity (it decides the service's database).</summary>
     public string? Provider { get; init; }
+
+    /// <summary>Plans without writing anything.</summary>
+    public bool DryRun { get; init; }
 }
 
 public sealed record AddEntityResult(
@@ -44,7 +47,10 @@ public static class EntityAdder
 
         var team = Templating.TeamTemplates.Find(request.ServiceDirectory);
         var plan = ServicePlanner.AddEntities(request.ServiceDirectory, definition, [entity], provider, new GenerationOptions { Team = team });
-        plan.Apply();
+        if (!request.DryRun)
+        {
+            plan.Apply();
+        }
 
         return new AddEntityResult(
             entity,

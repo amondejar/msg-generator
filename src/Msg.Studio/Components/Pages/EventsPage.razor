@@ -48,11 +48,33 @@
             </div>
             <span class="hint">Un servicio publica los eventos de una entidad en <em>Entidades → Eventos para otros servicios</em>; otro los escucha en <em>Mensajería → Eventos que escucha</em>.</span>
         </section>
+
+        <section class="stack" aria-labelledby="h-asyncapi">
+            <h2 class="section" id="h-asyncapi">Especificación AsyncAPI</h2>
+            <p class="hint">La documentación de los eventos en el estándar AsyncAPI 3.1: topics, quién publica y quién escucha, y los datos de cada evento. Sirve para AsyncAPI Studio, generadores de clientes o para otros equipos.</p>
+            <div class="row" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+                <button type="button" class="btn btn-primary" @onclick="Export">Guardar asyncapi.yaml</button>
+                <button type="button" class="btn" @onclick="() => showSpec = !showSpec">@(showSpec ? "Ocultar" : "Ver") especificación</button>
+                @if (exported is not null)
+                {
+                    <small class="hint mono">✔ @exported</small>
+                }
+            </div>
+            @if (showSpec)
+            {
+                <CodePanel Tabs="@([new CodePanel.Tab("asyncapi.yaml", "asyncapi.yaml", State.AsyncApiYaml())])" Wide="true" Label="AsyncAPI" />
+            }
+        </section>
     }
 
 </main>
 
 @code {
+    private bool showSpec;
+    private string? exported;
+
+    private void Export() => exported = State.ExportAsyncApi();
+
     protected override void OnInitialized()
     {
         State.Initialize();

@@ -20,7 +20,7 @@ internal sealed class {{Entity}}IntegrationEventsMapper : IIntegrationEventMappe
         ({{Entity}}Created, {{Entity}} entity) => [new Integration.{{Entity}}Created(entity.Id, {{EntityArguments}})],
         ({{Entity}}Updated, {{Entity}} entity) => [new Integration.{{Entity}}Updated(entity.Id, {{EntityArguments}})],
         ({{Entity}}Deleted deleted, _) => [new Integration.{{Entity}}Deleted(deleted.{{Entity}}Id)],
-        _ => [],
+{{OperationEventMappings}}        _ => [],
     };
 }
 // @msg:end

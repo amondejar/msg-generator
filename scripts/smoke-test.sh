@@ -166,6 +166,33 @@ sed -i 's/{Name} ({Price})/{Title} ({Price})/' "$CP"
 if find "$WORK/clean" -path "*Tag*" -name "*.cs" | grep -q .; then fail "entity remove left files"; fi
 grep -q "Tag" "$WORK/clean/src/Catalog.Infrastructure/Persistence/CatalogDbContext.g.cs" && fail "Tag still in DbContext"
 pass "entity remove deletes its files and registrations"
+# References between entities and aggregate operations (built and tested below with the full services).
+"${MSG[@]}" add entity Review --path "$WORK/clean" --props "Text:string, Product:Product, ReplyToId:Review?" >/dev/null
+"${MSG[@]}" entity operation add Product Discontinue --params "Reason:string" --path "$WORK/clean" >/dev/null
+"${MSG[@]}" entity operation add Product Restock --path "$WORK/clean" >/dev/null
+CR="$WORK/clean/src"
+grep -q "HasOne<global::Catalog.Domain.Products.Product>().WithMany().HasForeignKey(e => e.ProductId)" "$CR/Catalog.Infrastructure/Persistence/Reviews/ReviewConfiguration.g.cs" \
+  && grep -q "MissingReferenceAsync" "$CR/Catalog.Application/Reviews/ReviewCommands.g.cs" \
+  && grep -q "InUseAsync" "$CR/Catalog.Infrastructure/Persistence/Products/ProductIntegrity.g.cs" \
+  && grep -q "public partial void Discontinue(string reason)" "$CR/Catalog.Domain/Products/Product.Discontinue.cs" \
+  && grep -q '"/{id:guid}/discontinue"' "$CR/Catalog.Api/Features/Products/ProductOperationEndpoints.g.cs" \
+  && grep -q "record ProductRestocked(Guid ProductId)" "$CR/Catalog.Domain/Products/ProductOperations.g.cs" \
+  && ! "${MSG[@]}" entity remove Product --path "$WORK/clean" >/dev/null 2>&1 \
+  && pass "clean-ddd: references (foreign keys, checks) and aggregate operations" || fail "clean-ddd references/operations"
+"${MSG[@]}" feature on mcp --path "$WORK/clean" >/dev/null
+grep -q 'app.MapMcp("/mcp")' "$CR/Catalog.Api/MsgWiring.g.cs" \
+  && grep -q 'Name = "discontinue_product"' "$CR/Catalog.Api/Features/Products/ProductMcpTools.g.cs" \
+  && grep -q 'Name = "create_review"' "$CR/Catalog.Api/Features/Reviews/ReviewMcpTools.g.cs" \
+  && grep -q 'Include="ModelContextProtocol.AspNetCore"' "$CR/Catalog.Api/Catalog.Api.csproj" \
+  && pass "feature mcp: /mcp with the entities' CRUD and operations as tools" || fail "feature mcp"
+"${MSG[@]}" add entity Supplier --path "$WORK/full" --props "Name:string" >/dev/null
+"${MSG[@]}" add entity Shipment --path "$WORK/full" --props "Code:string, SupplierId:Supplier, ProductId:Product?" >/dev/null
+grep -q "MissingReferencesAsync" "$WORK/full/src/Orders.Api/Features/Shipments/ShipmentEndpoints.g.cs" \
+  && grep -q "UsedByAsync" "$WORK/full/src/Orders.Api/Features/Suppliers/SupplierEndpoints.g.cs" \
+  && grep -q "await CreateSupplierAsync(client)" "$WORK/full/tests/Orders.Api.Tests/Features/ShipmentEndpointsTests.g.cs" \
+  && ! "${MSG[@]}" entity operation add Supplier Approve --path "$WORK/full" >/dev/null 2>&1 \
+  && ! "${MSG[@]}" add entity Bad --path "$WORK/full" --props "X:Nope" >/dev/null 2>&1 \
+  && pass "vertical slice: references with 400/409 checks and test data" || fail "vertical references"
 # An entity from MSG < 0.10 (no "layout" in msg.json) is read-only until converted.
 python3 - "$WORK/full/msg.json" <<'PY'
 import json, sys
@@ -179,6 +206,109 @@ if "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string"
   && "${MSG[@]}" entity convert Category --path "$WORK/full" >/dev/null \
   && "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string, Position:int?, Color:string?" >/dev/null \
   && pass "legacy entity: blocked, converted (shows user files), then editable" || fail "entity convert"
+
+echo "▶ stratum import openapi"
+cat > "$WORK/library.yaml" <<'YAML'
+openapi: 3.0.3
+info:
+  title: Library API
+  version: 1.0.0
+paths:
+  /authors:
+    get:
+      responses:
+        '200':
+          description: All
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Author'
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Author'
+      responses:
+        '201':
+          description: Created
+  /authors/{id}:
+    get:
+      responses:
+        '200':
+          description: One
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Author'
+  /books:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Book'
+      responses:
+        '201':
+          description: Created
+  /books/{id}/lend:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [member]
+              properties:
+                member:
+                  type: string
+      responses:
+        '204':
+          description: Lent
+  /stats:
+    get:
+      responses:
+        '200':
+          description: Stats
+components:
+  schemas:
+    Author:
+      type: object
+      required: [full_name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        born:
+          type: string
+          format: date
+    Book:
+      type: object
+      required: [title, author_id]
+      properties:
+        title:
+          type: string
+        author_id:
+          type: string
+          format: uuid
+        pages:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+YAML
+OUT=$("${MSG[@]}" import openapi "$WORK/library.yaml" -a clean-ddd -o "$WORK/imported" --package-source "$PKGS")
+echo "$OUT" | grep -q "Author (/api/v1/authors): FullName:string, Born:date?" \
+  && echo "$OUT" | grep -q "Book (/api/v1/books): Title:string, AuthorId:Author, Pages:int?" \
+  && echo "$OUT" | grep -q "operación Lend(Member:string) → BookLent" \
+  && echo "$OUT" | grep -q "Book.Tags: lista" && echo "$OUT" | grep -q "GET /stats" \
+  && [[ -f "$WORK/imported/src/LibraryAPI.Domain/Books/Book.Lend.cs" ]] \
+  && pass "import openapi: entities, references, operations and a report of the rest" || { echo "$OUT"; fail "import openapi"; }
 
 echo "▶ Features on/off in an existing service (stratum feature)"
 FS="$WORK/features"
@@ -376,6 +506,21 @@ grep -q 'AddAzureServiceBus("servicebus")' "$SYS/Shop.AppHost/MsgServices.g.cs" 
   && grep -q "UseAzureServiceBus" "$SYS/notifications/src/Notifications.Api/MsgWiring.g.cs" \
   && "${MSG[@]}" events map --path "$SYS" | grep -q "no le llegarán" \
   && pass "Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported" || fail "Azure Service Bus"
+"${MSG[@]}" events asyncapi --path "$SYS" >/dev/null
+grep -q 'asyncapi: "3.1.0"' "$SYS/asyncapi.yaml" && grep -q "address: orders.order-created" "$SYS/asyncapi.yaml" \
+  && grep -q "action: receive" "$SYS/asyncapi.yaml" \
+  && pass "AsyncAPI 3.1 exported from the event map" || fail "AsyncAPI export"
+MCP_OUT=$(printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_entity","arguments":{"service":"Orders","name":"Coupon","properties":"Code:string"}}}' \
+  '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_services","arguments":{}}}' \
+  | "${MSG[@]}" mcp --path "$SYS" 2>/dev/null)
+[ "$(echo "$MCP_OUT" | wc -l)" -eq 4 ] && echo "$MCP_OUT" | grep -q '"protocolVersion":"2025-11-25"' \
+  && echo "$MCP_OUT" | grep -q '"name":"subscribe"' && echo "$MCP_OUT" | grep -q 'no se ha escrito nada' \
+  && [ ! -e "$SYS/orders/src/Orders.Api/Features/Coupons" ] && echo "$MCP_OUT" | grep -q '"structuredContent":{"root"' \
+  && pass "MCP server: handshake, tools, plan without writing" || fail "MCP server"
 "${MSG[@]}" new Legacy -o "$SYS/legacy" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
 "${MSG[@]}" service remove "$SYS/legacy" --path "$SYS" | grep -q "No se ha tocado nada" && [[ -d "$SYS/legacy" ]] \
@@ -409,7 +554,7 @@ kill "$PID"; wait "$PID" 2>/dev/null || true; PID=""
 
 echo "▶ Full services (need nuget.org)"
 if [[ $ONLINE == 1 ]]; then
-  for s in full auth regen clean features team/services/orders; do
+  for s in full auth regen clean features imported team/services/orders; do
     dotnet build "$WORK/$s" -c Release -v q -nologo >/dev/null && pass "$s builds"
     dotnet test  "$WORK/$s" -c Release --no-build -v q -nologo >/dev/null && pass "$s tests pass"
   done

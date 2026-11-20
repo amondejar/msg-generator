@@ -94,8 +94,11 @@ public sealed record FeatureSet
     /// <summary>GitHub Actions pipeline.</summary>
     public bool Ci { get; init; } = true;
 
+    /// <summary>MCP server at /mcp: the entities' CRUD and operations as tools for AI assistants.</summary>
+    public bool Mcp { get; init; }
+
     public static IReadOnlyList<string> Names { get; } =
-        ["observability", "openApi", "resilience", "auth", "tests", "docker", "ci"];
+        ["observability", "openApi", "resilience", "auth", "tests", "docker", "ci", "mcp"];
 
     public bool IsEnabled(string feature) => feature.ToUpperInvariant() switch
     {
@@ -106,6 +109,7 @@ public sealed record FeatureSet
         "TESTS" => Tests,
         "DOCKER" => Docker,
         "CI" => Ci,
+        "MCP" => Mcp,
         _ => throw new MsgException($"Feature desconocida en plantilla: '{feature}'. Válidas: {string.Join(", ", Names)}."),
     };
 
@@ -118,6 +122,7 @@ public sealed record FeatureSet
         "TESTS" => this with { Tests = enabled },
         "DOCKER" => this with { Docker = enabled },
         "CI" => this with { Ci = enabled },
+        "MCP" => this with { Mcp = enabled },
         _ => throw new MsgException($"Feature desconocida: '{feature}'. Válidas: {string.Join(", ", Names)}."),
     };
 }

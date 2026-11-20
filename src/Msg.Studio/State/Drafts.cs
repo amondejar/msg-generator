@@ -1,3 +1,4 @@
+using Msg.Core.Generation;
 using Msg.Core.Model;
 
 namespace Msg.Studio.State;
@@ -16,8 +17,32 @@ public sealed class PropertyDraft
 
     public bool IsRenamed => OriginalName is not null && !OriginalName.Equals(Name.Trim(), StringComparison.Ordinal);
 
+    /// <summary>Prefix of <see cref="Type"/> for a reference: "@Customer" is a foreign key to Customer.</summary>
+    public const string ReferencePrefix = "@";
+
+    public string? References => Type.StartsWith(ReferencePrefix, StringComparison.Ordinal) ? Type[ReferencePrefix.Length..] : null;
+
+    public PropertyDefinition ToDefinition() => References is { } target
+        ? new PropertyDefinition { Name = Name.Trim(), Type = "guid", Nullable = Nullable, References = target }
+        : new PropertyDefinition { Name = Name.Trim(), Type = Type, Nullable = Nullable };
+
     public static PropertyDraft From(PropertyDefinition p) =>
-        new() { Name = p.Name, Type = p.Type, Nullable = p.Nullable, OriginalName = p.Name };
+        new() { Name = p.Name, Type = p.References is null ? p.Type : ReferencePrefix + p.References, Nullable = p.Nullable, OriginalName = p.Name };
+}
+
+/// <summary>A business operation of an aggregate being edited (clean-ddd).</summary>
+public sealed class OperationDraft
+{
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>"Reason:string, Amount:decimal" (same format as --props), may be empty.</summary>
+    public string Parameters { get; set; } = string.Empty;
+
+    /// <summary>Domain event; empty → entity + past tense of the name.</summary>
+    public string Event { get; set; } = string.Empty;
+
+    public static OperationDraft From(EntityOperation o) =>
+        new() { Name = o.Name, Parameters = PropertyTypes.Spec(o.Parameters), Event = o.Event };
 }
 
 /// <summary>
@@ -48,6 +73,14 @@ public sealed class EntityDraft
 
     public List<PropertyDraft> Properties { get; } = [];
 
+    public List<OperationDraft> Operations { get; } = [];
+
+    /// <summary>Operations as msg.json defines them (throws <see cref="MsgException"/> on invalid parameters).</summary>
+    public IReadOnlyList<EntityOperation>? ToOperations() => Operations.Count == 0 ? null :
+        [.. Operations
+            .Where(o => !string.IsNullOrWhiteSpace(o.Name))
+            .Select(o => ModelRules.ParseOperation(Name, o.Name, o.Parameters, o.Event))];
+
     public string EffectivePlural =>
         !string.IsNullOrWhiteSpace(Plural) ? Plural
         : string.IsNullOrWhiteSpace(Name) ? string.Empty
@@ -59,13 +92,14 @@ public sealed class EntityDraft
         Plural = Plural,
         Properties = [.. Properties
             .Where(p => !string.IsNullOrWhiteSpace(p.Name))
-            .Select(p => new PropertyDefinition { Name = p.Name.Trim(), Type = p.Type, Nullable = p.Nullable })],
+            .Select(p => p.ToDefinition())],
     };
 
-    public static EntityDraft From(EntityDefinition entity)
+    public static EntityDraft From(EntityDefinition entity, bool isNew = false)
     {
-        var draft = new EntityDraft { Name = entity.Name, Plural = entity.Plural, IsNew = false, IsLegacy = !entity.IsEditable, PublishEvents = entity.Publishes };
+        var draft = new EntityDraft { Name = entity.Name, Plural = entity.Plural, IsNew = isNew, IsLegacy = !isNew && !entity.IsEditable, PublishEvents = entity.Publishes };
         draft.Properties.AddRange(entity.Properties.Select(PropertyDraft.From));
+        draft.Operations.AddRange((entity.Operations ?? []).Select(OperationDraft.From));
         return draft;
     }
 }
@@ -125,7 +159,7 @@ public sealed class ServiceDraft
             Broker = definition.Messaging?.Broker,
             MsgVersion = definition.MsgVersion,
         };
-        draft.Entities.AddRange(definition.Entities.Select(EntityDraft.From));
+        draft.Entities.AddRange(definition.Entities.Select(e => EntityDraft.From(e)));
         draft.Subscriptions.AddRange(definition.Subscriptions ?? []);
         return draft;
     }

@@ -38,10 +38,22 @@ public static partial class PropertyTypes
         return Map[property.Type].Sample;
     }
 
-    [GeneratedRegex(@"^\s*(?<name>[A-Za-z][A-Za-z0-9]*)\s*:\s*(?<type>[A-Za-z]+)\s*(?<nullable>\?)?\s*$")]
+    [GeneratedRegex(@"^\s*(?<name>[A-Za-z][A-Za-z0-9]*)\s*:\s*(?<type>[A-Za-z][A-Za-z0-9]*)\s*(?<nullable>\?)?\s*$")]
     private static partial Regex PropertySpec();
 
-    /// <summary>Parses <c>"Name:string, Price:decimal, Description:string?"</c>.</summary>
+    /// <summary>"Name:string?", or "CustomerId:Customer" for a reference: the inverse of <see cref="Parse"/>.</summary>
+    public static string Spec(PropertyDefinition property)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+        return $"{property.Name}:{property.References ?? property.Type}{(property.Nullable ? "?" : string.Empty)}";
+    }
+
+    public static string Spec(IEnumerable<PropertyDefinition> properties) => string.Join(", ", properties.Select(Spec));
+
+    /// <summary>
+    /// Parses <c>"Name:string, Price:decimal, Description:string?"</c>. A type in PascalCase that is not a basic
+    /// type is a reference to that entity: "CustomerId:Customer" (or "Customer:Customer", which becomes CustomerId).
+    /// </summary>
     public static IReadOnlyList<PropertyDefinition> Parse(string spec)
     {
         if (string.IsNullOrWhiteSpace(spec))
@@ -59,11 +71,23 @@ public static partial class PropertyTypes
             }
 
             var name = char.ToUpperInvariant(match.Groups["name"].Value[0]) + match.Groups["name"].Value[1..];
-            var type = match.Groups["type"].Value.ToLowerInvariant();
+            var rawType = match.Groups["type"].Value;
+            var type = rawType.ToLowerInvariant();
+            string? references = null;
 
             if (!Map.ContainsKey(type))
             {
-                throw new MsgException($"Tipo '{type}' no soportado en '{part}'. Tipos: {string.Join(", ", All)}.");
+                if (!char.IsUpper(rawType[0]))
+                {
+                    throw new MsgException($"Tipo '{rawType}' no soportado en '{part}'. Tipos: {string.Join(", ", All)}, o el nombre de otra entidad del servicio para una referencia (CustomerId:Customer).");
+                }
+
+                references = rawType;
+                type = "guid";
+                if (!name.EndsWith("Id", StringComparison.Ordinal))
+                {
+                    name += "Id";
+                }
             }
 
             if (ReservedProperties.Contains(name))
@@ -76,7 +100,7 @@ public static partial class PropertyTypes
                 throw new MsgException($"Propiedad duplicada: '{name}'.");
             }
 
-            result.Add(new PropertyDefinition { Name = name, Type = type, Nullable = match.Groups["nullable"].Success });
+            result.Add(new PropertyDefinition { Name = name, Type = type, Nullable = match.Groups["nullable"].Success, References = references });
         }
 
         return result;

@@ -24,7 +24,7 @@ public sealed partial class {{Entity}}Configuration : IEntityTypeConfiguration<{
         builder.HasKey(e => e.Id);
         builder.Ignore(e => e.DomainEvents);
 {{PropertyConfigurations}}
-
+{{ReferenceConfigurations}}
         Customize(builder);
     }
 

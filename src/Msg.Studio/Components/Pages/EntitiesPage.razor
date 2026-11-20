@@ -118,6 +118,15 @@ else
                                     {
                                         <option value="@type">@type</option>
                                     }
+                                    @if (ReferenceTargets(draft).Count > 0)
+                                    {
+                                        <optgroup label="Referencia a otra entidad">
+                                            @foreach (var target in ReferenceTargets(draft))
+                                            {
+                                                <option value="@(PropertyDraft.ReferencePrefix + target)">→ @target</option>
+                                            }
+                                        </optgroup>
+                                    }
                                 </select>
                                 <label class="row" style="gap: 8px"><input type="checkbox" checked="@p.Nullable" @onchange="e => { p.Nullable = e.Value is true; State.Recompute(); }" /> @(p.Nullable ? "Sí" : "No")</label>
                                 <span class="hint">@Generates(p)</span>
@@ -125,7 +134,7 @@ else
                             }
                             else
                             {
-                                <span class="mono">@p.Name</span><span class="mono">@p.Type</span><span>@(p.Nullable ? "Sí" : "No")</span><span class="hint">@Generates(p)</span><span></span>
+                                <span class="mono">@p.Name</span><span class="mono">@(p.References is { } t ? "→ " + t : p.Type)</span><span>@(p.Nullable ? "Sí" : "No")</span><span class="hint">@Generates(p)</span><span></span>
                             }
                         </div>
                     }
@@ -173,7 +182,35 @@ else
                         <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Update(…)</span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Updated</span></div>
                         <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Delete()</span><span class="hint">—</span><span class="mono" style="color: #67E8F9">@(entity.Name)Deleted</span></div>
                     </div>
-                    <span class="hint">Las reglas de negocio van en <span class="mono">EnsureInvariants()</span> de <span class="mono">@(entity.Name).cs</span> (tu parte del agregado, Stratum la crea una vez y no la toca), y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>. Métodos propios (p. ej. <span class="mono">Archive</span>): de momento, añádelos en <span class="mono">@(entity.Name).cs</span>.</span>
+                    <span class="hint">Las reglas de negocio van en <span class="mono">EnsureInvariants()</span> de <span class="mono">@(entity.Name).cs</span> (tu parte del agregado, Stratum la crea una vez y no la toca), y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>.</span>
+                </section>
+
+                <section class="stack" aria-labelledby="h-operations">
+                    <h2 class="section" id="h-operations">Operaciones del agregado</h2>
+                    <span class="hint">Acciones de negocio como <span class="mono">Confirm</span> o <span class="mono">Cancel(Reason)</span>. Stratum genera el evento de dominio, el comando, su handler y <span class="mono">POST /api/v1/@Route(entity)/{id}/&lt;operación&gt;</span>; la regla la escribes tú en <span class="mono">@(entity.Name).&lt;Operación&gt;.cs</span>, que se crea una vez y es tuyo.</span>
+                    @if (entity.Operations.Count > 0)
+                    {
+                        <div class="table">
+                            <div class="tr head" style="grid-template-columns: 1.2fr 2fr 1.6fr 40px"><span>Operación</span><span>Parámetros</span><span>Evento</span><span></span></div>
+                            @foreach (var o in entity.Operations)
+                            {
+                                <div class="tr" style="grid-template-columns: 1.2fr 2fr 1.6fr 40px">
+                                    <input type="text" value="@o.Name" aria-label="Nombre de la operación" disabled="@(!entity.CanEdit)" placeholder="Confirm"
+                                           @onchange="e => { o.Name = e.Value?.ToString()?.Trim() ?? string.Empty; State.Recompute(); }" />
+                                    <input type="text" value="@o.Parameters" aria-label="@($"Parámetros de {o.Name}")" disabled="@(!entity.CanEdit)" placeholder="Reason:string, Amount:decimal?"
+                                           @onchange="e => { o.Parameters = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                                    <input type="text" value="@o.Event" aria-label="@($"Evento de {o.Name}")" disabled="@(!entity.CanEdit)"
+                                           placeholder="@(string.IsNullOrWhiteSpace(o.Name) ? entity.Name + "Done" : entity.Name + ModelRules.PastTense(SafePascal(o.Name)))"
+                                           @onchange="e => { o.Event = e.Value?.ToString()?.Trim() ?? string.Empty; State.Recompute(); }" />
+                                    <button type="button" class="icon-btn" aria-label="@($"Quitar {o.Name}")" disabled="@(!entity.CanEdit)" @onclick="() => { entity.Operations.Remove(o); State.Recompute(); }">×</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (entity.CanEdit)
+                    {
+                        <button type="button" class="btn btn-dashed" style="align-self: flex-start" @onclick="() => AddOperation(entity)">+ Añadir operación</button>
+                    }
                 </section>
             }
         }
@@ -213,13 +250,31 @@ else
         State.Recompute();
     }
 
+    private void AddOperation(EntityDraft entity)
+    {
+        entity.Operations.Add(new OperationDraft { Name = entity.Operations.Count == 0 ? "Confirm" : $"Operation{entity.Operations.Count + 1}" });
+        State.Recompute();
+    }
+
     private void AddProperty(EntityDraft entity)
     {
         entity.Properties.Add(new PropertyDraft { Name = $"Field{entity.Properties.Count + 1}", Type = "string", Nullable = true });
         State.Recompute();
     }
 
-    private static string Generates(PropertyDraft p) => (p.Type, p.Nullable) switch
+    /// <summary>Entities a property can point to: the others of the service and itself (by name, as typed).</summary>
+    private static IReadOnlyList<string> ReferenceTargets(ServiceDraft draft) =>
+        [.. draft.Entities.Where(e => !e.Removed && !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name)];
+
+    private static string SafePascal(string name)
+    {
+        try { return ServiceName.Normalize(name); }
+        catch (MsgException) { return name; }
+    }
+
+    private static string Generates(PropertyDraft p) => p.References is { } target
+        ? $"Clave ajena a {target} · se comprueba que existe" + (p.Nullable ? " · opcional" : string.Empty)
+        : (p.Type, p.Nullable) switch
     {
         ("string", false) => $"Required · MaxLength({PropertyTypes.DefaultStringLength})",
         ("string", true) => $"MaxLength({PropertyTypes.DefaultStringLength}) · columna nullable",

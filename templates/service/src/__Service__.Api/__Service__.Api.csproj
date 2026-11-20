@@ -29,6 +29,9 @@
     <!-- @msg:end -->
     <!-- @msg:end -->
     <!-- @msg:end -->
+    <!-- @msg:if mcp -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <!-- @msg:end -->
     <!-- @msg:if openApi -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />

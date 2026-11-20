@@ -1,5 +1,6 @@
 using Msg.Core;
 using Msg.Core.Generation;
+using Msg.Core.Import;
 using Msg.Core.Model;
 using Msg.Core.Templating;
 using Msg.Studio;
@@ -19,13 +20,17 @@ internal static partial class Cli
         Uso:
           stratum new <Nombre> [opciones]        Crea un servicio nuevo
           stratum new --from <msg.json> [opc.]   Crea un servicio a partir de una definición
-          stratum add entity <Nombre> --props "Campo:tipo, ..." [--plural <P>] [--db postgres|sqlserver] [--path <carpeta>]
+          stratum add entity <Nombre> --props "Campo:tipo, ..." [--plural <P>] [--db postgres|sqlserver] [--path] [--dry-run]
                                                  Añade una entidad con CRUD, EF Core y tests
           stratum entity list [--path <carpeta>]          Entidades del servicio y sus propiedades
           stratum entity update <Entidad> --props "..." [--rename Viejo=Nuevo]... [--path] [--dry-run]
                                                  Cambia las propiedades (las que falten se eliminan)
           stratum entity remove <Entidad> [--delete-own-files] [--path] [--dry-run]
                                                  Elimina una entidad (tus archivos solo con --delete-own-files)
+          stratum entity operation add <Entidad> <Operación> [--params "..."] [--event <E>] [--path] [--dry-run]
+                                                 Operación de negocio del agregado (clean-ddd): evento, comando,
+                                                 POST /<entidades>/{id}/<operación>; la regla la escribes tú
+          stratum entity operation remove <Entidad> <Operación> [--path] [--dry-run]
           stratum entity convert <Entidad> [--path] [--dry-run]
                                                  Pasa una entidad anterior a 0.10 al formato editable
           stratum feature list|on|off <feature>... [--path <carpeta>] [--dry-run]
@@ -44,7 +49,10 @@ internal static partial class Cli
                                                  Vuelve a copiar los contratos si los publicadores cambiaron
                                                  (--prune quita las de eventos que ya no se publican)
           stratum unsubscribe <Publicador> <Entidad>[.<Evento>] [--path] [--dry-run]
+          stratum import openapi <fichero|URL> [--name <S>] [-o <carpeta>] [--path <servicio>] [--dry-run]
+                                                 Servicio (o entidades nuevas) desde una especificación OpenAPI
           stratum events map [--path <sistema>]          Quién publica y quién escucha cada evento
+          stratum events asyncapi [--path] [-o <fichero>] AsyncAPI 3.1 de los eventos (asyncapi.yaml, o .json)
           stratum service remove <carpeta del servicio> [--path <sistema>] [--keep-files] [--yes]
                                                  Elimina un servicio y lo que cuelga de él (suscripciones de otros
                                                  servicios, AppHost, msg.workspace.json). Sin --yes solo lo muestra
@@ -58,6 +66,9 @@ internal static partial class Cli
                                                  AppHost de Aspire con todos los servicios de la carpeta
           stratum studio [--path <carpeta>] [--port 5150] [--no-browser]
                                                  Editor visual en el navegador
+          stratum mcp [--path <sistema>] [--package-source <carpeta>]
+                                                 Servidor MCP (stdio) para asistentes de IA: Claude, Copilot, Cursor
+          stratum mcp config [--path <sistema>]          Configuración para Claude Desktop, Claude Code, VS Code y Cursor
           stratum templates list [--path <carpeta>]        Plantillas de Stratum y del equipo (.msg/templates)
           stratum templates eject <set>[/<archivo>] [--path <carpeta>] [--force]
                                                  Copia plantillas a .msg/templates para personalizarlas
@@ -74,11 +85,12 @@ internal static partial class Cli
                                    Usa paquetes Msg.* empaquetados en local (antes de publicarlos
                                    en nuget.org). Genera un nuget.config con source mapping.
 
-        Features (activas por defecto salvo auth):
+        Features (activas por defecto salvo auth y mcp):
           --[no-]observability     OpenTelemetry: trazas, métricas y logs
           --[no-]openapi           Documento OpenAPI + Scalar (/scalar)
           --[no-]resilience        Reintentos/timeout/circuit breaker en HttpClient
           --[no-]auth              JWT bearer, autenticado por defecto      (off)
+          --[no-]mcp               Servidor MCP en /mcp con las entidades   (off)
           --[no-]tests             Tests de integración
           --[no-]docker            Dockerfile
           --[no-]ci                GitHub Actions
@@ -88,6 +100,7 @@ internal static partial class Cli
         Lo común llega como paquetes Msg.ServiceDefaults.*: 'stratum upgrade' lo actualiza sin regenerar.
 
         Tipos de --props: string, int, long, decimal, bool, guid, date, datetime. Añade ? si es opcional.
+        Referencia a otra entidad del servicio (clave ajena): "CustomerId:Customer" (o "CustomerId:Customer?").
           stratum add entity Product --props "Name:string, Price:decimal, Description:string?"
         """;
 
@@ -96,6 +109,11 @@ internal static partial class Cli
         if (args.Length > 0 && args[0] == "studio")
         {
             return await Studio(args[1..], output).ConfigureAwait(false);
+        }
+
+        if (args.Length > 0 && args[0] == "mcp")
+        {
+            return await Mcp(args[1..]).ConfigureAwait(false);
         }
 
         return Run(args, output);
@@ -131,6 +149,7 @@ internal static partial class Cli
             "unsubscribe" => Subscribe(args[1..], output, subscribe: false),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
+            "import" => Import(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'stratum --help'."),
         };
     }
@@ -244,6 +263,7 @@ internal static partial class Cli
 
         string? name = null, props = null, plural = null, db = null;
         var path = ".";
+        var dryRun = false;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -260,6 +280,9 @@ internal static partial class Cli
                     break;
                 case "--path":
                     path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
                     break;
                 default:
                     if (name is null && !args[i].StartsWith('-'))
@@ -279,9 +302,31 @@ internal static partial class Cli
             Properties = props ?? throw new MsgException("Falta --props \"Campo:tipo, ...\" (p. ej. \"Name:string, Price:decimal\")."),
             Plural = plural,
             Provider = db,
+            DryRun = dryRun,
         });
 
         var entity = result.Entity;
+        if (dryRun)
+        {
+            output.WriteLine($"Vista previa (--dry-run, no se ha escrito nada): entidad {entity.Name} ({result.Provider}) → /api/v1/{ServiceName.ToKebab(entity.Plural)}");
+            foreach (var file in result.Created)
+            {
+                output.WriteLine($"  + {file}");
+            }
+
+            foreach (var file in result.Updated)
+            {
+                output.WriteLine($"  ~ {file}");
+            }
+
+            foreach (var warning in result.Warnings)
+            {
+                output.WriteLine($"⚠ {warning}");
+            }
+
+            return 0;
+        }
+
         if (result.TeamTemplates is { } teamRoot)
         {
             output.WriteLine($"  plantillas del equipo: {teamRoot}");
@@ -315,6 +360,82 @@ internal static partial class Cli
             : $"--project src/{service}.Api";
         output.WriteLine($"  dotnet ef migrations add Add{entity.Name} {efProjects}");
         output.WriteLine($"  dotnet ef database update {efProjects}");
+        return 0;
+    }
+
+    /// <summary>MCP server over stdio: stdout carries only protocol messages, diagnostics go to stderr.</summary>
+    private static async Task<int> Mcp(string[] args)
+    {
+        if (args.Length > 0 && args[0] == "config")
+        {
+            return McpConfig(args[1..], Console.Out);
+        }
+
+        var root = ".";
+        string? packageSource = null;
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    root = Value(args, ref i, args[i]);
+                    break;
+                case "--package-source":
+                    packageSource = Path.GetFullPath(Value(args, ref i, args[i]));
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: stratum mcp [--path <sistema>] [--package-source <carpeta>]");
+            }
+        }
+
+        if (!Directory.Exists(root))
+        {
+            throw new MsgException($"No existe la carpeta '{Path.GetFullPath(root)}'.");
+        }
+
+        // Relative paths in tool calls (and the default folder of a new service) are relative to the system.
+        Directory.SetCurrentDirectory(Path.GetFullPath(root));
+        root = ".";
+
+        var utf8 = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        using var input = new StreamReader(Console.OpenStandardInput(), utf8);
+        await using var output = new StreamWriter(Console.OpenStandardOutput(), utf8) { AutoFlush = false };
+        await Console.Error.WriteLineAsync($"stratum mcp {MsgInfo.Version}: sistema {Path.GetFullPath(root)}").ConfigureAwait(false);
+        await new Mcp.McpServer(root, packageSource).RunAsync(input, output).ConfigureAwait(false);
+        return 0;
+    }
+
+    /// <summary>Configuration snippets for MCP clients, with this installation's paths.</summary>
+    private static int McpConfig(string[] args, TextWriter output)
+    {
+        var root = ".";
+        for (var i = 0; i < args.Length; i++)
+        {
+            root = args[i] == "--path" ? Value(args, ref i, args[i]) : throw new MsgException($"Argumento inesperado '{args[i]}'. Uso: stratum mcp config [--path <sistema>]");
+        }
+
+        root = Path.GetFullPath(root);
+
+        // Installed as a dotnet tool the process is "stratum"; run from source it is "dotnet stratum.dll".
+        var process = Environment.ProcessPath ?? "dotnet";
+        var installed = !Path.GetFileNameWithoutExtension(process).Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+        var command = installed ? process : "dotnet";
+        string[] commandArgs = installed ? ["mcp", "--path", root] : [Path.Combine(AppContext.BaseDirectory, "stratum.dll"), "mcp", "--path", root];
+        var json = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        string Quote(string value) => System.Text.Json.JsonSerializer.Serialize(value);
+
+        output.WriteLine("Claude Code (en la carpeta del sistema):");
+        output.WriteLine($"  claude mcp add stratum -- {(installed ? Quote(command) : "dotnet")} {string.Join(' ', commandArgs.Select(a => a.Contains(' ', StringComparison.Ordinal) ? Quote(a) : a))}");
+        output.WriteLine();
+        output.WriteLine("Claude Desktop (claude_desktop_config.json, dentro de \"mcpServers\"):");
+        output.WriteLine("  \"stratum\": " + System.Text.Json.JsonSerializer.Serialize(new { command, args = commandArgs }, json).Replace("\n", "\n  ", StringComparison.Ordinal));
+        output.WriteLine();
+        output.WriteLine("VS Code / GitHub Copilot (.vscode/mcp.json, dentro de \"servers\"):");
+        output.WriteLine("  \"stratum\": " + System.Text.Json.JsonSerializer.Serialize(new { type = "stdio", command, args = commandArgs }, json).Replace("\n", "\n  ", StringComparison.Ordinal));
+        output.WriteLine();
+        output.WriteLine("Cursor (.cursor/mcp.json, dentro de \"mcpServers\"): igual que Claude Desktop.");
+        output.WriteLine();
+        output.WriteLine("Las herramientas que cambian algo devuelven primero un plan; el asistente aplica con \"apply\": true cuando tú lo apruebas.");
         return 0;
     }
 
@@ -621,6 +742,123 @@ internal static partial class Cli
     [System.Text.RegularExpressions.GeneratedRegex(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$")]
     private static partial System.Text.RegularExpressions.Regex SemVer();
 
+    /// <summary>"stratum import openapi": a new service (or new entities in an existing one) from an OpenAPI document.</summary>
+    private static int Import(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum import openapi <fichero o URL .json|.yaml> [--name <Servicio>] [-o <carpeta>] [--architecture vertical-slice|clean-ddd]\n" +
+                             "     [--db postgres|sqlserver] [--path <servicio existente>] [--dry-run] [opciones de 'stratum new']";
+        if (args.Length < 2 || args[0] != "openapi")
+        {
+            throw new MsgException(usage);
+        }
+
+        var source = args[1];
+        string? name = null, existing = null, architecture = null, db = null;
+        var dryRun = false;
+        var passThrough = new List<string>();
+        for (var i = 2; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--name":
+                    name = Value(args, ref i, args[i]);
+                    break;
+                case "--path":
+                    existing = Value(args, ref i, args[i]);
+                    break;
+                case "--architecture" or "-a":
+                    architecture = Architectures.Validate(Value(args, ref i, args[i]).ToLowerInvariant());
+                    break;
+                case "--db":
+                    db = Value(args, ref i, args[i]).ToLowerInvariant();
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                case "-o" or "--output" or "--package-source":
+                    passThrough.Add(args[i]);
+                    passThrough.Add(Value(args, ref i, args[i]));
+                    break;
+                default:
+                    if (!args[i].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    passThrough.Add(args[i]);   // --no-docker, --auth, --force...
+                    break;
+            }
+        }
+
+        var text = source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || source.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            ? Download(source)
+            : File.Exists(source) ? File.ReadAllText(source) : throw new MsgException($"No existe el archivo '{source}'.");
+        var doc = OpenApiImporter.Load(text);
+
+        ServiceDefinition? current = existing is not null ? ServicePlanner.Load(existing) : null;
+        var prepared = OpenApiImporter.Prepare(doc, current, name, architecture);
+        var accepted = prepared.Entities;
+        var serviceName = prepared.ServiceName;
+        var definition = current ?? new ServiceDefinition { Service = new ServiceInfo { Name = serviceName }, Architecture = prepared.Architecture };
+        output.WriteLine(prepared.Report());
+        output.WriteLine();
+        if (accepted.Count == 0)
+        {
+            output.WriteLine("No hay nada que generar.");
+            return 0;
+        }
+
+        if (current is not null)
+        {
+            var provider = ServicePlanner.ResolveProvider(db, current.Persistence);
+            var plan = ServicePlanner.AddEntities(existing!, current, accepted, provider, new GenerationOptions { Team = TeamTemplates.Find(existing!) });
+            PrintPlan(output, plan, dryRun);
+            if (!dryRun && plan.Changes.Count > 0)
+            {
+                plan.Apply();
+            }
+
+            return 0;
+        }
+
+        var full = definition with
+        {
+            Entities = accepted,
+            Persistence = new PersistenceSettings { Provider = ServicePlanner.ResolveProvider(db, null) },
+            MsgVersion = MsgInfo.Version,
+        };
+        ModelRules.Validate(full);
+        if (dryRun)
+        {
+            output.WriteLine($"Vista previa (--dry-run): se crearía el servicio {serviceName}. Repite sin --dry-run para crearlo.");
+            return 0;
+        }
+
+        var temp = Path.Combine(Path.GetTempPath(), $"stratum-import-{Guid.NewGuid():N}.json");
+        File.WriteAllText(temp, ServiceGenerator.Serialize(full));
+        try
+        {
+            return New(["--from", temp, .. passThrough], output);
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+    }
+
+    private static string Download(string url)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        try
+        {
+            return http.GetStringAsync(new Uri(url)).GetAwaiter().GetResult();
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new MsgException($"No se pudo descargar {url}: {ex.Message}", ex);
+        }
+    }
+
     private static ServiceDefinition LoadDefinition(string path, string? nameOverride)
     {
         if (!File.Exists(path))
@@ -640,6 +878,11 @@ internal static partial class Cli
         if (args.Length == 0)
         {
             throw new MsgException(usage);
+        }
+
+        if (args[0] == "operation")
+        {
+            return EntityOperations(args[1..], output);
         }
 
         var action = args[0];
@@ -726,6 +969,81 @@ internal static partial class Cli
                 output.WriteLine("Siguiente paso: crea la migración y revísala (o hazlo desde el Studio, que hace las dos cosas):");
                 output.WriteLine($"  dotnet ef migrations add <Nombre> {efProjects}");
                 output.WriteLine($"  stratum migration review{(path == "." ? string.Empty : $" --path {path}")}");
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>"stratum entity operation add|remove": business operations of an aggregate (clean-ddd).</summary>
+    private static int EntityOperations(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum entity operation add <Entidad> <Operación> [--params \"Campo:tipo, ...\"] [--event <Evento>] [--path] [--dry-run]\n" +
+                             "     stratum entity operation remove <Entidad> <Operación> [--path] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("add" or "remove"))
+        {
+            throw new MsgException(usage);
+        }
+
+        var action = args[0];
+        var positional = new List<string>();
+        string? parameters = null, eventName = null;
+        var path = ".";
+        var dryRun = false;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--params" when action == "add":
+                    parameters = Value(args, ref i, args[i]);
+                    break;
+                case "--event" when action == "add":
+                    eventName = Value(args, ref i, args[i]);
+                    break;
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    if (!args[i].StartsWith('-') && positional.Count < 2)
+                    {
+                        positional.Add(args[i]);
+                        break;
+                    }
+
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+            }
+        }
+
+        if (positional.Count < 2)
+        {
+            throw new MsgException(usage);
+        }
+
+        var current = ServicePlanner.Load(path);
+        var entity = ServicePlanner.FindEntity(current, positional[0]);
+        var updated = action == "add"
+            ? ServicePlanner.AddOperation(current, entity.Name, ModelRules.ParseOperation(entity.Name, positional[1], parameters, eventName))
+            : ServicePlanner.RemoveOperation(current, entity.Name, positional[1]);
+
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+            if (action == "add")
+            {
+                var operation = ServiceName.Normalize(positional[1]);
+                output.WriteLine();
+                output.WriteLine($"Escribe la regla en src/{current.Service.Name}.Domain/{entity.Plural}/{entity.Name}.{operation}.cs (es tuyo).");
+                output.WriteLine($"Endpoint: POST /api/v1/{EntityCodeGen.Kebab(entity.Plural)}/{{id}}/{EntityCodeGen.Kebab(operation)}");
+            }
+            else
+            {
+                output.WriteLine();
+                output.WriteLine($"Tu archivo {entity.Name}.{ServiceName.Normalize(positional[1])}.cs se conserva: bórralo si ya no lo necesitas.");
             }
         }
 
@@ -875,6 +1193,11 @@ internal static partial class Cli
         if (args.Length > 0 && args[0] == "map")
         {
             return EventsMap(args[1..], output);
+        }
+
+        if (args.Length > 0 && args[0] == "asyncapi")
+        {
+            return EventsAsyncApi(args[1..], output);
         }
 
         const string usage = "Uso: stratum events on|off <Entidad>... [--path <carpeta>] [--dry-run]";
@@ -1045,6 +1368,50 @@ internal static partial class Cli
             {
                 output.WriteLine($"    ⚠ {problem}");
             }
+        }
+
+        return 0;
+    }
+
+    private static int EventsAsyncApi(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum events asyncapi [--path <sistema>] [-o <fichero .yaml|.json>] [--title <título>]";
+        var root = ".";
+        string? file = null;
+        string? title = null;
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    root = Value(args, ref i, args[i]);
+                    break;
+                case "-o" or "--output":
+                    file = Value(args, ref i, args[i]);
+                    break;
+                case "--title":
+                    title = Value(args, ref i, args[i]);
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+            }
+        }
+
+        var services = AspireGenerator.Discover(root).Select(s => s.Definition).ToList();
+        if (services.Count == 0)
+        {
+            throw new MsgException($"No hay servicios (msg.json) en '{Path.GetFullPath(root)}'.");
+        }
+
+        var document = AsyncApiDocument.Build(services, title ?? $"{new DirectoryInfo(Path.GetFullPath(root)).Name} events");
+        var path = Path.GetFullPath(file ?? Path.Combine(root, "asyncapi.yaml"));
+        var json = path.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+        File.WriteAllText(path, json ? AsyncApiDocument.ToJson(document) : AsyncApiDocument.ToYaml(document));
+        var channels = document["channels"]!.AsObject().Count;
+        output.WriteLine($"AsyncAPI {AsyncApiDocument.Version}: {channels} evento(s) → {path}");
+        if (channels == 0)
+        {
+            output.WriteLine("Todavía no hay eventos: stratum events on <Entidad> en un servicio, stratum subscribe en otro.");
         }
 
         return 0;
@@ -1254,9 +1621,18 @@ internal static partial class Cli
 
         foreach (var entity in definition.Entities)
         {
-            var props = string.Join(", ", entity.Properties.Select(p => $"{p.Name}:{p.Type}{(p.Nullable ? "?" : string.Empty)}"));
+            var props = PropertyTypes.Spec(entity.Properties);
             output.WriteLine($"{entity.Name} ({entity.Plural}){(entity.IsEditable ? string.Empty : "  [anterior a 0.10: stratum entity convert " + entity.Name + "]")}");
             output.WriteLine($"  --props \"{props}\"");
+            foreach (var operation in entity.Operations ?? [])
+            {
+                output.WriteLine($"  operación {operation.Name}({PropertyTypes.Spec(operation.Parameters)}) → {operation.Event}");
+            }
+
+            foreach (var (dependent, property) in ModelRules.Dependents(definition, entity.Name))
+            {
+                output.WriteLine($"  la usa {dependent.Name}.{property.Name}");
+            }
         }
 
         foreach (var rename in definition.PendingRenames ?? [])

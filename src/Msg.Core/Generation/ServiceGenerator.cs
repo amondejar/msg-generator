@@ -32,6 +32,7 @@ public static class ServiceGenerator
     public const string CleanEntityTemplateName = "entity-clean";
     public const string EntityTestsTemplateName = "entity-tests";
     public const string SubscriptionTemplateName = "subscription";
+    public const string OperationTemplateName = "operation";
     public const string DefinitionFileName = "msg.json";
 
     // Whole files/folders that only exist when a feature is enabled.
@@ -135,10 +136,24 @@ public static class ServiceGenerator
             entityTokens[key] = value;
         }
 
+        foreach (var (key, value) in EntityCodeGen.RelationTokens(definition, entity))
+        {
+            entityTokens[key] = value;
+        }
+
+        var hasReferences = entity.References.Any();
+        var referenced = ModelRules.Dependents(definition, entity.Name, includeSelf: true).Count > 0;
+        var operations = definition.Architecture == Architectures.CleanDdd ? entity.Operations ?? [] : [];
+
         bool EntityConditions(string feature) => feature switch
         {
             "hasRequiredString" => EntityCodeGen.HasRequiredString(entity),
             "publishEvents" => entity.Publishes && definition.Messaging is not null,
+            "hasReferences" => hasReferences,
+            "hasRequiredReferences" => entity.References.Any(p => !p.Nullable),
+            "referenced" => referenced,
+            "relations" => hasReferences || referenced,
+            "hasOperations" => operations.Count > 0,
             _ => isEnabled(feature),
         };
 
@@ -148,6 +163,17 @@ public static class ServiceGenerator
 
         RenderTemplateSet(architectureTemplates, entityTokens, EntityConditions, result, team);
         RenderTemplateSet(EntityTestsTemplateName, entityTokens, EntityConditions, result, team);
+
+        foreach (var operation in operations)
+        {
+            var operationTokens = new Dictionary<string, string>(entityTokens, StringComparer.Ordinal);
+            foreach (var (key, value) in EntityCodeGen.OperationTokens(entity, operation))
+            {
+                operationTokens[key] = value;
+            }
+
+            RenderTemplateSet(OperationTemplateName, operationTokens, EntityConditions, result, team);
+        }
     }
 
     /// <summary>
@@ -227,7 +253,13 @@ public static class ServiceGenerator
     {
         var sample = new ServiceDefinition { Service = new ServiceInfo { Name = "Sample" } };
         var entity = new EntityDefinition { Name = "Item", Plural = "Items", Properties = [new PropertyDefinition { Name = "Name", Type = "string" }] };
-        return [.. BuildTokens(sample).Keys, .. EntityCodeGen.Tokens(entity, new FeatureSet()).Keys];
+        return
+        [
+            .. BuildTokens(sample).Keys,
+            .. EntityCodeGen.Tokens(entity, new FeatureSet()).Keys,
+            .. EntityCodeGen.RelationTokens(sample with { Entities = [entity] }, entity).Keys,
+            .. EntityCodeGen.OperationTokens(entity, new EntityOperation { Name = "Do", Event = "ItemDone" }).Keys,
+        ];
     }
 
     public static Dictionary<string, string> BuildTokens(ServiceDefinition definition)
@@ -277,7 +309,7 @@ public static class ServiceGenerator
             _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new MsgException(
                 $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
                 "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents " +
-                "(y hasRequiredString, publishEvents en plantillas de entidad)."),
+                "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, hasOperations en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };
     }

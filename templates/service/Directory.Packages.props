@@ -46,6 +46,9 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.21.0" />
     <!-- @msg:end -->
+    <!-- @msg:if mcp -->
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.4.0" />
+    <!-- @msg:end -->
     <!-- @msg:if postgres -->
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- @msg:end -->

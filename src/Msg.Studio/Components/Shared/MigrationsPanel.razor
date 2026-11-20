@@ -166,7 +166,17 @@
     {
         Runner.Changed += OnChanged;
         Assistant.Changed += OnChanged;
-        efAvailable = await Tools.HasDotnetEfAsync();
+        await Task.CompletedTask;
+    }
+
+    // "dotnet ef --version" takes seconds the first time: checked after the first render, not while prerendering.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            efAvailable = await Tools.HasDotnetEfAsync();
+            StateHasChanged();
+        }
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);

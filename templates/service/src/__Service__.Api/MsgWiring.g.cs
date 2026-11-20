@@ -78,6 +78,11 @@ internal static class MsgWiring
         // @msg:if openApi
         builder.Services.AddOpenApi();
         // @msg:end
+        // @msg:if mcp
+        builder.Services.AddMcpServer()     // the entities' CRUD and operations as tools for AI assistants
+            .WithHttpTransport()
+            .WithToolsFromAssembly(typeof(MsgWiring).Assembly);
+        // @msg:end
         return builder;
     }
 
@@ -92,6 +97,12 @@ internal static class MsgWiring
         app.UseAuthorization();
         // @msg:end
         app.MapMsgDefaultEndpoints();
+        // @msg:if mcp
+        app.MapMcp("/mcp");                 // MCP (Streamable HTTP)
+        // @msg:if auth
+        // Protected like the API by the "authenticated by default" policy: MCP clients send the same bearer token.
+        // @msg:end
+        // @msg:end
         // @msg:if openApi
 
         if (app.Environment.IsDevelopment())

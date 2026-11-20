@@ -151,6 +151,66 @@ stratum entity convert Product                 # entidades creadas antes de Stra
   reemplaza la entidad y los endpoints por clases `partial` vacías y borra contratos, configuración, comandos, queries y tests
   (pasan a `.g.cs`); eventos, handlers y repositorio se quedan como están. Revisa el `--dry-run` y pasa tus cambios a las partial.
 
+### Referencias entre entidades
+
+```bash
+stratum add entity Order --props "Number:string, CustomerId:Customer, ParentId:Order?"
+```
+
+El tipo de una propiedad puede ser otra entidad del servicio (`Customer:Customer` se convierte en `CustomerId`). Stratum genera:
+
+- La clave ajena (`HasOne<Customer>().WithMany().HasForeignKey(...)`, sin borrado en cascada).
+- Al crear o actualizar, comprueba que el `Customer` existe: 400 con el campo en vertical slice, 422 en clean-ddd.
+- Al borrar un `Customer` que aún usan pedidos: 409 en vertical slice, 422 en clean-ddd (en lugar de un error de la base de datos).
+- Tests que crean antes por la API lo que hace falta (el `Customer` de un `Order`) y uno que comprueba el rechazo de un Id que no existe.
+- No se puede eliminar una entidad mientras otra apunte a ella, ni crear referencias obligatorias en círculo (haz una opcional).
+- En el Studio, el tipo de la propiedad ofrece `→ Customer`.
+- Entre servicios no hay claves ajenas: guarda el Id como `guid` y mantén los datos con [eventos](#escuchar-eventos-de-otro-servicio).
+
+### Operaciones del agregado (clean-ddd)
+
+```bash
+stratum entity operation add Order Confirm
+stratum entity operation add Order Cancel --params "Reason:string"          # evento OrderCancelled
+stratum entity operation remove Order Confirm
+```
+
+Cada operación genera el evento de dominio (`OrderCancelled(OrderId, Reason)`), el comando `CancelOrder` con su handler y
+`POST /api/v1/orders/{id}/cancel`. La regla es tuya: Stratum crea una vez `Order.Cancel.cs` con el método vacío (lanza
+`DomainException` para responder 422) y no lo vuelve a tocar. Si la entidad publica eventos, la operación publica
+`OrderUpdated` con el estado nuevo. En el Studio: **Entidades → Operaciones del agregado**.
+
+### El servicio como servidor MCP (feature `mcp`)
+
+```bash
+stratum feature on mcp            # o: stratum new Orders --mcp
+```
+
+El servicio publica `/mcp` (Streamable HTTP, con [ModelContextProtocol.AspNetCore](https://www.nuget.org/packages/ModelContextProtocol.AspNetCore)):
+cada entidad tiene `list_orders`, `get_order`, `create_order`, `update_order` y `delete_order`, y cada operación del
+agregado la suya (`cancel_order`). Las herramientas llaman a los mismos métodos que los endpoints HTTP, así que tienen la
+misma validación, las mismas comprobaciones de referencias, reglas de negocio, eventos y autenticación (con `auth`, el
+cliente MCP envía el mismo token). Un test generado (`McpTests.g.cs`) comprueba el handshake y la lista de herramientas.
+
+## Importar una especificación OpenAPI
+
+```bash
+stratum import openapi orders.yaml --dry-run                 # qué saldría, sin escribir nada
+stratum import openapi orders.yaml -a clean-ddd -o orders    # servicio nuevo (acepta las opciones de 'stratum new')
+stratum import openapi https://…/openapi.json --path billing # entidades nuevas en un servicio existente
+```
+
+OpenAPI 3.x o Swagger 2.0, en JSON o YAML:
+
+- Cada recurso CRUD (`/orders` y `/orders/{id}`, con o sin prefijo `/api/v1`) es una entidad, con las propiedades de su
+  esquema (`allOf` incluido; `snake_case` pasa a PascalCase; `id`, `createdAt` y `updatedAt` ya los genera Stratum).
+- Una propiedad que apunta a otro recurso (`$ref` o `customer_id` con formato uuid) es una referencia.
+- `POST /orders/{id}/cancel` es la operación `Cancel` del agregado en clean-ddd (con los datos del cuerpo como parámetros).
+- Al final, la lista de lo que no se ha podido traducir (objetos anidados, listas…) y de los endpoints que no son CRUD,
+  para que sepas qué escribir a mano.
+- En el Studio: **Servicios → Crear un servicio desde OpenAPI** rellena el servicio nuevo para que lo revises antes de aplicar.
+- En un asistente de IA: la herramienta `import_openapi` del [servidor MCP](#asistentes-de-ia-stratum-mcp).
+
 ## Features en un servicio existente (`stratum feature`)
 
 ```bash
@@ -280,6 +340,17 @@ Paquetes:
 | `Msg.Messaging.Kafka` | Kafka con Confluent.Kafka: un topic por evento, un consumer group por servicio, commit tras procesar, topic `<topic>.dead-letter`, topics creados al primer uso. |
 | `Msg.Messaging.AzureServiceBus` | Azure Service Bus: un topic por evento, una suscripción por servicio, complete tras procesar y dead-letter nativo; funciona con el emulador de Aspire. |
 
+### AsyncAPI
+
+```bash
+stratum events asyncapi                    # asyncapi.yaml en la carpeta del sistema (-o eventos.json para JSON)
+```
+
+Especificación AsyncAPI 3.1 de los eventos del sistema, sacada de los `msg.json` como el mapa de eventos: un channel por
+topic, la operación `send` del servicio que lo publica y una `receive` por cada servicio que lo escucha, el esquema de los
+datos tal como viajan (camelCase) y las cabeceras de `Msg.Messaging`. Sirve para AsyncAPI Studio, generadores de
+clientes o para que otros equipos sepan qué pueden escuchar. En el Studio: **Mapa de eventos → Especificación AsyncAPI**.
+
 ### `Idempotency-Key` en la API
 
 Todos los servicios lo tienen (`Msg.ServiceDefaults`): un cliente que manda `POST`/`PUT`/`PATCH`/`DELETE` con la cabecera
@@ -292,6 +363,28 @@ los reintentos con la misma clave reciben la misma respuesta con `Idempotent-Rep
 - Se guardan en `IDistributedCache`, en memoria por defecto; con varias instancias registra Redis
   (`AddStackExchangeRedisCache`) para compartirlas.
 - Sin cabecera, nada cambia.
+
+## Asistentes de IA: `stratum mcp`
+
+Stratum es también un servidor [MCP](https://modelcontextprotocol.io): Claude, GitHub Copilot o Cursor cambian tus
+servicios a través de Stratum, en lugar de escribir a mano código que luego se regenera.
+
+```bash
+stratum mcp config            # configuración lista para pegar en Claude Desktop, Claude Code, VS Code y Cursor
+```
+
+- **Herramientas**: `list_services`, `get_service`, `event_map`, `get_asyncapi`, `create_service`, `add_entity`,
+  `update_entity`, `remove_entity`, `import_openapi`, `add_operation`, `remove_operation`, `set_features`, `set_messaging`, `set_event_publishing`, `subscribe`, `unsubscribe`,
+  `sync_subscriptions`, `review_migration`, `generate_apphost`, `remove_service`.
+- **Plan primero**: las que cambian algo devuelven el plan (lo mismo que `--dry-run`) y solo escriben con
+  `"apply": true`, que el asistente envía cuando tú apruebas el plan. Cada herramienta ejecuta el comando de la CLI
+  correspondiente: el resultado es el mismo que desde la CLI o el Studio, con la misma protección de tus archivos.
+- **Recursos**: el `msg.json` de cada servicio y `asyncapi.yaml`.
+- **Prompts**: `design_from_spec` (le pasas requisitos o historias de usuario y propone servicios, entidades y eventos;
+  los crea cuando lo apruebas) y `review_system` (busca problemas sin cambiar nada).
+- Protocolo: stdio, compatible con clientes de la revisión 2026-07-28 y anteriores (handshake `initialize`).
+- Mientras lo ejecutas desde el código fuente, un cliente MCP abierto bloquea `stratum.dll` en Windows: ciérralo antes
+  de recompilar.
 
 ## Qué genera
 
@@ -331,7 +424,8 @@ Todos comparten versión con Stratum (`<Version>` en `Directory.Build.props`). L
 | `X-Correlation-ID` en respuesta y en cada log | `resilience`: retry/timeout/circuit breaker en todo `HttpClient` |
 | Logs JSON en producción y legibles en desarrollo | `auth`: JWT bearer, autenticado por defecto (**off** por defecto) |
 | Configuración validada al arrancar (`AddValidatedOptions<T>`) | `tests`, `docker`, `ci` |
-| API versionada (`/api/v1`) y puerto local estable por servicio | |
+| API versionada (`/api/v1`) y puerto local estable por servicio | `mcp`: servidor MCP en `/mcp` con las entidades (**off** por defecto) |
+| `Idempotency-Key` en POST/PUT/PATCH/DELETE | |
 
 ## Cómo funciona
 
@@ -396,5 +490,6 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 6. ✅ Migraciones guiadas: renombrados sin perder datos, avisos de lo que borra datos, SQL y deshacer (`stratum migration review`, Studio).
 7. ✅ Features editables en servicios existentes (`stratum feature`, Studio), paquetes y archivos que sobran se quitan, `.g.cs` editados a mano detectados.
 8. En curso: mensajería entre servicios. ✅ `Msg.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). ✅ Suscripciones y mapa de eventos. ✅ Azure Service Bus e `Idempotency-Key`.
-9. Después: métodos propios del agregado y relaciones entre entidades desde el Studio; publicar en nuget.org.
+9. En curso: ✅ AsyncAPI, ✅ servidor MCP, ✅ referencias entre entidades y operaciones del agregado, ✅ importar OpenAPI, ✅ feature `mcp` en los servicios.
+10. Al final: renombrar los paquetes `Msg.*`, publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

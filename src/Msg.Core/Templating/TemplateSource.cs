@@ -7,7 +7,7 @@ public sealed record TemplateFile(string Path, string Content, bool IsCustom = f
 /// <summary>Reads the templates embedded in Msg.Core (see Msg.Core.csproj), merged with the team's own.</summary>
 public static class TemplateSource
 {
-    public static IReadOnlyList<string> Sets { get; } = ["service", "entity", "entity-clean", "entity-tests", "subscription"];
+    public static IReadOnlyList<string> Sets { get; } = ["service", "entity", "entity-clean", "entity-tests", "subscription", "operation"];
 
     /// <summary>Stratum's templates for a set, with the team's files replacing or adding to them.</summary>
     public static IReadOnlyList<TemplateFile> Load(string templateName, TeamTemplates? team = null)

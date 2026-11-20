@@ -97,6 +97,43 @@ public sealed class StudioState(StudioOptions options)
         Recompute();
     }
 
+    /// <summary>
+    /// A new service drafted from an OpenAPI document (file relative to the system, absolute, or URL): its entities
+    /// and operations are filled in to review before applying. Returns the import report.
+    /// </summary>
+    public string StartFromOpenApi(string source, string? architecture, string? location)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        source = source.Trim();
+        string text;
+        if (source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || source.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            try
+            {
+                text = http.GetStringAsync(new Uri(source)).GetAwaiter().GetResult();
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new MsgException($"No se pudo descargar {source}: {ex.Message}", ex);
+            }
+        }
+        else
+        {
+            var path = Path.GetFullPath(Path.Combine(Workspace, source));
+            text = File.Exists(path) ? File.ReadAllText(path) : throw new MsgException($"No existe el archivo '{path}'.");
+        }
+
+        var prepared = Msg.Core.Import.OpenApiImporter.Prepare(Msg.Core.Import.OpenApiImporter.Load(text), null, null, architecture);
+        StartNewService(prepared.ServiceName, location);
+        var draft = Current!;
+        draft.Architecture = prepared.Architecture;
+        draft.Entities.AddRange(prepared.Entities.Select(e => EntityDraft.From(e, isNew: true)));
+        SelectedEntity = prepared.Entities.FirstOrDefault()?.Name;
+        Recompute();
+        return prepared.Report();
+    }
+
     public EntityDraft AddEntity()
     {
         var draft = Current ?? throw new InvalidOperationException("No hay servicio abierto.");
@@ -281,6 +318,18 @@ public sealed class StudioState(StudioOptions options)
 
     public IReadOnlyList<EventRoute> EventRoutes() => EventMap.Build(Services.Select(s => s.Definition));
 
+    /// <summary>AsyncAPI of the system's events, as YAML (what <c>stratum events asyncapi</c> writes).</summary>
+    public string AsyncApiYaml() =>
+        AsyncApiDocument.ToYaml(AsyncApiDocument.Build(Services.Select(s => s.Definition), $"{new DirectoryInfo(Workspace).Name} events"));
+
+    /// <summary>Writes asyncapi.yaml in the system folder and returns its path.</summary>
+    public string ExportAsyncApi()
+    {
+        var path = Path.Combine(Workspace, "asyncapi.yaml");
+        File.WriteAllText(path, AsyncApiYaml());
+        return path;
+    }
+
     public AspireResult GenerateAppHost(string name)
     {
         var result = AspireGenerator.Generate(Workspace, ServiceName.Normalize(name), [.. AspireGenerator.Discover(Workspace)]);
@@ -380,6 +429,7 @@ public sealed class StudioState(StudioOptions options)
                     .Select(p => new PropertyRename { Entity = entity.Name, From = p.OriginalName!, To = p.Name.Trim() })
                     .ToList();
                 definition = ServicePlanner.UpdateEntity(definition, entity.Name, entity.ToDefinition().Properties, renames);
+                definition = ServicePlanner.SetOperations(definition, entity.Name, entity.ToOperations());
                 if (entity.PublishEvents != ServicePlanner.FindEntity(definition, entity.Name).Publishes)
                 {
                     definition = ServicePlanner.SetPublishEvents(definition, entity.Name, entity.PublishEvents);
@@ -396,7 +446,7 @@ public sealed class StudioState(StudioOptions options)
         {
             try
             {
-                var accepted = ServicePlanner.ValidateEntity(entity.ToDefinition(), definition);
+                var accepted = ServicePlanner.ValidateEntity(entity.ToDefinition(), definition) with { Operations = entity.ToOperations() };
                 definition = definition with { Entities = [.. definition.Entities, accepted] };
                 if (entity.PublishEvents)
                 {
@@ -409,11 +459,26 @@ public sealed class StudioState(StudioOptions options)
             }
         }
 
-        return definition with
+        definition = definition with
         {
             Persistence = definition.Persistence
                 ?? (definition.Entities.Count > 0 ? new PersistenceSettings { Provider = draft.Provider } : null),
         };
+
+        // References and operations involve several entities: checked on the whole model.
+        if (errors.Count == 0)
+        {
+            try
+            {
+                ModelRules.Validate(definition);
+            }
+            catch (MsgException ex)
+            {
+                errors.Add(ex.Message);
+            }
+        }
+
+        return definition;
     }
 
     private GenerationOptions PackageOptions() =>

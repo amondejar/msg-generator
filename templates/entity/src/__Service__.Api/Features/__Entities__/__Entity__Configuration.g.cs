@@ -23,7 +23,7 @@ public sealed partial class {{Entity}}Configuration : IEntityTypeConfiguration<{
         builder.ToTable("{{entities_snake}}");
         builder.HasKey(e => e.Id);
 {{PropertyConfigurations}}
-
+{{ReferenceConfigurations}}
         Customize(builder);
     }
 

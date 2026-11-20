@@ -94,6 +94,12 @@ public sealed record EntityDefinition
     [System.Text.Json.Serialization.JsonIgnore]
     public bool Publishes => PublishEvents == true;
 
+    /// <summary>Business operations of the aggregate (clean-ddd only).</summary>
+    public IReadOnlyList<EntityOperation>? Operations { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IEnumerable<PropertyDefinition> References => Properties.Where(p => p.References is not null);
+
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsEditable => Layout >= CurrentLayout;
 }
@@ -106,4 +112,26 @@ public sealed record PropertyDefinition
     public required string Type { get; init; }
 
     public bool Nullable { get; init; }
+
+    /// <summary>
+    /// Entity of the same service this property points to (a foreign key): "CustomerId:Customer" in --props.
+    /// Type is then "guid". Null for plain properties.
+    /// </summary>
+    public string? References { get; init; }
+}
+
+/// <summary>
+/// A business operation of an aggregate (clean-ddd), e.g. Order.Confirm(reason): Stratum generates the domain event,
+/// the command, its handler and POST /orders/{id}/confirm; the method body (the rule) is the user's.
+/// </summary>
+public sealed record EntityOperation
+{
+    /// <summary>Verb in PascalCase: "Confirm", "Cancel", "Ship".</summary>
+    public required string Name { get; init; }
+
+    /// <summary>Data the operation needs (none for a plain "Confirm").</summary>
+    public IReadOnlyList<PropertyDefinition> Parameters { get; init; } = [];
+
+    /// <summary>Domain event raised by the operation (e.g. "OrderConfirmed"). Defaults to entity + past tense.</summary>
+    public required string Event { get; init; }
 }

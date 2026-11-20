@@ -59,7 +59,11 @@ public static partial class {{Entity}}Endpoints
         return entity is null ? TypedResults.NotFound() : TypedResults.Ok({{Entity}}Response.From(entity));
     }
 
+    // @msg:if hasReferences
+    private static async Task<Results<CreatedAtRoute<{{Entity}}Response>, ValidationProblem>> Create(
+    // @msg:else
     private static async Task<CreatedAtRoute<{{Entity}}Response>> Create(
+    // @msg:end
         {{Entity}}Request request,
         {{Service}}DbContext db,
         // @msg:if publishEvents
@@ -67,6 +71,13 @@ public static partial class {{Entity}}Endpoints
         // @msg:end
         CancellationToken cancellationToken)
     {
+        // @msg:if hasReferences
+        if (await MissingReferencesAsync(request, db, cancellationToken) is { } missing)
+        {
+            return missing;
+        }
+
+        // @msg:end
         var entity = request.ToEntity();
 
         db.{{Entities}}.Add(entity);
@@ -78,7 +89,11 @@ public static partial class {{Entity}}Endpoints
         return TypedResults.CreatedAtRoute({{Entity}}Response.From(entity), "Get{{Entity}}", new { id = entity.Id });
     }
 
+    // @msg:if hasReferences
+    private static async Task<Results<NoContent, NotFound, ValidationProblem>> Update(
+    // @msg:else
     private static async Task<Results<NoContent, NotFound>> Update(
+    // @msg:end
         Guid id,
         {{Entity}}Request request,
         {{Service}}DbContext db,
@@ -93,6 +108,13 @@ public static partial class {{Entity}}Endpoints
             return TypedResults.NotFound();
         }
 
+        // @msg:if hasReferences
+        if (await MissingReferencesAsync(request, db, cancellationToken) is { } missing)
+        {
+            return missing;
+        }
+
+        // @msg:end
         request.ApplyTo(entity);
         entity.UpdatedAt = DateTimeOffset.UtcNow;
         // @msg:if publishEvents
@@ -103,7 +125,11 @@ public static partial class {{Entity}}Endpoints
         return TypedResults.NoContent();
     }
 
+    // @msg:if referenced
+    private static async Task<Results<NoContent, NotFound, ProblemHttpResult>> Delete(
+    // @msg:else
     private static async Task<Results<NoContent, NotFound>> Delete(
+    // @msg:end
         Guid id,
         {{Service}}DbContext db,
         // @msg:if publishEvents
@@ -111,6 +137,14 @@ public static partial class {{Entity}}Endpoints
         // @msg:end
         CancellationToken cancellationToken)
     {
+        // @msg:if referenced
+        if (await UsedByAsync(id, db, cancellationToken) is { } usedBy)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, title: "En uso", detail: $"No se puede eliminar: lo usan {usedBy}.");
+        }
+
+        // @msg:end
         // @msg:if publishEvents
         // The delete and its event in one transaction (ExecuteDelete doesn't go through SaveChanges).
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -127,4 +161,26 @@ public static partial class {{Entity}}Endpoints
         // @msg:end
         return deleted == 0 ? TypedResults.NotFound() : TypedResults.NoContent();
     }
+    // @msg:if hasReferences
+
+    /// <summary>400 when the request points to rows that don't exist (instead of a foreign key error).</summary>
+    private static async Task<ValidationProblem?> MissingReferencesAsync(
+        {{Entity}}Request request, {{Service}}DbContext db, CancellationToken cancellationToken)
+    {
+        var errors = new Dictionary<string, string[]>();
+{{ReferenceChecks}}
+
+        return errors.Count == 0 ? null : TypedResults.ValidationProblem(errors);
+    }
+    // @msg:end
+    // @msg:if referenced
+
+    /// <summary>Entities that still point to this one (the database would refuse the delete).</summary>
+    private static async Task<string?> UsedByAsync(Guid id, {{Service}}DbContext db, CancellationToken cancellationToken)
+    {
+{{DependentChecks}}
+
+        return null;
+    }
+    // @msg:end
 }

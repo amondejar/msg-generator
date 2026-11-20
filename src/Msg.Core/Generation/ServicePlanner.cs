@@ -30,6 +30,7 @@ public static class ServicePlanner
             throw new MsgException($"La carpeta '{Path.GetFullPath(directory)}' ya existe y no está vacía.");
         }
 
+        ModelRules.Validate(definition);
         var changes = ServiceGenerator.Generate(definition, options)
             .Select(f => new FileChange(f.Path, ChangeKind.Create, f.Content, null))
             .ToList();
@@ -68,7 +69,7 @@ public static class ServicePlanner
         }
 
         // Re-parse through the same rules as --props (names, types, reserved, duplicates).
-        var spec = string.Join(", ", entity.Properties.Select(p => $"{p.Name}:{p.Type}{(p.Nullable ? "?" : string.Empty)}"));
+        var spec = PropertyTypes.Spec(entity.Properties);
         return new EntityDefinition { Name = name, Plural = plural, Properties = PropertyTypes.Parse(spec), Layout = EntityDefinition.CurrentLayout };
     }
 
@@ -128,7 +129,7 @@ public static class ServicePlanner
             throw new MsgException($"La entidad '{entity.Name}' necesita al menos una propiedad.");
         }
 
-        var spec = string.Join(", ", properties.Select(p => $"{p.Name}:{p.Type}{(p.Nullable ? "?" : string.Empty)}"));
+        var spec = PropertyTypes.Spec(properties);
         var parsed = PropertyTypes.Parse(spec);
 
         var pending = (current.PendingRenames ?? []).ToList();
@@ -173,10 +174,53 @@ public static class ServicePlanner
         };
     }
 
+    public static ServiceDefinition AddOperation(ServiceDefinition current, string entityName, EntityOperation operation)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(operation);
+        var entity = FindEntity(current, entityName);
+        RequireEditable(entity);
+        var updated = current with
+        {
+            Entities = [.. current.Entities.Select(e => e == entity ? e with { Operations = [.. e.Operations ?? [], operation] } : e)],
+        };
+        ModelRules.Validate(updated);
+        return updated;
+    }
+
+    /// <summary>Replaces the operations of an entity (Studio): validated with the rest of the model in Plan.</summary>
+    public static ServiceDefinition SetOperations(ServiceDefinition current, string entityName, IReadOnlyList<EntityOperation>? operations)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var entity = FindEntity(current, entityName);
+        return current with
+        {
+            Entities = [.. current.Entities.Select(e => e == entity ? e with { Operations = operations is { Count: > 0 } ? operations : null } : e)],
+        };
+    }
+
+    public static ServiceDefinition RemoveOperation(ServiceDefinition current, string entityName, string operationName)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var entity = FindEntity(current, entityName);
+        var operation = (entity.Operations ?? []).FirstOrDefault(o => o.Name.Equals(operationName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new MsgException($"{entity.Name} no tiene la operación '{operationName}'. Operaciones: {string.Join(", ", (entity.Operations ?? []).Select(o => o.Name).DefaultIfEmpty("ninguna"))}.");
+        var remaining = entity.Operations!.Where(o => o != operation).ToList();
+        return current with
+        {
+            Entities = [.. current.Entities.Select(e => e == entity ? e with { Operations = remaining.Count == 0 ? null : remaining } : e)],
+        };
+    }
+
     public static ServiceDefinition RemoveEntity(ServiceDefinition current, string entityName)
     {
         ArgumentNullException.ThrowIfNull(current);
         var entity = FindEntity(current, entityName);
+        if (ModelRules.Dependents(current, entity.Name) is { Count: > 0 } dependents)
+        {
+            throw new MsgException($"No se puede eliminar {entity.Name}: la usan {string.Join(", ", dependents.Select(d => $"{d.Entity.Name}.{d.Property.Name}"))}. Quita antes esas referencias.");
+        }
+
         var pending = (current.PendingRenames ?? []).Where(r => r.Entity != entity.Name).ToList();
 
         // Persistence stays: the database (and its migrations) still exist.
@@ -449,6 +493,7 @@ public static class ServicePlanner
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(updated);
+        ModelRules.Validate(updated);
 
         var files = ServiceGenerator.Generate(updated, options);
         var newPaths = files.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);

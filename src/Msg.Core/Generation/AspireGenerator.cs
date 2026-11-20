@@ -34,7 +34,9 @@ public static class AspireGenerator
         "bin", "obj", "node_modules", ".git", ".vs", ".idea", "artifacts", "TestResults",
     };
 
-    public static IReadOnlyList<AspireService> Discover(string root, int maxDepth = 3)
+    /// <param name="skipped">Receives the msg.json files that could not be read (another tool's file, or broken):
+    /// they are left out instead of failing the whole discovery.</param>
+    public static IReadOnlyList<AspireService> Discover(string root, int maxDepth = 3, ICollection<string>? skipped = null)
     {
         var rootFull = Path.GetFullPath(root);
         var found = new List<AspireService>();
@@ -43,7 +45,11 @@ public static class AspireGenerator
         // Services in other folders, listed in msg.workspace.json.
         foreach (var directory in WorkspaceFile.ExternalServices(rootFull))
         {
-            var definition = ServiceGenerator.Deserialize(File.ReadAllText(Path.Combine(directory, ServiceGenerator.DefinitionFileName)));
+            if (TryRead(Path.Combine(directory, ServiceGenerator.DefinitionFileName)) is not { } definition)
+            {
+                continue;
+            }
+
             var relative = Path.GetRelativePath(rootFull, directory).Replace('\\', '/');
             var service = new AspireService(relative, definition);
             if (File.Exists(Path.Combine(rootFull, service.ApiProject)) && !found.Any(f => f.RelativeDirectory == relative))
@@ -59,7 +65,11 @@ public static class AspireGenerator
             var definitionPath = Path.Combine(directory, ServiceGenerator.DefinitionFileName);
             if (directory != rootFull && File.Exists(definitionPath))
             {
-                var definition = ServiceGenerator.Deserialize(File.ReadAllText(definitionPath));
+                if (TryRead(definitionPath) is not { } definition)
+                {
+                    return;
+                }
+
                 var relative = Path.GetRelativePath(rootFull, directory).Replace('\\', '/');
                 var service = new AspireService(relative, definition);
 
@@ -82,6 +92,19 @@ public static class AspireGenerator
                 {
                     Walk(child, depth + 1);
                 }
+            }
+        }
+
+        ServiceDefinition? TryRead(string path)
+        {
+            try
+            {
+                return ServiceGenerator.Deserialize(File.ReadAllText(path));
+            }
+            catch (Exception ex) when (ex is MsgException or IOException or UnauthorizedAccessException)
+            {
+                skipped?.Add($"{path}: {ex.Message}");
+                return null;
             }
         }
     }

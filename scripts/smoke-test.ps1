@@ -261,6 +261,37 @@ public sealed partial class Product
     Invoke-Dotnet $MsgDll add entity Tag --path $clean --props 'Label:string'
     Invoke-Dotnet $MsgDll entity remove Tag --path $clean --delete-own-files
     if (Get-ChildItem $clean -Recurse -File -Filter 'Tag*.cs') { Fail 'entity remove left files' }
+
+    # References between entities and aggregate operations (built and tested below with the full services).
+    Invoke-Dotnet $MsgDll add entity Review --path $clean --props 'Text:string, Product:Product, ReplyToId:Review?'
+    Invoke-Dotnet $MsgDll entity operation add Product Discontinue --params 'Reason:string' --path $clean
+    Invoke-Dotnet $MsgDll entity operation add Product Restock --path $clean
+    $cr = Join-Path $clean 'src'
+    $refOk = (Get-Content (Join-Path $cr 'Catalog.Infrastructure\Persistence\Reviews\ReviewConfiguration.g.cs') -Raw) -like '*HasOne<global::Catalog.Domain.Products.Product>().WithMany().HasForeignKey(e => e.ProductId)*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Application\Reviews\ReviewCommands.g.cs') -Raw) -like '*MissingReferenceAsync*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Infrastructure\Persistence\Products\ProductIntegrity.g.cs') -Raw) -like '*InUseAsync*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Domain\Products\Product.Discontinue.cs') -Raw) -like '*public partial void Discontinue(string reason)*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Api\Features\Products\ProductOperationEndpoints.g.cs') -Raw) -like '*"/{id:guid}/discontinue"*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Domain\Products\ProductOperations.g.cs') -Raw) -like '*record ProductRestocked(Guid ProductId)*'
+    $null = Get-DotnetOutput $MsgDll entity remove Product --path $clean   # expected to fail: checked through $LASTEXITCODE
+    if ($refOk -and $LASTEXITCODE -ne 0) { Pass 'clean-ddd: references (foreign keys, checks) and aggregate operations' } else { Fail 'clean-ddd references/operations' }
+    Invoke-Dotnet $MsgDll feature on mcp --path $clean
+    if ((Get-Content (Join-Path $cr 'Catalog.Api\MsgWiring.g.cs') -Raw) -like '*app.MapMcp("/mcp")*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Api\Features\Products\ProductMcpTools.g.cs') -Raw) -like '*Name = "discontinue_product"*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Api\Features\Reviews\ReviewMcpTools.g.cs') -Raw) -like '*Name = "create_review"*' `
+        -and (Get-Content (Join-Path $cr 'Catalog.Api\Catalog.Api.csproj') -Raw) -like '*Include="ModelContextProtocol.AspNetCore"*') {
+        Pass 'feature mcp: /mcp with the entities'' CRUD and operations as tools'
+    } else { Fail 'feature mcp' }
+    $full = Join-Path $Work 'full'
+    Invoke-Dotnet $MsgDll add entity Supplier --path $full --props 'Name:string'
+    Invoke-Dotnet $MsgDll add entity Shipment --path $full --props 'Code:string, SupplierId:Supplier, ProductId:Product?'
+    $vOk = (Get-Content (Join-Path $full 'src\Orders.Api\Features\Shipments\ShipmentEndpoints.g.cs') -Raw) -like '*MissingReferencesAsync*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Features\Suppliers\SupplierEndpoints.g.cs') -Raw) -like '*UsedByAsync*' `
+        -and (Get-Content (Join-Path $full 'tests\Orders.Api.Tests\Features\ShipmentEndpointsTests.g.cs') -Raw) -like '*await CreateSupplierAsync(client)*'
+    $null = Get-DotnetOutput $MsgDll entity operation add Supplier Approve --path $full   # expected to fail: checked through $LASTEXITCODE
+    $opRejected = $LASTEXITCODE -ne 0
+    $null = Get-DotnetOutput $MsgDll add entity Bad --path $full --props 'X:Nope'   # expected to fail: checked through $LASTEXITCODE
+    if ($vOk -and $opRejected -and $LASTEXITCODE -ne 0) { Pass 'vertical slice: references with 400/409 checks and test data' } else { Fail 'vertical references' }
     if ((Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\CatalogDbContext.g.cs') -Raw) -like '*Tag*') { Fail 'Tag still in DbContext' }
     Pass 'entity remove deletes its files and registrations'
     # An entity from MSG < 0.10 (no "layout" in msg.json) is read-only until converted.
@@ -489,6 +520,27 @@ namespace Catalog.Infrastructure.Migrations
     if ($hostCode -like '*AddAzureServiceBus("servicebus")*' -and $hostCode -like '*AddServiceBusSubscription("notifications-orders-order-created", "notifications")*' -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -like '*Aspire.Hosting.Azure.ServiceBus*' -and (Get-Content (Join-Path $notifications 'src\Notifications.Api\MsgWiring.g.cs') -Raw) -like '*UseAzureServiceBus*' -and $map -like '*no le llegar*') {
         Pass 'Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported'
     } else { $map | Out-Host; Fail 'Azure Service Bus' }
+    Invoke-Dotnet $MsgDll events asyncapi --path $sys
+    $spec = Get-Content (Join-Path $sys 'asyncapi.yaml') -Raw
+    if ($spec -like '*asyncapi: "3.1.0"*' -and $spec -like '*address: orders.order-created*' -and $spec -like '*action: receive*') {
+        Pass 'AsyncAPI 3.1 exported from the event map'
+    } else { Fail 'AsyncAPI export' }
+    $mcpIn = @(
+        '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}',
+        '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        '{"jsonrpc":"2.0","id":2,"method":"tools/list"}',
+        '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_entity","arguments":{"service":"Orders","name":"Coupon","properties":"Code:string"}}}',
+        '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_services","arguments":{}}}'
+    )
+    # 'stratum mcp' logs to stderr (stdout is the protocol): Windows PowerShell turns that into an error under 'Stop'.
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $mcpOut = @($mcpIn | & dotnet $MsgDll mcp --path $sys 2>$null | ForEach-Object { "$_" }) }
+    finally { $ErrorActionPreference = $eap }
+    $mcpText = $mcpOut -join "`n"
+    if ($mcpOut.Count -eq 4 -and $mcpText -like '*"protocolVersion":"2025-11-25"*' -and $mcpText -like '*"name":"subscribe"*' -and $mcpText -like '*"structuredContent":{"root"*' -and -not (Test-Path (Join-Path $sys 'orders\src\Orders.Api\Features\Coupons'))) {
+        Pass 'MCP server: handshake, tools, plan without writing'
+    } else { $mcpText | Out-Host; Fail 'MCP server' }
     $legacy = Join-Path $sys 'legacy'
     Invoke-Dotnet $MsgDll new Legacy -o $legacy --package-source $Pkgs
     Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
@@ -516,15 +568,123 @@ namespace Catalog.Infrastructure.Migrations
         if ($homeHtml -notlike "*>$s<*") { Fail "studio: $s missing on the system page" }
     }
     Pass 'studio lists the services of the system'
+    # Own client: the first render of a page (Razor compilation, file scans) can be slow on CI runners.
+    $studioHttp = New-Object System.Net.Http.HttpClient
+    $studioHttp.Timeout = [TimeSpan]::FromSeconds(60)
     foreach ($p in 'services', 'events', 'run', 'templates', 'service', 'entities', 'service/data', 'service/messaging', 'service/code', 'service/remove', 'apply', '_framework/blazor.web.js') {
-        $code = [int]$Http.GetAsync("$studioBase/$p").GetAwaiter().GetResult().StatusCode
-        if ($code -ne 200) { Stop-Process -Id $studio.Id -Force; Fail "studio: /$p returned $code" }
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        try { $code = [int]$studioHttp.GetAsync("$studioBase/$p").GetAwaiter().GetResult().StatusCode }
+        catch { $code = "no response after $([int]$watch.Elapsed.TotalSeconds) s ($($_.Exception.InnerException.Message))" }
+        if ($code -ne 200) { $studioHttp.Dispose(); Stop-Process -Id $studio.Id -Force; Fail "studio: /$p returned $code" }
+        if ($watch.Elapsed.TotalSeconds -gt 10) { Write-Host "  (studio /$p took $([int]$watch.Elapsed.TotalSeconds) s)" -ForegroundColor Yellow }
     }
+    $studioHttp.Dispose()
     Pass 'studio pages render and blazor.web.js is served (interactive UI)'
     Stop-Process -Id $studio.Id -Force
 
+    Step 'stratum import openapi'
+    $librarySpec = @'
+openapi: 3.0.3
+info:
+  title: Library API
+  version: 1.0.0
+paths:
+  /authors:
+    get:
+      responses:
+        '200':
+          description: All
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Author'
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Author'
+      responses:
+        '201':
+          description: Created
+  /authors/{id}:
+    get:
+      responses:
+        '200':
+          description: One
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Author'
+  /books:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Book'
+      responses:
+        '201':
+          description: Created
+  /books/{id}/lend:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [member]
+              properties:
+                member:
+                  type: string
+      responses:
+        '204':
+          description: Lent
+  /stats:
+    get:
+      responses:
+        '200':
+          description: Stats
+components:
+  schemas:
+    Author:
+      type: object
+      required: [full_name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        born:
+          type: string
+          format: date
+    Book:
+      type: object
+      required: [title, author_id]
+      properties:
+        title:
+          type: string
+        author_id:
+          type: string
+          format: uuid
+        pages:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+'@
+    Set-Content -Path (Join-Path $Work 'library.yaml') -Value $librarySpec -Encoding UTF8
+    $out = Get-DotnetOutput $MsgDll import openapi (Join-Path $Work 'library.yaml') -a clean-ddd -o (Join-Path $Work 'imported') --package-source $Pkgs
+    if ($out -like '*Author (/api/v1/authors): FullName:string, Born:date?*' -and $out -like '*Book (/api/v1/books): Title:string, AuthorId:Author, Pages:int?*' -and $out -like '*Lend(Member:string)*BookLent*' -and $out -like '*Book.Tags: lista*' -and $out -like '*GET /stats*' -and (Test-Path (Join-Path $Work 'imported\src\LibraryAPI.Domain\Books\Book.Lend.cs'))) {
+        Pass 'import openapi: entities, references, operations and a report of the rest'
+    } else { $out | Out-Host; Fail 'import openapi' }
+
     Step 'Full services'
-    foreach ($s in 'full', 'auth', 'regen', 'clean', 'features', 'team\services\orders') {
+    foreach ($s in 'full', 'auth', 'regen', 'clean', 'features', 'imported', 'team\services\orders') {
         Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
         Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
     }

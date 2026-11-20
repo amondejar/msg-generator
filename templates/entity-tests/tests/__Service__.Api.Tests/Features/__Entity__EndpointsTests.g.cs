@@ -20,7 +20,7 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
         using var client = {{TestClient}};
 
         // Create
-        var create = await client.PostAsJsonAsync(Collection, SampleRequest());
+        var create = await client.PostAsJsonAsync(Collection, await SampleRequestAsync(client));
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         var created = await create.Content.ReadFromJsonAsync<{{Entity}}Response>();
         Assert.NotNull(created);
@@ -32,7 +32,7 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
         Assert.Equal(created.Id, fetched?.Id);
 
         // Update
-        var update = await client.PutAsJsonAsync(item, SampleRequest());
+        var update = await client.PutAsJsonAsync(item, await SampleRequestAsync(client));
         Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
 
         // List
@@ -52,7 +52,7 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
         var item = new Uri($"/api/v1/{{entities-kebab}}/{Guid.NewGuid()}", UriKind.Relative);
 
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(item)).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync(item, SampleRequest())).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync(item, await SampleRequestAsync(client))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync(item)).StatusCode);
     }
     // @msg:if hasRequiredString
@@ -79,6 +79,35 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
     }
     // @msg:end
 
-    private static {{Entity}}Request SampleRequest() => new(
-{{SampleArguments}});
+    // @msg:if hasRequiredReferences
+
+    [Fact]
+    public async Task UnknownReferenceIsRejected()
+    {
+        using var client = {{TestClient}};
+        var request = (await SampleRequestAsync(client)) with { {{FirstRequiredReference}} = Guid.NewGuid() };
+
+        var response = await client.PostAsJsonAsync(Collection, request);
+
+        // @msg:if cleanDdd
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        // @msg:else
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        // @msg:end
+    }
+    // @msg:end
+
+    // @msg:if hasRequiredReferences
+    private static async Task<{{Entity}}Request> SampleRequestAsync(HttpClient client) => new(
+{{TestSampleArguments}});
+
+{{TestReferenceHelpers}}
+    // @msg:else
+    private static Task<{{Entity}}Request> SampleRequestAsync(HttpClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        return Task.FromResult(new {{Entity}}Request(
+{{TestSampleArguments}}));
+    }
+    // @msg:end
 }

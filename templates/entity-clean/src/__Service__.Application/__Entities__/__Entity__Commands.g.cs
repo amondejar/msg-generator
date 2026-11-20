@@ -16,12 +16,23 @@ public sealed record Update{{Entity}}(Guid Id, {{CommandParameters}}) : ICommand
 /// <summary>Returns false when the {{Entity}} does not exist.</summary>
 public sealed record Delete{{Entity}}(Guid Id) : ICommand<bool>;
 
-public sealed partial class Create{{Entity}}Handler(I{{Entity}}Repository repository, IUnitOfWork unitOfWork)
+public sealed partial class Create{{Entity}}Handler(
+    I{{Entity}}Repository repository,
+    // @msg:if hasReferences
+    I{{Entity}}Integrity integrity,
+    // @msg:end
+    IUnitOfWork unitOfWork)
     : ICommandHandler<Create{{Entity}}, Guid>
 {
     public async Task<Guid> HandleAsync(Create{{Entity}} command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        // @msg:if hasReferences
+        if (await integrity.MissingReferenceAsync({{ReferenceArguments}}, cancellationToken) is { } missing)
+        {
+            throw new DomainException(missing);
+        }
+        // @msg:end
 
         var entity = {{Entity}}.Create({{CommandArguments}});
         repository.Add(entity);
@@ -31,7 +42,12 @@ public sealed partial class Create{{Entity}}Handler(I{{Entity}}Repository reposi
     }
 }
 
-public sealed partial class Update{{Entity}}Handler(I{{Entity}}Repository repository, IUnitOfWork unitOfWork)
+public sealed partial class Update{{Entity}}Handler(
+    I{{Entity}}Repository repository,
+    // @msg:if hasReferences
+    I{{Entity}}Integrity integrity,
+    // @msg:end
+    IUnitOfWork unitOfWork)
     : ICommandHandler<Update{{Entity}}, bool>
 {
     public async Task<bool> HandleAsync(Update{{Entity}} command, CancellationToken cancellationToken)
@@ -44,13 +60,26 @@ public sealed partial class Update{{Entity}}Handler(I{{Entity}}Repository reposi
             return false;
         }
 
+        // @msg:if hasReferences
+        if (await integrity.MissingReferenceAsync({{ReferenceArguments}}, cancellationToken) is { } missing)
+        {
+            throw new DomainException(missing);
+        }
+
+        // @msg:end
+
         entity.Update({{CommandArguments}});
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
     }
 }
 
-public sealed partial class Delete{{Entity}}Handler(I{{Entity}}Repository repository, IUnitOfWork unitOfWork)
+public sealed partial class Delete{{Entity}}Handler(
+    I{{Entity}}Repository repository,
+    // @msg:if referenced
+    I{{Entity}}Integrity integrity,
+    // @msg:end
+    IUnitOfWork unitOfWork)
     : ICommandHandler<Delete{{Entity}}, bool>
 {
     public async Task<bool> HandleAsync(Delete{{Entity}} command, CancellationToken cancellationToken)
@@ -62,6 +91,14 @@ public sealed partial class Delete{{Entity}}Handler(I{{Entity}}Repository reposi
         {
             return false;
         }
+
+        // @msg:if referenced
+        if (await integrity.InUseAsync(command.Id, cancellationToken) is { } inUse)
+        {
+            throw new DomainException(inUse);
+        }
+
+        // @msg:end
 
         entity.Delete();
         repository.Remove(entity);

@@ -28,9 +28,13 @@ public static partial class {{Entity}}Endpoints
         group.MapPut("/{id:guid}", Update).WithName("Update{{Entity}}");
         group.MapDelete("/{id:guid}", Delete).WithName("Delete{{Entity}}");
 
+        MapOperationEndpoints(group);
         MapCustomEndpoints(group);
         return api;
     }
+
+    /// <summary>Operations of the aggregate (msg.json), in {{Entity}}OperationEndpoints.g.cs.</summary>
+    static partial void MapOperationEndpoints(RouteGroupBuilder group);
 
     static partial void MapCustomEndpoints(RouteGroupBuilder group);
 
