@@ -20,7 +20,7 @@ if curl -sf -m 5 https://api.nuget.org/v3/index.json >/dev/null 2>&1; then ONLIN
 echo "▶ Build, test and pack MSG"
 if [[ $ONLINE == 1 ]]; then
   dotnet build "$ROOT/Msg.slnx" -c Release -v q -nologo >/dev/null
-  dotnet test  "$ROOT/Msg.slnx" -c Release --no-build -v q -nologo >/dev/null && pass "Msg.ServiceDefaults.* tests pass"
+  dotnet test  "$ROOT/Msg.slnx" -c Release --no-build -v q -nologo >/dev/null && pass "Msg.ServiceDefaults.* and Msg.Messaging tests pass"
   dotnet pack  "$ROOT/Msg.slnx" -c Release --no-build -o "$PKGS" -v q -nologo >/dev/null
 else
   echo "  – nuget.org not reachable: building/packing only the framework-only projects"
@@ -28,6 +28,7 @@ else
   dotnet build "$ROOT/src/Msg.Cli" -c Release -v q -nologo -p:RequiresAspNetWebAssets=false >/dev/null
   dotnet pack  "$ROOT/src/Msg.Ddd" -c Release -o "$PKGS" -v q -nologo >/dev/null
   dotnet pack  "$ROOT/src/Msg.ServiceDefaults" -c Release -o "$PKGS" -v q -nologo >/dev/null
+  dotnet pack  "$ROOT/src/Msg.Messaging" -c Release -o "$PKGS" -v q -nologo >/dev/null
 fi
 pass "packed: $(ls "$PKGS" | tr '\n' ' ')"
 MSG=(dotnet "$ROOT/src/Msg.Cli/bin/Release/net10.0/msg.dll")
@@ -35,7 +36,7 @@ VERSION="$("${MSG[@]}" --version)"
 
 # The global NuGet cache keeps packages by id+version: drop old Msg.* builds so we test the ones just packed.
 GLOBAL="$(dotnet nuget locals global-packages --list | sed 's/^global-packages: //')"
-rm -rf "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd
+rm -rf "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd "$GLOBAL"/msg.messaging*
 
 echo "▶ Generate every feature combination worth checking (MSG $VERSION)"
 "${MSG[@]}" new Orders  -o "$WORK/full" --package-source "$PKGS"        >/dev/null && pass "full (default features)"
@@ -179,6 +180,106 @@ if "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string"
   && "${MSG[@]}" entity update Category --path "$WORK/full" --props "Title:string, Position:int?, Color:string?" >/dev/null \
   && pass "legacy entity: blocked, converted (shows user files), then editable" || fail "entity convert"
 
+echo "▶ Features on/off in an existing service (msg feature)"
+FS="$WORK/features"
+"${MSG[@]}" new Shop -o "$FS" --package-source "$PKGS" >/dev/null
+"${MSG[@]}" add entity Product --path "$FS" --props "Name:string" >/dev/null
+"${MSG[@]}" feature off docker openApi --path "$FS" >/dev/null
+[[ ! -f "$FS/Dockerfile" ]] && ! grep -q "Scalar.AspNetCore" "$FS/src/Shop.Api/Shop.Api.csproj" "$FS/Directory.Packages.props" "$FS/src/Shop.Api/MsgWiring.g.cs" \
+  && grep -q "AddMsgWiring()" "$FS/src/Shop.Api/Program.cs" \
+  && pass "feature off removes its files, packages and wiring (Program.cs untouched)" || fail "feature off"
+"${MSG[@]}" feature on docker openApi --path "$FS" >/dev/null
+[[ -f "$FS/Dockerfile" ]] && grep -q 'Include="Scalar.AspNetCore"' "$FS/src/Shop.Api/Shop.Api.csproj" && grep -q "MapScalarApiReference" "$FS/src/Shop.Api/MsgWiring.g.cs" \
+  && pass "feature on brings them back" || fail "feature on"
+sed -i 's/builder.AddFeatures();/builder.AddFeatures(); \/\/ tweak/' "$FS/src/Shop.Api/MsgWiring.g.cs"
+"${MSG[@]}" feature on auth --path "$FS" --dry-run | grep -q "Has editado a mano" \
+  && pass "a hand-edited .g.cs is detected before overwriting it" || fail "hand-edit detection"
+"${MSG[@]}" feature on auth --path "$FS" >/dev/null   # restores the generated wiring (and keeps auth for the build below)
+LP="$WORK/legacy-program"; cp -r "$FS" "$LP"
+cat > "$LP/src/Shop.Api/Program.cs" <<'CS'
+using Shop.Api;
+using Shop.Api.Endpoints;
+using Shop.Api.Features;
+using Msg.ServiceDefaults;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.AddMsgServiceDefaults();
+builder.Services.AddValidatedOptions<ServiceOptions>(ServiceOptions.SectionName);
+builder.Services.AddValidation();
+builder.AddFeatures();
+var app = builder.Build();
+app.UseMsgServiceDefaults();
+app.MapMsgDefaultEndpoints();
+var v1 = app.MapGroup("/api/v1");
+v1.MapPingEndpoints();
+v1.MapFeatures();
+await app.RunAsync().ConfigureAwait(false);
+CS
+if "${MSG[@]}" feature off docker --path "$LP" >/dev/null 2>&1; then fail "features changed with a Program.cs from before 0.12"; fi
+"${MSG[@]}" feature convert --path "$LP" >/dev/null && grep -q "AddMsgWiring()" "$LP/src/Shop.Api/Program.cs" \
+  && "${MSG[@]}" feature off docker --path "$LP" >/dev/null \
+  && pass "Program.cs from before 0.12: blocked, converted, then editable" || fail "feature convert"
+
+echo "▶ Guided migrations (msg migration review)"
+MIG="$WORK/migration"; cp -r "$WORK/clean" "$MIG"
+mkdir -p "$MIG/src/Catalog.Infrastructure/Migrations"
+MF="$MIG/src/Catalog.Infrastructure/Migrations/20990101000000_RenameTitle.cs"
+# What "dotnet ef migrations add" scaffolds for a renamed property: drop + add (the data would be lost).
+cat > "$MF" <<'CS'
+using Microsoft.EntityFrameworkCore.Migrations;
+
+#nullable disable
+
+namespace Catalog.Infrastructure.Migrations
+{
+    /// <inheritdoc />
+    public partial class RenameTitle : Migration
+    {
+        /// <inheritdoc />
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(
+                name: "tags");
+
+            migrationBuilder.DropColumn(
+                name: "Name",
+                table: "products");
+
+            migrationBuilder.AddColumn<string>(
+                name: "Title",
+                table: "products",
+                type: "character varying(200)",
+                maxLength: 200,
+                nullable: false,
+                defaultValue: "");
+        }
+
+        /// <inheritdoc />
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropColumn(
+                name: "Title",
+                table: "products");
+
+            migrationBuilder.AddColumn<string>(
+                name: "Name",
+                table: "products",
+                type: "character varying(200)",
+                maxLength: 200,
+                nullable: false,
+                defaultValue: "");
+        }
+    }
+}
+CS
+OUT=$("${MSG[@]}" migration review --path "$MIG" --dry-run)
+grep -q "RenameColumn" <<<"$OUT" && grep -q "BORRA DATOS: Borra la tabla tags" <<<"$OUT" && ! grep -q "RenameColumn" "$MF" \
+  && pass "review --dry-run reports the rename fix and the dropped table without writing" || { echo "$OUT"; fail "migration review --dry-run"; }
+"${MSG[@]}" migration review --path "$MIG" >/dev/null
+grep -q 'migrationBuilder.RenameColumn' "$MF" && ! grep -q 'name: "Title",' <<<"$(sed -n '/void Up/,/void Down/p' "$MF" | grep -A1 AddColumn)" \
+  && ! grep -q pendingRenames "$MIG/msg.json" \
+  && pass "review turns drop + add into RenameColumn and clears pendingRenames" || { cat "$MF"; fail "migration review"; }
+
 echo "▶ Team templates (.msg)"
 TEAM="$WORK/team"; mkdir -p "$TEAM/services"
 "${MSG[@]}" templates eject service/src/__Service__.Api/Program.cs --path "$TEAM" >/dev/null
@@ -240,7 +341,7 @@ kill "$PID"; wait "$PID" 2>/dev/null || true; PID=""
 
 echo "▶ Full services (need nuget.org)"
 if [[ $ONLINE == 1 ]]; then
-  for s in full auth regen clean team/services/orders; do
+  for s in full auth regen clean features team/services/orders; do
     dotnet build "$WORK/$s" -c Release -v q -nologo >/dev/null && pass "$s builds"
     dotnet test  "$WORK/$s" -c Release --no-build -v q -nologo >/dev/null && pass "$s tests pass"
   done

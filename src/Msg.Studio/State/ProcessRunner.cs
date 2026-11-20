@@ -37,6 +37,11 @@ public sealed class ProcessJob
 
     internal Process? Process { get; set; }
 
+    internal TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes when the process ends (whatever the result).</summary>
+    public Task Completion => Done.Task;
+
     public IReadOnlyList<string> Output
     {
         get
@@ -129,6 +134,7 @@ public sealed partial class ProcessRunner : IDisposable
         process.ErrorDataReceived += OnLine;
         process.Exited += (_, _) =>
         {
+            process.WaitForExit(); // flushes the redirected output before the job is marked as finished
             job.ExitCode = SafeExitCode(process);
             if (job.Status == JobStatus.Running)
             {
@@ -136,6 +142,7 @@ public sealed partial class ProcessRunner : IDisposable
             }
 
             job.Append(job.Status == JobStatus.Stopped ? "■ Detenido." : $"■ Terminó con código {job.ExitCode}.");
+            job.Done.TrySetResult();
             Changed?.Invoke();
         };
 
@@ -147,6 +154,7 @@ public sealed partial class ProcessRunner : IDisposable
         {
             job.Status = JobStatus.Failed;
             job.Append($"No se pudo arrancar '{fileName}': {ex.Message}");
+            job.Done.TrySetResult();
             _jobs[key] = job;
             Changed?.Invoke();
             return job;

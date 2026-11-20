@@ -279,6 +279,16 @@ public static class ServiceGenerator
                 continue;
             }
 
+            if (path.EndsWith(".g.cs", StringComparison.Ordinal))
+            {
+                content = GeneratedFileHash.Stamp(content);
+            }
+
+            if (result.Any(f => f.Path == path))
+            {
+                throw new MsgException($"Dos plantillas generan el mismo archivo {path} (la última: {origin}).");
+            }
+
             result.Add(new GeneratedFile(path, content));
         }
     }

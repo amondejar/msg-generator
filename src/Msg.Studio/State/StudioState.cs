@@ -68,6 +68,7 @@ public sealed class StudioState(StudioOptions options)
     public void Open(WorkspaceService service)
     {
         Current = ServiceDraft.ForExisting(service.Directory, service.Definition);
+        Current.UsesWiring = ServicePlanner.UsesMsgWiring(Path.Combine(Workspace, service.Directory), service.Definition);
         SelectedEntity = Current.Entities.FirstOrDefault()?.Name;
         Recompute();
     }
@@ -201,7 +202,22 @@ public sealed class StudioState(StudioOptions options)
     {
         var directory = Path.Combine(Workspace, draft.Directory);
         var current = ServicePlanner.Load(directory);
-        return ServicePlanner.Plan(directory, current, updated, new GenerationOptions { Team = Team }, draft.DeleteOwnFiles);
+        var options = new GenerationOptions { Team = Team };
+        if (!draft.ConvertWiring)
+        {
+            return ServicePlanner.Plan(directory, current, updated, options, draft.DeleteOwnFiles);
+        }
+
+        // Program.cs rewritten to use MsgWiring.g.cs, plus whatever else changed (features, entities).
+        var conversion = ServicePlanner.ConvertWiring(directory, current, options);
+        var plan = ServicePlanner.Plan(directory, current, updated, options, draft.DeleteOwnFiles);
+        var converted = conversion.Changes.Select(c => c.Path).ToHashSet(StringComparer.Ordinal);
+        return plan with
+        {
+            Changes = [.. conversion.Changes.Select(c => plan.Changes.FirstOrDefault(p => p.Path == c.Path) is { } regenerated && c.Kind != ChangeKind.Replace ? regenerated : c),
+                       .. plan.Changes.Where(c => !converted.Contains(c.Path))],
+            Warnings = [.. conversion.Warnings, .. plan.Warnings],
+        };
     }
 
     private ServiceDefinition BuildDefinition(ServiceDraft draft, List<string> errors)
@@ -215,6 +231,13 @@ public sealed class StudioState(StudioOptions options)
                 MsgVersion = draft.MsgVersion,
             }
             : ServicePlanner.Load(Path.Combine(Workspace, draft.Directory));
+
+        if (!draft.IsNew && draft.Features != definition.Features)
+        {
+            definition = draft.ConvertWiring
+                ? definition with { Features = draft.Features }
+                : ServicePlanner.SetFeatures(Path.Combine(Workspace, draft.Directory), definition, draft.Features);
+        }
 
         // Existing entities: convert, remove or update them (same rules as "msg entity ...").
         foreach (var entity in draft.Entities.Where(e => !e.IsNew))

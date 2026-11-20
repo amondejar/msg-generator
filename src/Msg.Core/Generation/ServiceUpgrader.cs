@@ -57,7 +57,15 @@ public static partial class ServiceUpgrader
         var service = definition.Service.Name;
         var program = Path.Combine(directory, "src", $"{service}.Api", "Program.cs");
 
-        if (definition.Features.OpenApi && File.Exists(program)
+        var usesWiring = File.Exists(program) && File.ReadAllText(program).Contains("AddMsgWiring()", StringComparison.Ordinal);
+        if (!usesWiring && File.Exists(program))
+        {
+            hints.Add(
+                "Desde MSG 0.12 las features (OpenAPI, auth, telemetría…) se configuran en MsgWiring.g.cs y se pueden activar o " +
+                "desactivar después de crear el servicio. Para pasar tu Program.cs a ese formato: msg feature convert --dry-run");
+        }
+
+        if (!usesWiring && definition.Features.OpenApi && File.Exists(program)
             && !File.ReadAllText(program).Contains("MapScalarApiReference", StringComparison.Ordinal))
         {
             hints.Add(

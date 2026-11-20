@@ -4,12 +4,15 @@
     <Project Path="src/Msg.Cli/Msg.Cli.csproj" />
     <Project Path="src/Msg.Studio/Msg.Studio.csproj" />
     <Project Path="src/Msg.Ddd/Msg.Ddd.csproj" />
+    <Project Path="src/Msg.Messaging/Msg.Messaging.csproj" />
+    <Project Path="src/Msg.Messaging.EntityFrameworkCore/Msg.Messaging.EntityFrameworkCore.csproj" />
     <Project Path="src/Msg.ServiceDefaults/Msg.ServiceDefaults.csproj" />
     <Project Path="src/Msg.ServiceDefaults.OpenTelemetry/Msg.ServiceDefaults.OpenTelemetry.csproj" />
     <Project Path="src/Msg.ServiceDefaults.Resilience/Msg.ServiceDefaults.Resilience.csproj" />
     <Project Path="src/Msg.ServiceDefaults.Authentication/Msg.ServiceDefaults.Authentication.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Msg.Messaging.Tests/Msg.Messaging.Tests.csproj" />
     <Project Path="tests/Msg.ServiceDefaults.Tests/Msg.ServiceDefaults.Tests.csproj" />
   </Folder>
 </Solution>

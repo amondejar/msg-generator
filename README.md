@@ -137,6 +137,70 @@ msg entity convert Product                 # entidades creadas antes de MSG 0.10
   reemplaza la entidad y los endpoints por clases `partial` vacías y borra contratos, configuración, comandos, queries y tests
   (pasan a `.g.cs`); eventos, handlers y repositorio se quedan como están. Revisa el `--dry-run` y pasa tus cambios a las partial.
 
+## Features en un servicio existente (`msg feature`)
+
+```bash
+msg feature list
+msg feature off docker openApi --dry-run
+msg feature on auth
+msg feature convert --dry-run     # Program.cs de antes de la 0.12
+```
+
+Desde la 0.12, `Program.cs` solo llama a `builder.AddMsgWiring()` y `app.UseMsgWiring()`; lo que activa cada feature
+(Msg.ServiceDefaults.*, OpenAPI + Scalar, auth, validación, entidades) está en `MsgWiring.g.cs`, que MSG regenera.
+Tus servicios y middleware van en `Program.cs`, después de esas llamadas.
+
+Al activar o desactivar una feature, MSG:
+
+- regenera `MsgWiring.g.cs` y el resto de `.g.cs`;
+- añade o quita sus paquetes en `.csproj` y `Directory.Packages.props` (solo los que puso él; los tuyos no los toca);
+- crea sus archivos (Dockerfile, workflow de CI, proyecto de tests…) y, al desactivarla, los borra **solo si siguen como él los
+  generó**; si los cambiaste, te avisa en lugar de borrarlos o actualizarlos.
+
+En el Studio, los interruptores de Features funcionan también en servicios existentes, con el mismo plan y diff antes de aplicar.
+
+### `.g.cs` editados a mano
+
+Cada `.g.cs` termina con `// msg-hash: …`. Si lo editas a mano, MSG lo detecta y te avisa antes de regenerarlo (y marca el
+archivo como tuyo en la revisión): pasa ese cambio a la clase `partial` o a las plantillas del equipo.
+
+## Migraciones guiadas
+
+Después de cambiar entidades, la migración de EF Core tiene que reflejarlo sin perder datos:
+
+```bash
+dotnet ef migrations add RenameTitle --project src/Shop.Api      # clean-ddd: --project src/X.Infrastructure --startup-project src/X.Api
+msg migration review --dry-run                                   # qué cambiaría y qué borra datos
+msg migration review                                             # corrige la migración y vacía pendingRenames
+```
+
+- Los renombrados de `msg.json` se convierten en `RenameColumn` (EF Core generaría `DropColumn` + `AddColumn` y se perderían
+  los datos). Si además cambia el tipo, se añade un `AlterColumn` y se avisa: fallará si la base de datos no puede convertir los valores.
+- Avisa de todo lo que borra datos (`DropTable`, `DropColumn`) y de los cambios que pueden fallar con datos existentes
+  (cambio de tipo, columna que pasa a obligatoria, longitud máxima menor).
+- En el Studio (página del servicio, sección Migraciones) es un solo paso: **Comprobar** dice si las entidades tienen cambios sin
+  migración, **Crear y revisar migración** la crea y la corrige, **Ver SQL** enseña el script y **Deshacer esta migración**
+  la quita (y devuelve sus renombrados a `msg.json`) mientras no se haya aplicado.
+
+## Mensajería entre servicios (`Msg.Messaging`, en construcción)
+
+Paquetes listos (la generación desde MSG y el Studio llegan en los siguientes pasos):
+
+| Paquete | Qué hace |
+| --- | --- |
+| `Msg.Messaging` | `IEventBus` (outbox), handlers `IIntegrationEventHandler<T>` que se ejecutan una vez por evento (inbox), reintentos con espera creciente y dead-letter, trazas de extremo a extremo y transporte en memoria. Sin dependencias de terceros. |
+| `Msg.Messaging.EntityFrameworkCore` | Outbox e inbox en la base de datos del servicio (`msg_outbox`, `msg_inbox`): el evento se guarda en la misma transacción que tus cambios, y el handler y su registro en el inbox también. Convierte eventos de dominio en eventos de integración (`IIntegrationEventMapper`). |
+
+```csharp
+builder.AddMsgMessaging("orders")
+    .UseInMemory()                        // o UseKafka(...) / UseAzureServiceBus(...) (próximamente)
+    .UseEntityFramework<OrdersDbContext>()
+    .AddFromAssembly(typeof(Program).Assembly);
+
+// En el DbContext: modelBuilder.AddMsgMessaging();  y  options.AddInterceptors(sp.GetRequiredService<IntegrationEventsInterceptor>(), ...)
+await bus.PublishAsync(new OrderCreated(order.Id, order.Total));   // se envía tras SaveChanges, con reintentos
+```
+
 ## Qué genera
 
 ```
@@ -237,5 +301,8 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 3. ✅ `msg aspire`: AppHost de Aspire para todos los servicios.
 4. ✅ **Fase 3**: editor visual `msg studio` (Blazor Server sobre `Msg.Core`).
 5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`msg entity`, Studio).
-6. Siguiente: migraciones guiadas (renombrados y avisos de pérdida de datos), quitar paquetes que ya no se usan, detectar `.g.cs` editados a mano; métodos propios del agregado y relaciones entre entidades desde el Studio, mensajería entre servicios (outbox), publicar en nuget.org.
+6. ✅ Migraciones guiadas: renombrados sin perder datos, avisos de lo que borra datos, SQL y deshacer (`msg migration review`, Studio).
+7. ✅ Features editables en servicios existentes (`msg feature`, Studio), paquetes y archivos que sobran se quitan, `.g.cs` editados a mano detectados.
+8. En curso: mensajería entre servicios. ✅ `Msg.Messaging` + `Msg.Messaging.EntityFrameworkCore`. Siguiente: Kafka y Azure Service Bus con Aspire; generación y Studio (publicar, suscribirse, mapa de eventos); `Idempotency-Key` en la API.
+9. Después: métodos propios del agregado y relaciones entre entidades desde el Studio; publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

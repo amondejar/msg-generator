@@ -28,6 +28,14 @@ internal static partial class Cli
                                              Elimina una entidad (tus archivos solo con --delete-own-files)
           msg entity convert <Entidad> [--path] [--dry-run]
                                              Pasa una entidad anterior a 0.10 al formato editable
+          msg feature list|on|off <feature>... [--path <carpeta>] [--dry-run]
+                                             Activa o desactiva features en un servicio existente
+                                             (observability, openApi, resilience, auth, tests, docker, ci)
+          msg feature convert [--path] [--dry-run]
+                                             Pasa un Program.cs anterior a 0.12 a MsgWiring.g.cs
+          msg migration review [--path <carpeta>] [--dry-run]
+                                             Revisa la última migración de EF Core: aplica los renombrados
+                                             (RenameColumn) y avisa de lo que borra datos
           msg aspire [--name <Sistema>] [--path <carpeta>]
                                              AppHost de Aspire con todos los servicios de la carpeta
           msg studio [--path <carpeta>] [--port 5150] [--no-browser]
@@ -95,6 +103,8 @@ internal static partial class Cli
             "upgrade" => Upgrade(args[1..], output),
             "add" => Add(args[1..], output),
             "entity" => Entity(args[1..], output),
+            "migration" => Migration(args[1..], output),
+            "feature" => Feature(args[1..], output),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
@@ -689,9 +699,146 @@ internal static partial class Cli
                     ? $"--project src/{service}.Infrastructure --startup-project src/{service}.Api"
                     : $"--project src/{service}.Api";
                 output.WriteLine();
-                output.WriteLine("Siguiente paso: crea la migración (o desde el Studio, que avisa de los cambios que borran datos):");
+                output.WriteLine("Siguiente paso: crea la migración y revísala (o hazlo desde el Studio, que hace las dos cosas):");
                 output.WriteLine($"  dotnet ef migrations add <Nombre> {efProjects}");
+                output.WriteLine($"  msg migration review{(path == "." ? string.Empty : $" --path {path}")}");
             }
+        }
+
+        return 0;
+    }
+
+    private static int Feature(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: msg feature list|on|off <feature>... | msg feature convert  [--path <carpeta>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("list" or "on" or "off" or "convert"))
+        {
+            throw new MsgException(usage);
+        }
+
+        var action = args[0];
+        var path = ".";
+        var dryRun = false;
+        var names = new List<string>();
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    if (args[i].StartsWith('-') || action is "list" or "convert")
+                    {
+                        throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    names.Add(ResolveFeature(args[i], args[i]));
+                    break;
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        var team = TeamTemplates.Find(path);
+        var options = new GenerationOptions { Team = team };
+
+        if (action == "list")
+        {
+            foreach (var name in FeatureSet.Names)
+            {
+                output.WriteLine($"  [{(current.Features.IsEnabled(name) ? "x" : " ")}] {name}");
+            }
+
+            if (!ServicePlanner.UsesMsgWiring(path, current))
+            {
+                output.WriteLine();
+                output.WriteLine("Program.cs es anterior a MSG 0.12: para cambiar features, primero: msg feature convert --dry-run");
+            }
+
+            return 0;
+        }
+
+        ChangePlan plan;
+        if (action == "convert")
+        {
+            plan = ServicePlanner.ConvertWiring(path, current, options);
+        }
+        else
+        {
+            if (names.Count == 0)
+            {
+                throw new MsgException($"Indica qué features. Válidas: {string.Join(", ", FeatureSet.Names)}.");
+            }
+
+            var features = names.Aggregate(current.Features, (set, name) => set.With(name, action == "on"));
+            plan = ServicePlanner.Plan(path, current, ServicePlanner.SetFeatures(path, current, features), options);
+        }
+
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+        }
+
+        return 0;
+    }
+
+    private static int Migration(string[] args, TextWriter output)
+    {
+        if (args.Length == 0 || args[0] != "review")
+        {
+            throw new MsgException("Uso: msg migration review [--path <carpeta>] [--dry-run]");
+        }
+
+        var path = ".";
+        var dryRun = false;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'.");
+            }
+        }
+
+        var review = MigrationReviewer.ReviewLatest(path, apply: !dryRun);
+        output.WriteLine($"Migración {review.Name} ({review.Path})");
+        if (review.Findings.Count == 0)
+        {
+            output.WriteLine("  ✔ No borra datos ni cambia columnas existentes.");
+        }
+
+        foreach (var finding in review.Findings)
+        {
+            var symbol = finding.Level switch
+            {
+                FindingLevel.Danger => "✖ BORRA DATOS:",
+                FindingLevel.Warning => "⚠",
+                _ => "✔",
+            };
+            output.WriteLine($"  {symbol} {finding.Message}");
+        }
+
+        if (review.Changed)
+        {
+            output.WriteLine(dryRun
+                ? "  (--dry-run: la migración no se ha modificado)"
+                : "  La migración se ha corregido; los renombrados ya no están pendientes en msg.json.");
+        }
+
+        if (review.DeletesData)
+        {
+            output.WriteLine();
+            output.WriteLine("Si no quieres perder esos datos, deshaz la migración (dotnet ef migrations remove) antes de aplicarla.");
         }
 
         return 0;

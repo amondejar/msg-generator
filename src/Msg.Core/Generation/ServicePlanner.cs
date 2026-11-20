@@ -203,6 +203,65 @@ public static class ServicePlanner
         };
     }
 
+    /// <summary>True when Program.cs delegates to the generated MsgWiring.g.cs (services from MSG 0.12 on, or converted).</summary>
+    public static bool UsesMsgWiring(string directory, ServiceDefinition definition)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        var program = Path.Combine(directory, "src", $"{definition.Service.Name}.Api", "Program.cs");
+        return File.Exists(program) && File.ReadAllText(program).Contains("AddMsgWiring()", StringComparison.Ordinal);
+    }
+
+    /// <summary>Turns features on or off in an existing service (the wiring lives in MsgWiring.g.cs).</summary>
+    public static ServiceDefinition SetFeatures(string directory, ServiceDefinition current, FeatureSet features)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(features);
+
+        if (features != current.Features && !UsesMsgWiring(directory, current))
+        {
+            throw new MsgException(
+                $"src/{current.Service.Name}.Api/Program.cs es de una versión de MSG anterior a la 0.12 y configura las features a mano, " +
+                "así que MSG no puede activarlas ni desactivarlas sin pisarlo. Pásalo a MsgWiring.g.cs primero " +
+                "(msg feature convert --dry-run, o desde el Studio); MSG te enseñará el cambio antes de escribir nada.");
+        }
+
+        return current with { Features = features };
+    }
+
+    /// <summary>
+    /// Rewrites a Program.cs from before MSG 0.12 so it delegates to MsgWiring.g.cs. The user's own lines must be
+    /// added back (the plan shows the previous file).
+    /// </summary>
+    public static ChangePlan ConvertWiring(string directory, ServiceDefinition current, GenerationOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        if (UsesMsgWiring(directory, current))
+        {
+            throw new MsgException("Program.cs ya usa MsgWiring: las features se pueden cambiar con 'msg feature on|off'.");
+        }
+
+        var service = current.Service.Name;
+        var files = ServiceGenerator.Generate(current, options);
+        var changes = new List<FileChange>();
+        foreach (var relative in new[] { $"src/{service}.Api/Program.cs", $"src/{service}.Api/MsgWiring.g.cs" })
+        {
+            var file = files.First(f => f.Path == relative);
+            var target = Path.Combine(directory, relative);
+            var previous = File.Exists(target) ? File.ReadAllText(target) : null;
+            if (previous is null || !Same(previous, file.Content))
+            {
+                var kind = previous is null ? ChangeKind.Create : relative.EndsWith(".g.cs", StringComparison.Ordinal) ? ChangeKind.Regenerate : ChangeKind.Replace;
+                changes.Add(new FileChange(relative, kind, file.Content, previous));
+            }
+        }
+
+        return new ChangePlan(directory, changes,
+        [
+            "Program.cs pasa a llamar a builder.AddMsgWiring() y app.UseMsgWiring(). Si habías añadido servicios o middleware " +
+            "propios, vuelve a ponerlos (después de AddMsgWiring y de UseMsgWiring): el diff muestra tu versión anterior.",
+        ]);
+    }
+
     public static EntityDefinition FindEntity(ServiceDefinition definition, string name)
     {
         ArgumentNullException.ThrowIfNull(definition);
@@ -226,7 +285,12 @@ public static class ServicePlanner
     /// Everything MSG has to write, replace or delete to go from <paramref name="current"/> to
     /// <paramref name="updated"/> (the msg.json on disk and the one designed in the CLI or Studio).
     /// </summary>
-    /// <param name="deleteOwnFiles">Also delete the user's files of removed entities (otherwise they are only reported).</param>
+    /// <remarks>
+    /// Rules: *.g.cs are always rewritten (with a warning if edited by hand). Any other file MSG generated is
+    /// updated or deleted only while it is exactly as MSG left it; once the user changed it, MSG reports instead.
+    /// Project files get missing items added and the items of disabled features removed.
+    /// </remarks>
+    /// <param name="deleteOwnFiles">Also delete the user's (modified) files of removed entities.</param>
     public static ChangePlan Plan(string directory, ServiceDefinition current, ServiceDefinition updated, GenerationOptions? options = null, bool deleteOwnFiles = false)
     {
         ArgumentNullException.ThrowIfNull(current);
@@ -234,12 +298,26 @@ public static class ServicePlanner
 
         var files = ServiceGenerator.Generate(updated, options);
         var newPaths = files.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
-        var oldPaths = ServiceGenerator.Generate(current, options).Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
+        var oldFiles = ServiceGenerator.Generate(current, options).ToDictionary(f => f.Path, f => f.Content, StringComparer.Ordinal);
         var service = current.Service.Name;
         var changes = new List<FileChange>();
         var warnings = new List<string>();
         var handled = new HashSet<string>(StringComparer.Ordinal);
         var ownLeft = new List<string>();
+        var modifiedLeft = new List<string>();
+        var obsoleteLeft = new List<string>();
+
+        string[] projectFiles =
+        [
+            "Directory.Packages.props",
+            $"src/{service}.Api/{service}.Api.csproj",
+            $"src/{service}.Infrastructure/{service}.Infrastructure.csproj",
+            $"src/{service}.Application/{service}.Application.csproj",
+            $"src/{service}.Domain/{service}.Domain.csproj",
+            $"tests/{service}.Api.Tests/{service}.Api.Tests.csproj",
+        ];
+        var appSettingsDevelopment = $"src/{service}.Api/appsettings.Development.json";
+        var merged = new HashSet<string>([.. projectFiles, appSettingsDevelopment, ServiceGenerator.DefinitionFileName], StringComparer.Ordinal);
 
         // 1. Entities converted to the editable layout: their old files are replaced or deleted (the user asked for it).
         foreach (var entity in updated.Entities.Where(e => e.IsEditable))
@@ -269,45 +347,68 @@ public static class ServicePlanner
             }
         }
 
-        // 2. Generated files: *.g.cs always rewritten; the user's files created only the first time they appear.
+        // 2. Generated files.
         foreach (var file in files)
         {
-            if (handled.Contains(file.Path) || file.Path == ServiceGenerator.DefinitionFileName)
+            var previous = Read(file.Path);
+            if (handled.Contains(file.Path) || file.Path == ServiceGenerator.DefinitionFileName || (merged.Contains(file.Path) && previous is not null))
             {
                 continue;
             }
 
-            var previous = Read(file.Path);
+            oldFiles.TryGetValue(file.Path, out var oldRender);
+
             if (file.Path.EndsWith(".g.cs", StringComparison.Ordinal))
             {
-                if (previous != file.Content)
+                if (previous is null || !Same(previous, file.Content))
                 {
-                    changes.Add(new FileChange(file.Path, previous is null ? ChangeKind.Create : ChangeKind.Regenerate, file.Content, previous));
+                    var edited = previous is not null && GeneratedFileHash.IsHandEdited(previous);
+                    changes.Add(new FileChange(file.Path, previous is null ? ChangeKind.Create : ChangeKind.Regenerate, file.Content, previous) { HandEdited = edited });
                 }
             }
-            else if (previous is null && IsCreateOnce(file.Path, service) && !oldPaths.Contains(file.Path))
+            else if (previous is null)
             {
-                // Not in the previous generation = new entity (or newly enabled part). A file of an existing
-                // entity that the user deleted on purpose (e.g. an event handler) is not brought back.
-                changes.Add(new FileChange(file.Path, ChangeKind.Create, file.Content, null));
+                // New in this generation (new entity, feature turned on). A file the user deleted on purpose
+                // (e.g. an event handler) was already in the previous generation, so it is not brought back.
+                if (oldRender is null)
+                {
+                    changes.Add(new FileChange(file.Path, ChangeKind.Create, file.Content, null));
+                }
+            }
+            else if (oldRender is not null && !Same(oldRender, file.Content))
+            {
+                // The change affects this file (e.g. appsettings.json when auth is turned on).
+                if (Same(previous, oldRender))
+                {
+                    changes.Add(new FileChange(file.Path, ChangeKind.Regenerate, file.Content, previous));
+                }
+                else if (file.Path != "README.md")
+                {
+                    modifiedLeft.Add(file.Path);
+                }
             }
         }
 
-        // 3. Files no longer generated (removed entities).
-        foreach (var path in oldPaths.Where(p => !newPaths.Contains(p)).Order(StringComparer.Ordinal))
+        // 3. Files no longer generated (removed entities, features turned off).
+        foreach (var (path, oldRender) in oldFiles.Where(f => !newPaths.Contains(f.Key) && f.Key != ServiceGenerator.DefinitionFileName).OrderBy(f => f.Key, StringComparer.Ordinal))
         {
             if (Read(path) is not { } previous)
             {
                 continue;
             }
 
-            if (path.EndsWith(".g.cs", StringComparison.Ordinal))
+            if (path.EndsWith(".g.cs", StringComparison.Ordinal) || Same(previous, oldRender))
             {
-                changes.Add(new FileChange(path, ChangeKind.Delete, string.Empty, previous));
+                // Generated, or exactly as MSG left it: nothing of the user's is lost.
+                changes.Add(new FileChange(path, ChangeKind.Delete, string.Empty, previous) { IsUnchangedDelete = true });
             }
             else if (IsCreateOnce(path, service))
             {
                 DeleteOwn(path, previous);
+            }
+            else
+            {
+                obsoleteLeft.Add(path);
             }
         }
 
@@ -325,32 +426,71 @@ public static class ServicePlanner
         if (ownLeft.Count > 0)
         {
             warnings.Add(
-                "Estos archivos tuyos son de entidades eliminadas y MSG no los borra: probablemente ya no compilen. " +
+                "Estos archivos tuyos son de entidades eliminadas y los has modificado, así que MSG no los borra: probablemente ya no compilen. " +
                 "Bórralos tú o marca \"borrar también mis archivos\":\n" + string.Join("\n", ownLeft.Select(p => "      " + p)));
         }
 
-        // 4. Project files and appsettings: only missing entries are added.
-        string[] projectFiles =
-        [
-            "Directory.Packages.props",
-            $"src/{service}.Api/{service}.Api.csproj",
-            $"src/{service}.Infrastructure/{service}.Infrastructure.csproj",
-            $"tests/{service}.Api.Tests/{service}.Api.Tests.csproj",
-        ];
-
-        foreach (var projectFile in projectFiles)
+        if (modifiedLeft.Count > 0)
         {
-            AddMerge(projectFile, ProjectFileMerger.MergeItems);
+            warnings.Add(
+                "Estos archivos cambiarían con este cambio, pero los has modificado y MSG no los pisa. Revisa a mano lo que necesitan " +
+                "(la vista previa muestra cómo los generaría MSG):\n" + string.Join("\n", modifiedLeft.Select(p => "      " + p)));
         }
 
-        AddMerge($"src/{service}.Api/appsettings.Development.json", ProjectFileMerger.MergeConnectionStrings);
+        if (obsoleteLeft.Count > 0)
+        {
+            warnings.Add(
+                "Estos archivos ya no hacen falta, pero los has modificado y MSG no los borra. Bórralos tú si ya no los usas:\n" +
+                string.Join("\n", obsoleteLeft.Select(p => "      " + p)));
+        }
 
-        // 5. msg.json. msgVersion stays as it was: editing entities must not silently upgrade the Msg.* packages.
+        // 4. Project files: missing items added, items of what was turned off removed. appsettings: connection strings.
+        foreach (var projectFile in projectFiles)
+        {
+            if (Read(projectFile) is not { } previous)
+            {
+                continue;
+            }
+
+            var rendered = files.FirstOrDefault(f => f.Path == projectFile)?.Content;
+            if (rendered is null)
+            {
+                // The whole project is gone (e.g. tests turned off) and handled as a deleted file above.
+                continue;
+            }
+
+            var text = oldFiles.TryGetValue(projectFile, out var oldRender)
+                ? ProjectFileMerger.RemoveItems(previous, oldRender, rendered) ?? previous
+                : previous;
+            text = ProjectFileMerger.MergeItems(text, rendered) ?? text;
+            if (text != previous)
+            {
+                changes.Add(new FileChange(projectFile, ChangeKind.Merge, text, previous));
+            }
+        }
+
+        if (files.FirstOrDefault(f => f.Path == appSettingsDevelopment) is { } settings
+            && Read(appSettingsDevelopment) is { } settingsPrevious
+            && ProjectFileMerger.MergeConnectionStrings(settingsPrevious, settings.Content) is { } settingsMerged)
+        {
+            changes.Add(new FileChange(appSettingsDevelopment, ChangeKind.Merge, settingsMerged, settingsPrevious));
+        }
+
+        // 5. msg.json. msgVersion stays as it was: editing must not silently upgrade the Msg.* packages.
         var definition = ServiceGenerator.Serialize(updated with { MsgVersion = current.MsgVersion });
         var definitionPrevious = Read(ServiceGenerator.DefinitionFileName);
-        if (definition != definitionPrevious || changes.Count > 0)
+        if (definitionPrevious is null || !Same(definition, definitionPrevious) || changes.Count > 0)
         {
             changes.Add(new FileChange(ServiceGenerator.DefinitionFileName, ChangeKind.Regenerate, definition, definitionPrevious));
+        }
+
+        var handEdited = changes.Where(c => c.HandEdited).Select(c => c.Path).ToList();
+        if (handEdited.Count > 0)
+        {
+            warnings.Add(
+                "Has editado a mano estos archivos generados; al aplicar se pierden esos cambios. Pásalos a la clase partial " +
+                "(el archivo sin .g), o a las plantillas del equipo si son para todos los servicios:\n" +
+                string.Join("\n", handEdited.Select(p => "      " + p)));
         }
 
         warnings.AddRange(CheckReferences(directory, current, updated));
@@ -375,21 +515,11 @@ public static class ServicePlanner
                 ownLeft.Add(path);
             }
         }
-
-        void AddMerge(string relative, Func<string, string, string?> merge)
-        {
-            var rendered = files.FirstOrDefault(f => f.Path == relative);
-            if (rendered is null || Read(relative) is not { } previous)
-            {
-                return;
-            }
-
-            if (merge(previous, rendered.Content) is { } merged)
-            {
-                changes.Add(new FileChange(relative, ChangeKind.Merge, merged, previous));
-            }
-        }
     }
+
+    /// <summary>Same text ignoring line endings (git may check files out with CRLF on Windows).</summary>
+    internal static bool Same(string a, string b) =>
+        a.Replace("\r\n", "\n", StringComparison.Ordinal) == b.Replace("\r\n", "\n", StringComparison.Ordinal);
 
     /// <summary>On conversion these keep their path and content (they don't depend on the properties).</summary>
     private static bool KeptOnConversion(string path) =>
@@ -486,7 +616,8 @@ public static class ServicePlanner
         var program = Path.Combine(root, "src", $"{service}.Api", "Program.cs");
         var code = File.Exists(program) ? File.ReadAllText(program) : string.Empty;
 
-        if (!code.Contains("AddFeatures()", StringComparison.Ordinal) || !code.Contains("MapFeatures()", StringComparison.Ordinal))
+        var wired = code.Contains("AddMsgWiring()", StringComparison.Ordinal) || code.Contains("AddFeatures()", StringComparison.Ordinal);
+        if (!wired || !code.Contains("MapFeatures()", StringComparison.Ordinal))
         {
             warnings.Add(
                 $"src/{service}.Api/Program.cs no registra las entidades. Añade:\n" +
@@ -495,7 +626,7 @@ public static class ServicePlanner
                 "      builder.AddFeatures();       // después de AddValidatedOptions\n" +
                 "      v1.MapFeatures();            // después de MapPingEndpoints");
         }
-        else if (!code.Contains("AddValidation()", StringComparison.Ordinal))
+        else if (!code.Contains("AddMsgWiring()", StringComparison.Ordinal) && !code.Contains("AddValidation()", StringComparison.Ordinal))
         {
             warnings.Add($"src/{service}.Api/Program.cs: añade builder.Services.AddValidation(); para validar las peticiones.");
         }

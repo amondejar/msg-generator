@@ -1,0 +1,186 @@
+using System.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+namespace Msg.Messaging.Tests;
+
+public sealed class MessagingTests
+{
+    [Fact]
+    public void TopicComesFromTheAttributeOrTheTypeName()
+    {
+        Assert.Equal("orders.order-created", EventTopology.TopicOf<OrderCreated>());
+        Assert.Equal("customer-renamed", EventTopology.TopicOf<CustomerRenamed>());
+    }
+
+    [Fact]
+    public async Task PublishedEventIsStoredInTheOutboxAndNotSentUntilDispatched()
+    {
+        using var host = TestHosts.Create();
+        await host.PublishAsync(new OrderCreated(Guid.NewGuid(), 10m));
+
+        var outbox = host.Services.GetRequiredService<InMemoryOutbox>();
+        var transport = host.Services.GetRequiredService<InMemoryTransport>();
+        Assert.Single(outbox.Messages);
+        Assert.Empty(transport.Sent);
+
+        var sent = await host.Services.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync();
+
+        Assert.Equal(1, sent);
+        var envelope = Assert.Single(transport.Sent);
+        Assert.Equal("orders.order-created", envelope.Topic);
+        Assert.Equal("orders", envelope.Source);
+        Assert.NotNull(Assert.Single(outbox.Messages).SentAt);
+    }
+
+    [Fact]
+    public async Task EventReachesTheHandlerEndToEnd()
+    {
+        using var host = TestHosts.Create(background: true);
+        await host.StartAsync();
+        var orderId = Guid.NewGuid();
+
+        await host.PublishAsync(new OrderCreated(orderId, 42m));
+
+        var probe = host.Services.GetRequiredService<Probe>();
+        await probe.FirstHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var (received, context) = Assert.Single(probe.Received);
+        Assert.Equal(orderId, received.OrderId);
+        Assert.Equal(42m, received.Total);
+        Assert.Equal("orders.order-created", context.Topic);
+        Assert.Equal(1, context.Attempt);
+        await host.StopAsync();
+    }
+
+    [Fact]
+    public async Task ARedeliveredMessageIsHandledOnlyOnce()
+    {
+        using var host = TestHosts.Create();
+        var consumer = host.Services.GetRequiredService<IntegrationEventConsumer>();
+        var envelope = Envelope(new OrderCreated(Guid.NewGuid(), 1m));
+
+        Assert.Equal(ConsumeResult.Completed, await consumer.HandleAsync(envelope, CancellationToken.None));
+        Assert.Equal(ConsumeResult.Completed, await consumer.HandleAsync(envelope, CancellationToken.None));
+
+        Assert.Single(host.Services.GetRequiredService<Probe>().Received);
+    }
+
+    [Fact]
+    public async Task AFailingHandlerIsRetried()
+    {
+        using var host = TestHosts.Create();
+        var probe = host.Services.GetRequiredService<Probe>();
+        probe.FailFirst(2);
+
+        var result = await host.Services.GetRequiredService<IntegrationEventConsumer>()
+            .HandleAsync(Envelope(new OrderCreated(Guid.NewGuid(), 1m)), CancellationToken.None);
+
+        Assert.Equal(ConsumeResult.Completed, result);
+        Assert.Equal(3, probe.Calls);
+        Assert.Equal(3, Assert.Single(probe.Received).Context.Attempt);
+    }
+
+    [Fact]
+    public async Task AHandlerThatAlwaysFailsGoesToDeadLetterAfterMaxAttempts()
+    {
+        using var host = TestHosts.Create(m => m.Configure(o => o.MaxHandlerAttempts = 3));
+        var probe = host.Services.GetRequiredService<Probe>();
+        probe.FailFirst(int.MaxValue);
+
+        var result = await host.Services.GetRequiredService<IntegrationEventConsumer>()
+            .HandleAsync(Envelope(new OrderCreated(Guid.NewGuid(), 1m)), CancellationToken.None);
+
+        Assert.Equal(ConsumeResult.DeadLetter, result);
+        Assert.Equal(3, probe.Calls);
+    }
+
+    [Fact]
+    public async Task AnUnreadableMessageGoesToDeadLetter()
+    {
+        using var host = TestHosts.Create();
+        var envelope = Envelope(new OrderCreated(Guid.NewGuid(), 1m)) with { Payload = "{ not json" };
+
+        var result = await host.Services.GetRequiredService<IntegrationEventConsumer>().HandleAsync(envelope, CancellationToken.None);
+
+        Assert.Equal(ConsumeResult.DeadLetter, result);
+    }
+
+    [Fact]
+    public async Task WhenTheBrokerIsDownTheEventStaysInTheOutboxAndIsSentLater()
+    {
+        using var host = TestHosts.Create(services: s =>
+        {
+            s.AddSingleton<FlakyTransport>();
+            s.AddSingleton<IMessageTransport>(sp => sp.GetRequiredService<FlakyTransport>());
+        });
+        host.Services.GetRequiredService<FlakyTransport>().FailuresLeft = 1;
+        await host.PublishAsync(new OrderCreated(Guid.NewGuid(), 1m));
+        var dispatcher = host.Services.GetRequiredService<OutboxDispatcher>();
+        var outbox = host.Services.GetRequiredService<InMemoryOutbox>();
+
+        Assert.Equal(0, await dispatcher.DispatchPendingAsync());
+        var pending = Assert.Single(outbox.Messages);
+        Assert.Null(pending.SentAt);
+        Assert.Equal(1, pending.Attempts);
+        Assert.Equal("broker down", pending.LastError);
+
+        pending.NextAttemptAt = DateTime.UtcNow.AddSeconds(-1);   // skip the wait
+        Assert.Equal(1, await dispatcher.DispatchPendingAsync());
+        Assert.Single(host.Services.GetRequiredService<InMemoryTransport>().Sent);
+    }
+
+    [Fact]
+    public async Task TheConsumerTraceContinuesThePublisherTrace()
+    {
+        var activities = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name is MessagingTelemetry.SourceName or "test",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = a => { lock (activities) { activities.Add(a); } },
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var source = new ActivitySource("test");
+
+        using var host = TestHosts.Create();
+        ActivityTraceId traceId;
+        using (var request = source.StartActivity("POST /orders"))
+        {
+            traceId = request!.TraceId;
+            await host.PublishAsync(new OrderCreated(Guid.NewGuid(), 1m));
+        }
+
+        await host.Services.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync();
+        var envelope = Assert.Single(host.Services.GetRequiredService<InMemoryTransport>().Sent);
+        await host.Services.GetRequiredService<IntegrationEventConsumer>().HandleAsync(envelope, CancellationToken.None);
+
+        lock (activities)
+        {
+            // Other tests run in parallel and also produce activities: look only at this trace.
+            Assert.Single(activities, a => a.Kind == ActivityKind.Consumer && a.TraceId == traceId);
+            Assert.Single(activities, a => a.Kind == ActivityKind.Producer && a.TraceId == traceId);
+        }
+    }
+
+    [Fact]
+    public async Task WithoutABrokerTheErrorSaysWhatToConfigure()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.AddMsgMessaging("orders").Configure(o => o.OutboxDispatcherEnabled = false);
+        using var host = builder.Build();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            host.Services.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync());
+
+        Assert.Contains("UseInMemory", error.Message, StringComparison.Ordinal);
+    }
+
+    private static MessageEnvelope Envelope(OrderCreated e) => new()
+    {
+        MessageId = e.EventId.ToString(),
+        Topic = EventTopology.TopicOf<OrderCreated>(),
+        Source = "orders",
+        Payload = System.Text.Json.JsonSerializer.Serialize(e, EventTopology.JsonOptions),
+        OccurredAt = e.OccurredAt,
+    };
+}

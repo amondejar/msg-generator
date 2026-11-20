@@ -43,6 +43,7 @@ public static class MsgOpenTelemetryExtensions
                 .AddRuntimeInstrumentation())
             .WithTracing(tracing => tracing
                 .AddSource(serviceName)
+                .AddSource("Msg.Messaging")   // integration events: publish and process spans, one trace across services
                 .AddAspNetCoreInstrumentation(options =>
                     // Don't fill the traces with Kubernetes probes.
                     options.Filter = context =>

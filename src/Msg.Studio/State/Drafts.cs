@@ -94,6 +94,14 @@ public sealed class ServiceDraft
 
     public bool CanEditStructure => IsNew;
 
+    /// <summary>Program.cs delegates to MsgWiring.g.cs (MSG 0.12+): features can be turned on and off.</summary>
+    public bool UsesWiring { get; set; }
+
+    /// <summary>Program.cs from before 0.12 marked to be rewritten to use MsgWiring.g.cs.</summary>
+    public bool ConvertWiring { get; set; }
+
+    public bool CanEditFeatures => IsNew || UsesWiring || ConvertWiring;
+
     public static ServiceDraft ForExisting(string directory, ServiceDefinition definition)
     {
         var draft = new ServiceDraft
