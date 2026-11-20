@@ -21,12 +21,17 @@ else
             <div class="seg" role="group" aria-label="Broker de mensajería">
                 <button type="button" aria-pressed="@(draft.Broker is null ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(null)">Sin mensajería</button>
                 <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.Kafka ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.Kafka)">Kafka</button>
+                <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.AzureServiceBus ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.AzureServiceBus)">Azure Service Bus</button>
                 <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.InMemory ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.InMemory)">En memoria</button>
             </div>
             <span class="hint">
                 @if (draft.Broker == MessagingSettings.Kafka)
                 {
                     <span>Eventos de integración con outbox (no se pierden si Kafka cae), inbox (cada evento se procesa una vez), reintentos y dead-letter. Con Aspire, Stratum añade Kafka y Kafka UI al AppHost. Elige abajo qué entidades publican sus eventos.</span>
+                }
+                else if (draft.Broker == MessagingSettings.AzureServiceBus)
+                {
+                    <span>Eventos de integración con outbox, inbox, reintentos y la cola dead-letter de Service Bus. Con Aspire se usa el emulador local (sin suscripción de Azure): Stratum declara un topic por evento y una suscripción por cada servicio que lo escucha. Todos los servicios que se comunican deben usar el mismo broker.</span>
                 }
                 else if (draft.Broker == MessagingSettings.InMemory)
                 {
@@ -142,7 +147,7 @@ else
                 }
                 @if (draft.Broker == MessagingSettings.InMemory && draft.Subscriptions.Count > 0)
                 {
-                    <span class="hint" style="color: var(--warn)">Con el broker en memoria no llegan eventos de otros servicios: usa Kafka.</span>
+                    <span class="hint" style="color: var(--warn)">Con el broker en memoria no llegan eventos de otros servicios: usa Kafka o Azure Service Bus.</span>
                 }
             </section>
         }

@@ -14,6 +14,9 @@ using {{DbContextNamespace}};
 // @msg:if kafka
 using Msg.Messaging.Kafka;
 // @msg:end
+// @msg:if azureServiceBus
+using Msg.Messaging.AzureServiceBus;
+// @msg:end
 // @msg:if cleanDdd
 using {{Service}}.Application;
 using {{Service}}.Infrastructure;
@@ -52,8 +55,12 @@ internal static class MsgWiring
         builder.AddMsgMessaging("{{service-kebab}}")
             // @msg:if kafka
             .UseKafka(builder.Configuration)                     // ConnectionStrings:kafka (Aspire) or Messaging:Kafka
-            // @msg:else
-            .UseInMemory()                                       // only inside this process: switch to Kafka to reach other services
+            // @msg:end
+            // @msg:if azureServiceBus
+            .UseAzureServiceBus(builder.Configuration)           // ConnectionStrings:servicebus (Aspire, emulator included)
+            // @msg:end
+            // @msg:if !brokerConnection
+            .UseInMemory()                                       // only inside this process: switch to Kafka or Service Bus to reach other services
             // @msg:end
             // @msg:if persistence
             .UseEntityFramework<{{Service}}DbContext>()          // outbox and inbox in this service's database

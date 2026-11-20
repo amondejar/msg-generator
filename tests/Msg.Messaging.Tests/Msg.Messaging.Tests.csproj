@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\Msg.Messaging\Msg.Messaging.csproj" />
     <ProjectReference Include="..\..\src\Msg.Messaging.EntityFrameworkCore\Msg.Messaging.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\src\Msg.Messaging.Kafka\Msg.Messaging.Kafka.csproj" />
+    <ProjectReference Include="..\..\src\Msg.Messaging.AzureServiceBus\Msg.Messaging.AzureServiceBus.csproj" />
   </ItemGroup>
 
 </Project>

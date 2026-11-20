@@ -36,6 +36,9 @@
     <!-- @msg:if kafka -->
     <PackageVersion Include="Msg.Messaging.Kafka" Version="{{MsgVersion}}" />
     <!-- @msg:end -->
+    <!-- @msg:if azureServiceBus -->
+    <PackageVersion Include="Msg.Messaging.AzureServiceBus" Version="{{MsgVersion}}" />
+    <!-- @msg:end -->
     <!-- @msg:end -->
   </ItemGroup>
   <ItemGroup>

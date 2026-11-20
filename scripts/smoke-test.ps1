@@ -480,6 +480,15 @@ namespace Catalog.Infrastructure.Migrations
     } else { Fail 'workspace add' }
     Invoke-Dotnet $MsgDll new Notifications -o (Join-Path $sys 'notifications') --package-source $Pkgs
     Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
+    $notifications = Join-Path $sys 'notifications'
+    Invoke-Dotnet $MsgDll messaging on --broker azureServiceBus --path $notifications
+    Invoke-Dotnet $MsgDll subscribe (Join-Path $sys 'orders') Order.Created --path $notifications
+    Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
+    $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw
+    $map = Get-DotnetOutput $MsgDll events map --path $sys
+    if ($hostCode -like '*AddAzureServiceBus("servicebus")*' -and $hostCode -like '*AddServiceBusSubscription("notifications-orders-order-created", "notifications")*' -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -like '*Aspire.Hosting.Azure.ServiceBus*' -and (Get-Content (Join-Path $notifications 'src\Notifications.Api\MsgWiring.g.cs') -Raw) -like '*UseAzureServiceBus*' -and $map -like '*no le llegar*') {
+        Pass 'Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported'
+    } else { $map | Out-Host; Fail 'Azure Service Bus' }
     $legacy = Join-Path $sys 'legacy'
     Invoke-Dotnet $MsgDll new Legacy -o $legacy --package-source $Pkgs
     Invoke-Dotnet $MsgDll aspire --path $sys --name Shop

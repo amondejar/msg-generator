@@ -51,7 +51,7 @@
                     <Icon Name="messaging" /> Mensajería
                     @if (current.Broker is not null)
                     {
-                        <span class="badge">@(current.Broker == MessagingSettings.Kafka ? "kafka" : "memoria")</span>
+                        <span class="badge">@(current.Broker switch { MessagingSettings.Kafka => "kafka", MessagingSettings.AzureServiceBus => "service bus", _ => "memoria" })</span>
                     }
                 </NavLink>
                 <NavLink class="nav" href="service/code" ActiveClass="active"><Icon Name="code" /> Código generado</NavLink>

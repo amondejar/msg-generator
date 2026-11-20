@@ -9,7 +9,7 @@
 <main class="content">
     <div>
         <h1>Ejecutar el sistema</h1>
-        <p class="lead">Todos los servicios a la vez con .NET Aspire: sus bases de datos, Kafka si lo usan, el dashboard de telemetría y el service discovery.</p>
+        <p class="lead">Todos los servicios a la vez con .NET Aspire: sus bases de datos, Kafka o el emulador de Service Bus si los usan, el dashboard de telemetría y el service discovery.</p>
     </div>
     <section class="stack" aria-labelledby="h-aspire">
         <h2 class="section" id="h-aspire">Aspire</h2>
@@ -36,7 +36,7 @@
             </div>
             @if (dockerMissing)
             {
-                <div class="msg warn" role="alert">Hay servicios con base de datos o Kafka y no se encuentra Docker. Arranca Docker Desktop (o Podman) y <button type="button" class="btn" style="min-height: 30px; padding: 0 10px" @onclick="RecheckDocker">vuelve a comprobar</button>.</div>
+                <div class="msg warn" role="alert">Hay servicios con base de datos o broker (Kafka, emulador de Service Bus) y no se encuentra Docker. Arranca Docker Desktop (o Podman) y <button type="button" class="btn" style="min-height: 30px; padding: 0 10px" @onclick="RecheckDocker">vuelve a comprobar</button>.</div>
             }
             @if (running)
             {
@@ -113,7 +113,7 @@
 
     private async Task CheckDockerAsync()
     {
-        var needsDocker = State.Services.Any(s => s.Definition.Persistence is not null || s.Definition.Messaging?.Broker == MessagingSettings.Kafka);
+        var needsDocker = State.Services.Any(s => s.Definition.Persistence is not null || s.Definition.Messaging?.Broker is MessagingSettings.Kafka or MessagingSettings.AzureServiceBus);
         dockerMissing = needsDocker && !await Tools.HasDockerAsync();
     }
 

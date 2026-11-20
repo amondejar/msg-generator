@@ -203,6 +203,11 @@ public static class AspireGenerator
             packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Kafka\" Version=\"{AspireVersion}\" />\n");
         }
 
+        if (UsesServiceBus(services))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Azure.ServiceBus\" Version=\"{AspireVersion}\" />\n");
+        }
+
         // Relative to the AppHost folder; absolute for a service on another drive.
         var projects = string.Concat(services.Select(s =>
             $"    <ProjectReference Include=\"{Path.GetRelativePath(Path.GetFullPath(Path.Combine(root, $"{name}.AppHost")), Path.GetFullPath(Path.Combine(root, s.ApiProject))).Replace('/', '\\')}\" />\n"));
@@ -285,6 +290,38 @@ public static class AspireGenerator
                 .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
         }
 
+        if (UsesServiceBus(services))
+        {
+            // Local emulator (no Azure subscription). It only knows the topics and subscriptions declared here, so
+            // they come from msg.json: every event published, and one subscription per service that listens to it.
+            body.Append("        var serviceBus = builder.AddAzureServiceBus(\"servicebus\")\n")
+                .Append("            .RunAsEmulator();\n");
+
+            var onServiceBus = services.Where(s => s.Definition.Messaging?.Broker == MessagingSettings.AzureServiceBus).Select(s => s.Definition).ToList();
+            var topics = onServiceBus
+                .SelectMany(d => d.Entities.Where(e => e.IsEditable && e.Publishes)
+                    .SelectMany(e => Subscription.Events.Select(name => Subscription.TopicFor(d.Service.Name, e.Name, name))))
+                .Concat(onServiceBus.SelectMany(d => (d.Subscriptions ?? []).Select(s => s.Topic)))
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal);
+
+            foreach (var topic in topics)
+            {
+                var resource = topic.Replace('.', '-');
+                var consumers = onServiceBus.Where(d => (d.Subscriptions ?? []).Any(s => s.Topic == topic)).ToList();
+                body.Append(consumers.Count == 0
+                    ? $"        serviceBus.AddServiceBusTopic(\"{resource}\", \"{topic}\");\n"
+                    : $"        var {TopicVariable(topic)} = serviceBus.AddServiceBusTopic(\"{resource}\", \"{topic}\");\n");
+                foreach (var consumer in consumers)
+                {
+                    var subscription = ServiceName.ToKebab(consumer.Service.Name);
+                    body.Append($"        {TopicVariable(topic)}.AddServiceBusSubscription(\"{subscription}-{resource}\", \"{subscription}\");\n");
+                }
+            }
+
+            body.Append('\n');
+        }
+
         foreach (var service in services)
         {
             var variable = Variable(service);
@@ -308,6 +345,12 @@ public static class AspireGenerator
             {
                 body.Append("            .WithReference(kafka)\n")       // ConnectionStrings__kafka
                     .Append("            .WaitFor(kafka)\n");
+            }
+
+            if (service.Definition.Messaging?.Broker == MessagingSettings.AzureServiceBus)
+            {
+                body.Append("            .WithReference(serviceBus)\n")  // ConnectionStrings__servicebus
+                    .Append("            .WaitFor(serviceBus)\n");
             }
 
             if (service.Definition.Features.OpenApi)
@@ -411,6 +454,15 @@ public static class AspireGenerator
             }
 
             """;
+    }
+
+    private static bool UsesServiceBus(IReadOnlyList<AspireService> services) =>
+        services.Any(s => s.Definition.Messaging?.Broker == MessagingSettings.AzureServiceBus);
+
+    private static string TopicVariable(string topic)
+    {
+        var parts = topic.Split('.', '-');
+        return "topic" + string.Concat(parts.Select(p => p.Length == 0 ? p : char.ToUpperInvariant(p[0]) + p[1..]));
     }
 
     private static bool UsesKafka(IReadOnlyList<AspireService> services) =>

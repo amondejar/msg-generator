@@ -51,10 +51,13 @@ public sealed record MessagingSettings
 {
     public const string Kafka = "kafka";
 
+    /// <summary>Azure Service Bus (with Aspire, its local emulator).</summary>
+    public const string AzureServiceBus = "azureServiceBus";
+
     /// <summary>In-process broker: one service alone, or tests. Events don't reach other services.</summary>
     public const string InMemory = "inMemory";
 
-    public static IReadOnlyList<string> Brokers { get; } = [Kafka, InMemory];
+    public static IReadOnlyList<string> Brokers { get; } = [Kafka, AzureServiceBus, InMemory];
 
     public required string Broker { get; init; }
 

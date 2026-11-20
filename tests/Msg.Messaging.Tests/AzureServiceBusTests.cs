@@ -1,0 +1,54 @@
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using Msg.Messaging.AzureServiceBus;
+
+namespace Msg.Messaging.Tests;
+
+/// <summary>Without a broker: the envelope survives the trip through a Service Bus message, and the configuration is read like Aspire sets it.</summary>
+public sealed class AzureServiceBusTests
+{
+    [Fact]
+    public void EnvelopeRoundTripsThroughAServiceBusMessage()
+    {
+        var envelope = new MessageEnvelope
+        {
+            MessageId = Guid.CreateVersion7().ToString(),
+            Topic = "orders.order-created",
+            Source = "orders",
+            Payload = """{"orderId":"1","total":5}""",
+            OccurredAt = new DateTimeOffset(2026, 11, 20, 13, 30, 0, TimeSpan.Zero),
+            CorrelationId = "abc",
+            TraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        };
+
+        var sent = AzureServiceBusTransport.ToMessage(envelope);
+        var received = ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: sent.Body,
+            messageId: sent.MessageId,
+            correlationId: sent.CorrelationId,
+            properties: sent.ApplicationProperties,
+            enqueuedTime: DateTimeOffset.UtcNow);
+
+        Assert.Equal(envelope, AzureServiceBusTransport.FromMessage(envelope.Topic, received));
+    }
+
+    [Fact]
+    public void ConnectionStringComesFromAspire()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:servicebus"] = "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;",
+        });
+        builder.AddMsgMessaging("orders").UseAzureServiceBus(builder.Configuration);
+        using var host = builder.Build();
+
+        var options = host.Services.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+        Assert.Contains("UseDevelopmentEmulator=true", options.ConnectionString, StringComparison.Ordinal);
+        Assert.IsType<AzureServiceBusTransport>(host.Services.GetRequiredService<IMessageTransport>());
+    }
+}

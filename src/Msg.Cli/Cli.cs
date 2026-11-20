@@ -33,7 +33,7 @@ internal static partial class Cli
                                                  (observability, openApi, resilience, auth, tests, docker, ci)
           stratum feature convert [--path] [--dry-run]
                                                  Pasa un Program.cs anterior a 0.12 a MsgWiring.g.cs
-          stratum messaging on --broker kafka|inMemory [--path] [--dry-run]
+          stratum messaging on --broker kafka|azureServiceBus|inMemory [--path] [--dry-run]
           stratum messaging off [--path] [--dry-run]
                                                  Eventos de integración entre servicios (outbox, inbox, reintentos)
           stratum events on|off <Entidad>... [--path] [--dry-run]
@@ -812,7 +812,7 @@ internal static partial class Cli
 
     private static int Messaging(string[] args, TextWriter output)
     {
-        const string usage = "Uso: stratum messaging on --broker kafka|inMemory | stratum messaging off  [--path <carpeta>] [--dry-run]";
+        const string usage = "Uso: stratum messaging on --broker kafka|azureServiceBus|inMemory | stratum messaging off  [--path <carpeta>] [--dry-run]";
         if (args.Length == 0 || args[0] is not ("on" or "off"))
         {
             throw new MsgException(usage);
@@ -860,6 +860,10 @@ internal static partial class Cli
             if (updated.Messaging?.Broker == MessagingSettings.Kafka)
             {
                 output.WriteLine("Para ejecutarlo con Kafka, regenera el AppHost (stratum aspire, o desde el Studio): añade Kafka y Kafka UI.");
+            }
+            else if (updated.Messaging?.Broker == MessagingSettings.AzureServiceBus)
+            {
+                output.WriteLine("Para ejecutarlo, regenera el AppHost (stratum aspire, o desde el Studio): añade el emulador de Service Bus con sus topics y suscripciones.");
             }
         }
 

@@ -367,6 +367,15 @@ grep -q '"../elsewhere/payments"' "$SYS/msg.workspace.json" \
   && pass "a service in another folder joins the system (msg.workspace.json → AppHost)" || fail "workspace add"
 "${MSG[@]}" new Notifications -o "$SYS/notifications" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+"${MSG[@]}" messaging on --broker azureServiceBus --path "$SYS/notifications" >/dev/null
+"${MSG[@]}" subscribe "$SYS/orders" Order.Created --path "$SYS/notifications" >/dev/null
+"${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+grep -q 'AddAzureServiceBus("servicebus")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+  && grep -q 'AddServiceBusSubscription("notifications-orders-order-created", "notifications")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+  && grep -q 'Aspire.Hosting.Azure.ServiceBus' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && grep -q "UseAzureServiceBus" "$SYS/notifications/src/Notifications.Api/MsgWiring.g.cs" \
+  && "${MSG[@]}" events map --path "$SYS" | grep -q "no le llegarán" \
+  && pass "Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported" || fail "Azure Service Bus"
 "${MSG[@]}" new Legacy -o "$SYS/legacy" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
 "${MSG[@]}" service remove "$SYS/legacy" --path "$SYS" | grep -q "No se ha tocado nada" && [[ -d "$SYS/legacy" ]] \

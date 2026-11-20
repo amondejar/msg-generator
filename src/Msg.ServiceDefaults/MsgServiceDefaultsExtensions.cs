@@ -29,6 +29,8 @@ public static class MsgServiceDefaultsExtensions
 
         builder.Services.AddMsgProblemDetails();
         builder.Services.AddExceptionHandler<DomainExceptionHandler>();
+        builder.Services.AddDistributedMemoryCache();   // Idempotency-Key responses; Redis replaces it to share them
+        builder.Services.AddOptions<IdempotencyOptions>().BindConfiguration(IdempotencyOptions.SectionName);
         builder.Services.AddHealthChecks()
             .AddCheck("self", () => HealthCheckResult.Healthy(), [HealthTags.Live]);
 
@@ -37,7 +39,7 @@ public static class MsgServiceDefaultsExtensions
 
     /// <summary>
     /// Correlation id → exception handler (unhandled exceptions as ProblemDetails) → status code pages
-    /// (empty 4xx/5xx as ProblemDetails). Call it first, before authentication and endpoints.
+    /// (empty 4xx/5xx as ProblemDetails) → Idempotency-Key. Call it first, before authentication and endpoints.
     /// </summary>
     public static WebApplication UseMsgServiceDefaults(this WebApplication app)
     {
@@ -46,6 +48,7 @@ public static class MsgServiceDefaultsExtensions
         app.UseMiddleware<CorrelationIdMiddleware>();
         app.UseExceptionHandler();
         app.UseStatusCodePages();
+        app.UseMiddleware<IdempotencyMiddleware>();   // only acts on requests with an Idempotency-Key header
 
         return app;
     }

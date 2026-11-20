@@ -269,12 +269,14 @@ public static class ServiceGenerator
             "postgres" => provider == PersistenceSettings.Postgres,
             "sqlserver" => provider == PersistenceSettings.SqlServer,
             "messaging" => definition.Messaging is not null,
-            "connectionStrings" => provider is not null || definition.Messaging?.Broker == MessagingSettings.Kafka,
+            "connectionStrings" => provider is not null || definition.Messaging?.Broker is MessagingSettings.Kafka or MessagingSettings.AzureServiceBus,
             "kafka" => definition.Messaging?.Broker == MessagingSettings.Kafka,
+            "azureServiceBus" => definition.Messaging?.Broker == MessagingSettings.AzureServiceBus,
+            "brokerConnection" => definition.Messaging?.Broker is MessagingSettings.Kafka or MessagingSettings.AzureServiceBus,
             "publishesEvents" => definition.Messaging is not null && definition.Entities.Any(e => e.IsEditable && e.Publishes),
             _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new MsgException(
                 $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
-                "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, publishesEvents " +
+                "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents " +
                 "(y hasRequiredString, publishEvents en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };

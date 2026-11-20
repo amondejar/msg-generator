@@ -230,12 +230,12 @@ stratum aspire --path C:/servicios                            # el AppHost lo in
 
 En el Studio, **Nuevo servicio → Ubicación** (con un explorador de carpetas) y **Añadir un servicio de otra carpeta** hacen lo mismo.
 
-## Mensajería entre servicios (Kafka)
+## Mensajería entre servicios (Kafka o Azure Service Bus)
 
 ```bash
-stratum messaging on --broker kafka        # o inMemory (solo dentro del proceso)
+stratum messaging on --broker kafka        # o azureServiceBus, o inMemory (solo dentro del proceso)
 stratum events on Product                  # publica ProductCreated / ProductUpdated / ProductDeleted
-stratum aspire                             # añade Kafka y Kafka UI al AppHost
+stratum aspire                             # añade Kafka y Kafka UI, o el emulador de Service Bus, al AppHost
 ```
 
 En el Studio: **Servicio → Mensajería entre servicios** (broker) y **Entidades → Eventos para otros servicios** (qué entidad publica).
@@ -249,6 +249,11 @@ Qué genera:
   - Clean + DDD: `ProductIntegrationEventsMapper.g.cs` convierte los eventos de dominio en eventos de integración al guardar.
 - Tests: el broker se sustituye por uno en memoria (`ApiFactory.g.cs`), no hace falta Kafka.
 - AppHost: `AddKafka("kafka").WithKafkaUI()` y `WithReference(kafka).WaitFor(kafka)` en cada servicio con Kafka.
+- AppHost con Azure Service Bus: `AddAzureServiceBus("servicebus").RunAsEmulator()`, un topic por evento publicado y una
+  suscripción por servicio que lo escucha (el emulador no crea entidades al vuelo, por eso las declara el AppHost). En Azure
+  real usa la misma cadena `ConnectionStrings:servicebus`, o `Messaging:AzureServiceBus:CreateEntities=true` para que el
+  servicio cree topics y suscripciones al arrancar.
+- Los servicios que se hablan tienen que usar el mismo broker: `stratum events map` avisa si no.
 
 ### Escuchar eventos de otro servicio
 
@@ -273,6 +278,20 @@ Paquetes:
 | `Msg.Messaging` | `IEventBus` (outbox), handlers `IIntegrationEventHandler<T>` que se ejecutan una vez por evento (inbox), reintentos con espera creciente y dead-letter, trazas de extremo a extremo y transporte en memoria. Sin dependencias de terceros. |
 | `Msg.Messaging.EntityFrameworkCore` | Outbox e inbox en la base de datos del servicio: el evento se guarda en la misma transacción que tus cambios, y el handler y su registro en el inbox también. |
 | `Msg.Messaging.Kafka` | Kafka con Confluent.Kafka: un topic por evento, un consumer group por servicio, commit tras procesar, topic `<topic>.dead-letter`, topics creados al primer uso. |
+| `Msg.Messaging.AzureServiceBus` | Azure Service Bus: un topic por evento, una suscripción por servicio, complete tras procesar y dead-letter nativo; funciona con el emulador de Aspire. |
+
+### `Idempotency-Key` en la API
+
+Todos los servicios lo tienen (`Msg.ServiceDefaults`): un cliente que manda `POST`/`PUT`/`PATCH`/`DELETE` con la cabecera
+`Idempotency-Key` puede reintentar sin miedo (timeout, doble clic). La primera petición se ejecuta y su respuesta se guarda;
+los reintentos con la misma clave reciben la misma respuesta con `Idempotent-Replayed: true` sin volver a ejecutarse.
+
+- La misma clave con otra petición → 422. Un reintento mientras la primera sigue en curso → 409.
+- Solo se recuerdan las respuestas correctas: tras un 400 o un 500 el reintento se ejecuta de nuevo.
+- Las claves son por usuario (cabecera `Authorization`) y duran 24 h (`Idempotency:Expiration`).
+- Se guardan en `IDistributedCache`, en memoria por defecto; con varias instancias registra Redis
+  (`AddStackExchangeRedisCache`) para compartirlas.
+- Sin cabecera, nada cambia.
 
 ## Qué genera
 
@@ -376,6 +395,6 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`stratum entity`, Studio).
 6. ✅ Migraciones guiadas: renombrados sin perder datos, avisos de lo que borra datos, SQL y deshacer (`stratum migration review`, Studio).
 7. ✅ Features editables en servicios existentes (`stratum feature`, Studio), paquetes y archivos que sobran se quitan, `.g.cs` editados a mano detectados.
-8. En curso: mensajería entre servicios. ✅ `Msg.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). ✅ Suscripciones y mapa de eventos. Siguiente: Azure Service Bus; `Idempotency-Key` en la API.
+8. En curso: mensajería entre servicios. ✅ `Msg.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). ✅ Suscripciones y mapa de eventos. ✅ Azure Service Bus e `Idempotency-Key`.
 9. Después: métodos propios del agregado y relaciones entre entidades desde el Studio; publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

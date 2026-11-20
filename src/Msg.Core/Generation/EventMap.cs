@@ -38,6 +38,11 @@ public static class EventMap
                 }
 
                 route.Consumers.Add(consumer.Service.Name);
+                var publisher = all.FirstOrDefault(s => s.Service.Name == subscription.Service);
+                if (publisher?.Messaging is { } published && consumer.Messaging is { } consuming && published.Broker != consuming.Broker)
+                {
+                    problems.TryAdd(subscription.Topic, $"{published.Broker} en {publisher.Service.Name} y {consuming.Broker} aquí: no le llegarán (mismo broker en los dos)");
+                }
                 if (problems.TryGetValue(subscription.Topic, out var problem))
                 {
                     var text = $"{consumer.Service.Name}: {problem}";
