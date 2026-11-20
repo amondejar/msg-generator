@@ -1,4 +1,4 @@
-using Msg.Ddd;
+using Stratum.Ddd;
 
 namespace {{Service}}.Domain.{{Entities}};
 

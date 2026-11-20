@@ -1,0 +1,317 @@
+@page "/entities"
+@implements IDisposable
+@inject StudioState State
+
+<PageTitle>Entidades · Stratum Studio</PageTitle>
+
+@if (State.Current is not { } draft)
+{
+    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+}
+else
+{
+    var entity = Selected;
+    <main class="content">
+        <div>
+            <div class="row" style="justify-content: space-between; align-items: center">
+                <h1>Entidades</h1>
+                @if (!draft.IsNew && State.Plan is { Changes.Count: > 0 })
+                {
+                    <div class="row" style="gap: 8px">
+                        <button type="button" class="btn" @onclick="State.Discard">Descartar cambios</button>
+                        <a class="btn btn-primary" href="apply">Revisar y aplicar →</a>
+                    </div>
+                }
+            </div>
+            <p class="lead">Crea entidades o cambia las que ya existen: Stratum regenera sus archivos <span class="mono">.g.cs</span> y nunca toca tu código (las clases <span class="mono">partial</span> sin <span class="mono">.g</span>). Nada se escribe hasta que revisas y aplicas.</p>
+        </div>
+
+        <div class="row" role="tablist" aria-label="Entidades">
+            @foreach (var e in draft.Entities)
+            {
+                <button type="button" role="tab" aria-selected="@(e == entity ? "true" : "false")"
+                        class="card @(e == entity ? "selected" : e.IsNew ? "new" : "")" style="padding: 10px 14px"
+                        @onclick="() => State.SelectedEntity = e.Name">
+                    <b style="@(e.Removed ? "text-decoration: line-through" : "")">@e.Name @if (e.IsNew) { <small style="color: var(--warn)">NUEVA</small> } else if (e.Removed) { <small style="color: var(--err)">ELIMINAR</small> } else if (e.IsLegacy && !e.Convert) { <small class="hint">ANTERIOR A 0.10</small> } else if (e.Convert) { <small style="color: var(--warn)">CONVERTIR</small> }</b>
+                    <small>@e.Properties.Count propiedad(es)</small>
+                </button>
+            }
+            <button type="button" class="btn btn-dashed" @onclick="() => State.AddEntity()">+ Nueva entidad</button>
+        </div>
+
+        @if (entity is null)
+        {
+            <p class="lead">Este servicio aún no tiene entidades. Crea la primera: Stratum generará la persistencia, los endpoints CRUD y sus tests.</p>
+        }
+        else
+        {
+            <div class="row" style="align-items: flex-end">
+                <label class="field">
+                    Nombre (singular)
+                    <input type="text" value="@entity.Name" disabled="@(!entity.IsNew)" style="font-size: 18px; font-weight: 600"
+                           @onchange="e => Rename(entity, e.Value?.ToString())" />
+                </label>
+                <label class="field">
+                    Plural
+                    <input type="text" value="@entity.Plural" placeholder="@entity.EffectivePlural" disabled="@(!entity.IsNew)"
+                           @onchange="e => { entity.Plural = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                </label>
+                <div class="field">
+                    Endpoints
+                    <span class="mono" style="min-height: 42px; display: flex; align-items: center; color: var(--text-2); font-weight: 400">/api/v1/@Route(entity)</span>
+                </div>
+                @if (!entity.Removed)
+                {
+                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => State.RemoveEntity(entity)">@(entity.IsNew ? "Quitar entidad" : "Eliminar entidad")</button>
+                }
+            </div>
+
+            @if (entity.Removed)
+            {
+                <div class="msg warn" role="status">
+                    <b>@entity.Name se eliminará al aplicar.</b> Stratum borra sus archivos <span class="mono">.g.cs</span> y la quita de stratum.json; la próxima migración borrará su tabla.
+                    @if (State.ConsumersOf(draft, entity.Name) is { Count: > 0 } consumers)
+                    {
+                        <br /><span>Escuchan sus eventos: <b>@string.Join(", ", consumers)</b>. Después, quítales esas suscripciones en su <em>Mensajería</em> (aparecerán marcadas) o con <span class="mono">stratum subscribe --sync --prune</span>.</span>
+                    }
+                    <div class="row" style="margin-top: 10px">
+                        <label class="row" style="gap: 8px"><input type="checkbox" checked="@draft.DeleteOwnFiles" @onchange="e => { draft.DeleteOwnFiles = e.Value is true; State.Recompute(); }" /> Borrar también mis archivos de esta entidad (handlers, repositorio, endpoints propios…)</label>
+                        <button type="button" class="btn" @onclick="() => State.RemoveEntity(entity)">Restaurar</button>
+                    </div>
+                </div>
+            }
+            else if (entity.IsLegacy && !entity.Convert)
+            {
+                <div class="msg warn" role="status">
+                    <b>Creada con una versión de Stratum anterior a la 0.10.</b> Su código está en archivos tuyos, así que Stratum no puede cambiar sus propiedades sin pisarlos.
+                    Al convertirla, Stratum mueve propiedades, contratos y CRUD a archivos <span class="mono">.g.cs</span> y deja clases <span class="mono">partial</span> vacías para tu código.
+                    Verás qué archivos se reemplazan o borran antes de aplicar; si los habías personalizado, pasa esos cambios a las clases partial.
+                    <div class="row" style="margin-top: 10px">
+                        <button type="button" class="btn btn-primary" @onclick="() => { entity.Convert = true; State.Recompute(); }">Convertir al formato editable</button>
+                    </div>
+                </div>
+            }
+
+            <section class="stack" aria-labelledby="h-props">
+                <h2 class="section" id="h-props">Propiedades</h2>
+                <div class="table">
+                    <div class="tr head"><span>Nombre</span><span>Tipo</span><span>Opcional</span><span>Genera</span><span></span></div>
+                    <div class="tr"><span class="auto">Id</span><span class="auto">guid</span><span class="hint">—</span><span class="hint">UUID v7 · clave primaria</span><span class="hint">auto</span></div>
+                    @foreach (var p in entity.Properties)
+                    {
+                        <div class="tr">
+                            @if (entity.CanEdit)
+                            {
+                                <span class="stack" style="gap: 2px">
+                                    <input type="text" value="@p.Name" aria-label="Nombre de la propiedad" @onchange="e => { p.Name = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                                    @if (p.IsRenamed)
+                                    {
+                                        <small class="hint" style="color: var(--warn)">renombrada · antes @p.OriginalName (se conservan los datos)</small>
+                                    }
+                                    else if (p.OriginalName is null && !entity.IsNew)
+                                    {
+                                        <small class="hint" style="color: var(--ok)">nueva</small>
+                                    }
+                                </span>
+                                <select aria-label="@($"Tipo de {p.Name}")" value="@p.Type" @onchange="e => SetType(p, e)">
+                                    @foreach (var type in Types)
+                                    {
+                                        <option value="@type">@type</option>
+                                    }
+                                    @if (ReferenceTargets(draft).Count > 0)
+                                    {
+                                        <optgroup label="Referencia a otra entidad">
+                                            @foreach (var target in ReferenceTargets(draft))
+                                            {
+                                                <option value="@(PropertyDraft.ReferencePrefix + target)">→ @target</option>
+                                            }
+                                        </optgroup>
+                                    }
+                                </select>
+                                <label class="row" style="gap: 8px"><input type="checkbox" checked="@p.Nullable" @onchange="e => { p.Nullable = e.Value is true; State.Recompute(); }" /> @(p.Nullable ? "Sí" : "No")</label>
+                                <span class="hint">@Generates(p)</span>
+                                <button type="button" class="icon-btn" aria-label="@($"Eliminar {p.Name}")" @onclick="() => { entity.Properties.Remove(p); State.Recompute(); }">×</button>
+                            }
+                            else
+                            {
+                                <span class="mono">@p.Name</span><span class="mono">@(p.References is { } t ? "→ " + t : p.Type)</span><span>@(p.Nullable ? "Sí" : "No")</span><span class="hint">@Generates(p)</span><span></span>
+                            }
+                        </div>
+                    }
+                    <div class="tr"><span class="auto">CreatedAt · UpdatedAt</span><span class="auto">datetime</span><span class="hint">—</span><span class="hint">Auditoría automática</span><span class="hint">auto</span></div>
+                </div>
+                @if (entity.CanEdit)
+                {
+                    <button type="button" class="btn btn-dashed" style="align-self: flex-start" @onclick="() => AddProperty(entity)">+ Añadir propiedad</button>
+                    @if (!entity.IsNew)
+                    {
+                        <span class="hint">Para renombrar, cambia el nombre en su fila: Stratum lo trata como renombrado y la migración conserva los datos. Si borras la fila y creas otra, la columna se elimina.</span>
+                    }
+                }
+            </section>
+
+            <section class="stack" aria-labelledby="h-events">
+                <h2 class="section" id="h-events">Eventos para otros servicios</h2>
+                @if (draft.Broker is null)
+                {
+                    <span class="hint">El servicio no tiene mensajería. Actívala en <a href="service/messaging">Mensajería</a> para publicar los eventos de @(entity.Name).</span>
+                }
+                else
+                {
+                    <label class="row" style="gap: 8px">
+                        <input type="checkbox" checked="@entity.PublishEvents" disabled="@(!entity.CanEdit)"
+                               @onchange="e => { entity.PublishEvents = e.Value is true; State.Recompute(); }" />
+                        Publicar <span class="mono">@(entity.Name)Created</span>, <span class="mono">@(entity.Name)Updated</span> y <span class="mono">@(entity.Name)Deleted</span> con sus datos
+                    </label>
+                    @if (entity.PublishEvents)
+                    {
+                        var service = ServiceName.ToKebab(draft.Name);
+                        var name = System.Text.RegularExpressions.Regex.Replace(entity.Name, "(?<=[a-z0-9])([A-Z])", "-$1").ToLowerInvariant();
+                        <span class="hint">Topics: <span class="mono">@($"{service}.{name}-created")</span>, <span class="mono">-updated</span>, <span class="mono">-deleted</span>. Se guardan en el outbox en la misma transacción que el cambio y se envían después, con reintentos.</span>
+                    }
+                }
+            </section>
+
+            @if (draft.Architecture == Architectures.CleanDdd)
+            {
+                <section class="stack" aria-labelledby="h-behavior">
+                    <h2 class="section" id="h-behavior">Comportamiento · Clean + DDD</h2>
+                    <div class="table">
+                        <div class="tr head" style="grid-template-columns: 2fr 1.4fr 2fr"><span>Método del agregado</span><span>Modifica</span><span>Evento de dominio</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">@(entity.Name).Create(…) <small class="hint">fábrica</small></span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Created</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Update(…)</span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Updated</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Delete()</span><span class="hint">—</span><span class="mono" style="color: #67E8F9">@(entity.Name)Deleted</span></div>
+                    </div>
+                    <span class="hint">Las reglas de negocio van en <span class="mono">EnsureInvariants()</span> de <span class="mono">@(entity.Name).cs</span> (tu parte del agregado, Stratum la crea una vez y no la toca), y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>.</span>
+                </section>
+
+                <section class="stack" aria-labelledby="h-operations">
+                    <h2 class="section" id="h-operations">Operaciones del agregado</h2>
+                    <span class="hint">Acciones de negocio como <span class="mono">Confirm</span> o <span class="mono">Cancel(Reason)</span>. Stratum genera el evento de dominio, el comando, su handler y <span class="mono">POST /api/v1/@Route(entity)/{id}/&lt;operación&gt;</span>; la regla la escribes tú en <span class="mono">@(entity.Name).&lt;Operación&gt;.cs</span>, que se crea una vez y es tuyo.</span>
+                    @if (entity.Operations.Count > 0)
+                    {
+                        <div class="table">
+                            <div class="tr head" style="grid-template-columns: 1.2fr 2fr 1.6fr 40px"><span>Operación</span><span>Parámetros</span><span>Evento</span><span></span></div>
+                            @foreach (var o in entity.Operations)
+                            {
+                                <div class="tr" style="grid-template-columns: 1.2fr 2fr 1.6fr 40px">
+                                    <input type="text" value="@o.Name" aria-label="Nombre de la operación" disabled="@(!entity.CanEdit)" placeholder="Confirm"
+                                           @onchange="e => { o.Name = e.Value?.ToString()?.Trim() ?? string.Empty; State.Recompute(); }" />
+                                    <input type="text" value="@o.Parameters" aria-label="@($"Parámetros de {o.Name}")" disabled="@(!entity.CanEdit)" placeholder="Reason:string, Amount:decimal?"
+                                           @onchange="e => { o.Parameters = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
+                                    <input type="text" value="@o.Event" aria-label="@($"Evento de {o.Name}")" disabled="@(!entity.CanEdit)"
+                                           placeholder="@(string.IsNullOrWhiteSpace(o.Name) ? entity.Name + "Done" : entity.Name + ModelRules.PastTense(SafePascal(o.Name)))"
+                                           @onchange="e => { o.Event = e.Value?.ToString()?.Trim() ?? string.Empty; State.Recompute(); }" />
+                                    <button type="button" class="icon-btn" aria-label="@($"Quitar {o.Name}")" disabled="@(!entity.CanEdit)" @onclick="() => { entity.Operations.Remove(o); State.Recompute(); }">×</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (entity.CanEdit)
+                    {
+                        <button type="button" class="btn btn-dashed" style="align-self: flex-start" @onclick="() => AddOperation(entity)">+ Añadir operación</button>
+                    }
+                </section>
+            }
+        }
+
+        <ProblemList />
+    </main>
+
+    <CodePanel Tabs="EntityTabs(entity)" Label="Código generado" Empty="Selecciona o crea una entidad." />
+}
+
+@code {
+    private static readonly string[] Types = ["string", "int", "long", "decimal", "bool", "guid", "date", "datetime"];
+
+    private EntityDraft? Selected =>
+        State.Current?.Entities.FirstOrDefault(e => e.Name == State.SelectedEntity) ?? State.Current?.Entities.FirstOrDefault();
+
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+
+    private void Rename(EntityDraft entity, string? name)
+    {
+        entity.Name = name?.Trim() ?? string.Empty;
+        State.SelectedEntity = entity.Name;
+        State.Recompute();
+    }
+
+    private void SetType(PropertyDraft property, ChangeEventArgs e)
+    {
+        property.Type = e.Value?.ToString() ?? "string";
+        State.Recompute();
+    }
+
+    private void AddOperation(EntityDraft entity)
+    {
+        entity.Operations.Add(new OperationDraft { Name = entity.Operations.Count == 0 ? "Confirm" : $"Operation{entity.Operations.Count + 1}" });
+        State.Recompute();
+    }
+
+    private void AddProperty(EntityDraft entity)
+    {
+        entity.Properties.Add(new PropertyDraft { Name = $"Field{entity.Properties.Count + 1}", Type = "string", Nullable = true });
+        State.Recompute();
+    }
+
+    /// <summary>Entities a property can point to: the others of the service and itself (by name, as typed).</summary>
+    private static IReadOnlyList<string> ReferenceTargets(ServiceDraft draft) =>
+        [.. draft.Entities.Where(e => !e.Removed && !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name)];
+
+    private static string SafePascal(string name)
+    {
+        try { return ServiceName.Normalize(name); }
+        catch (StratumException) { return name; }
+    }
+
+    private static string Generates(PropertyDraft p) => p.References is { } target
+        ? $"Clave ajena a {target} · se comprueba que existe" + (p.Nullable ? " · opcional" : string.Empty)
+        : (p.Type, p.Nullable) switch
+    {
+        ("string", false) => $"Required · MaxLength({PropertyTypes.DefaultStringLength})",
+        ("string", true) => $"MaxLength({PropertyTypes.DefaultStringLength}) · columna nullable",
+        ("decimal", _) => "Precisión (18, 2)" + (p.Nullable ? " · nullable" : string.Empty),
+        (_, true) => "Columna nullable",
+        _ => "Columna obligatoria",
+    };
+
+    private static string Plural(EntityDraft entity)
+    {
+        try { return ServiceName.Normalize(entity.EffectivePlural); }
+        catch (StratumException) { return entity.EffectivePlural; }
+    }
+
+    private static string Route(EntityDraft entity) => ServiceName.ToKebab(Plural(entity));
+
+    private IReadOnlyList<CodePanel.Tab> EntityTabs(EntityDraft? entity)
+    {
+        if (entity is null)
+        {
+            return [];
+        }
+
+        var plural = Plural(entity);
+        return [.. State.Preview
+            .Where(f => f.Path.Contains($"/{plural}/", StringComparison.Ordinal)
+                        || f.Path.Contains($"/{entity.Name}EndpointsTests.", StringComparison.Ordinal)
+                        || f.Path.Contains($"/Domain/{entity.Name}Tests.", StringComparison.Ordinal))
+            .OrderBy(f => Order(f.Path))
+            .Select(f => new CodePanel.Tab(TabTitle(f.Path), f.Path, f.Content))];
+    }
+
+    private static int Order(string path) =>
+        path.Contains(".Domain/", StringComparison.Ordinal) ? 0
+        : path.Contains(".Application/", StringComparison.Ordinal) ? 1
+        : path.Contains(".Infrastructure/", StringComparison.Ordinal) ? 2
+        : path.StartsWith("src/", StringComparison.Ordinal) ? 3 : 4;
+
+    private static string TabTitle(string path) => Path.GetFileName(path).Replace(".cs", string.Empty, StringComparison.Ordinal);
+}

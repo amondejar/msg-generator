@@ -23,11 +23,11 @@ public static class DatabaseExtensions
         }
 
         builder.Services.AddDbContext<{{Service}}DbContext>(options =>
-            // @msg:if postgres
+            // @stratum:if postgres
             options.UseNpgsql(connectionString));
-            // @msg:else
+            // @stratum:else
             options.UseSqlServer(connectionString));
-            // @msg:end
+            // @stratum:end
 
         builder.Services.AddHealthChecks().AddDbContextCheck<{{Service}}DbContext>("database");
 

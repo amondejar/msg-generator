@@ -1,9 +1,9 @@
 # Stratum: generador de microservicios .NET
 
-Stratum genera microservicios .NET 10 desde la línea de comandos o desde un editor visual (`stratum studio`) que nacen con lo que cualquier equipo serio exige siempre igual: estructura, observabilidad, errores, configuración validada, tests, Docker y CI. Lo común no se copia en cada servicio: llega en los paquetes `Msg.ServiceDefaults.*`, así que mejorarlo o parchearlo es subir una versión. El objetivo final es un editor visual.
+Stratum genera microservicios .NET 10 desde la línea de comandos o desde un editor visual (`stratum studio`) que nacen con lo que cualquier equipo serio exige siempre igual: estructura, observabilidad, errores, configuración validada, tests, Docker y CI. Lo común no se copia en cada servicio: llega en los paquetes `Stratum.ServiceDefaults.*`, así que mejorarlo o parchearlo es subir una versión. El objetivo final es un editor visual.
 
-> **Nombre:** la herramienta se llamaba MSG y ahora es **Stratum** (comando `stratum`). Los paquetes `Msg.*`, el archivo
-> `msg.json` y la carpeta `.msg` mantienen su nombre por ahora; se renombrarán antes de publicar en NuGet.
+> **Nombre:** la herramienta se llamaba Stratum y ahora es **Stratum** (comando `stratum`). Los paquetes `Stratum.*`, el archivo
+> `stratum.json` y la carpeta `.stratum` mantienen su nombre por ahora; se renombrarán antes de publicar en NuGet.
 
 ### Stratum Studio
 
@@ -21,14 +21,32 @@ stratum new Orders                 # servicio completo (vertical slice)
 stratum new Orders --architecture clean-ddd   # Clean Architecture + DDD con eventos de dominio
 stratum new Billing --auth         # + JWT, autenticado por defecto
 stratum new Catalog --no-docker    # quita lo que no necesites
-stratum new --from msg.json        # regenera desde una definición
+stratum new --from stratum.json        # regenera desde una definición
 stratum new Orders --dry-run       # lista los archivos sin escribir nada
-stratum upgrade                    # actualiza los paquetes Msg.* de un servicio a la versión de Stratum instalada
+stratum upgrade                    # actualiza los paquetes Stratum.* de un servicio (o de todo el sistema) a la versión instalada
 
 # Dentro de un servicio:
 stratum add entity Product --props "Name:string, Price:decimal, Description:string?"
 stratum add entity Invoice --props "Number:string, Total:decimal" --db sqlserver   # la primera entidad elige la BD
 ```
+
+## Servicios de antes de la 0.22 (`Msg.*`, `msg.json`)
+
+Hasta la 0.21 los paquetes se llamaban `Msg.*`, la definición `msg.json` y la carpeta del equipo `.msg`. Esos servicios se
+siguen leyendo (Studio, mapa de eventos, AppHost), pero para cambiarlos hay que pasarlos antes a los nombres nuevos:
+
+```bash
+stratum upgrade --dry-run          # en la carpeta del sistema: qué cambia en cada servicio, sin escribir nada
+stratum upgrade                    # o --path <servicio> para uno solo
+```
+
+- `msg.json` → `stratum.json`, `msg.workspace.json` → `stratum.workspace.json`, `.msg` → `.stratum`.
+- En tu código: `using Msg.ServiceDefaults/Ddd/Messaging` → `Stratum.…`, `AddMsgWiring()` → `AddStratumWiring()`,
+  `AddMsgServices()` en el AppHost y los demás métodos `AddMsg*`/`UseMsg*`/`MapMsg*` de los paquetes.
+- Paquetes `Msg.*` → `Stratum.*`; los `.g.cs` (`MsgWiring.g.cs` → `StratumWiring.g.cs`) y el AppHost se generan de nuevo.
+- No cambian, a propósito: las tablas `msg_outbox`/`msg_inbox` (tu base de datos sigue igual) ni las cabeceras de los
+  mensajes (`msg-source`…), así que un servicio migrado y otro sin migrar se siguen entendiendo.
+- Las plantillas del equipo aceptan `@msg:if` y `@stratum:if`.
 
 ## Arquitecturas
 
@@ -40,8 +58,8 @@ stratum add entity Invoice --props "Number:string, Total:decimal" --db sqlserver
 | Eventos | No hay | `XCreated`/`XUpdated`/`XDeleted`, publicados tras el commit por un interceptor de EF Core |
 | Tests | Integración | Integración + tests de dominio sin base de datos |
 
-Los bloques de construcción de DDD están en el paquete `Msg.Ddd`, que no tiene dependencias, y los puede referenciar el proyecto Domain.
-No usamos MediatR: desde la v13 tiene licencia dual (RPL-1.5 o comercial). Los handlers se registran con `AddMsgApplication()`.
+Los bloques de construcción de DDD están en el paquete `Stratum.Ddd`, que no tiene dependencias, y los puede referenciar el proyecto Domain.
+No usamos MediatR: desde la v13 tiene licencia dual (RPL-1.5 o comercial). Los handlers se registran con `AddStratumApplication()`.
 
 ## `stratum studio`
 
@@ -52,7 +70,7 @@ stratum studio                       # en la carpeta que contiene tus servicios 
 Abre el editor visual en `http://localhost:5150`. Usa el mismo motor que la CLI, así que lo que ves es lo que se genera:
 
 - **Sistema**: tus servicios, crear uno nuevo y generar o actualizar el AppHost de Aspire.
-- **Servicio**: arquitectura, features y base de datos, con vista previa en vivo de `Program.cs`, el árbol de archivos y `msg.json`.
+- **Servicio**: arquitectura, features y base de datos, con vista previa en vivo de `Program.cs`, el árbol de archivos y `stratum.json`.
 - **Entidades**: propiedades con tipo y opcionalidad. En Clean + DDD muestra los métodos del agregado y sus eventos. A la derecha, el código generado de cada capa.
 - **Aplicar cambios**: qué archivos se crean, cuáles se regeneran y cuáles se completan, con el diff de cada uno. Nunca se sobrescribe un archivo tuyo.
 - **Ejecutar sistema** (en Sistema): genera o actualiza el AppHost y lo arranca con Aspire. Muestra la salida en vivo, el enlace al
@@ -63,25 +81,25 @@ Abre el editor visual en `http://localhost:5150`. Usa el mismo motor que la CLI,
 En un servicio que ya existe solo se pueden añadir entidades: las existentes, la arquitectura y las features ya son código tuyo.
 Opciones: `--port`, `--no-browser` y `--package-source` (igual que en `stratum new`).
 
-## Plantillas del equipo (`.msg`)
+## Plantillas del equipo (`.stratum`)
 
-Stratum trae sus convenciones, pero las que mandan son las de tu equipo. Pon una carpeta `.msg` en la raíz de tu repo
+Stratum trae sus convenciones, pero las que mandan son las de tu equipo. Pon una carpeta `.stratum` en la raíz de tu repo
 (o de tu carpeta de servicios) y haz commit. `stratum new`, `stratum add entity` y `stratum studio` la encuentran subiendo de carpeta:
 
 ```bash
 stratum templates list                                            # plantillas de Stratum y del equipo
-stratum templates eject service/src/__Service__.Api/Program.cs     # copia una a .msg/templates para editarla
+stratum templates eject service/src/__Service__.Api/Program.cs     # copia una a .stratum/templates para editarla
 stratum templates eject entity-clean                               # o un set entero
 ```
 
-| En `.msg/templates/<set>/…` | Efecto |
+| En `.stratum/templates/<set>/…` | Efecto |
 | --- | --- |
 | Misma ruta que una plantilla de Stratum | La sustituye |
 | Ruta nueva (p. ej. `service/CODEOWNERS`) | Se añade a lo que genera Stratum |
 | Archivo vacío | Esa plantilla no se genera (p. ej. `service/Dockerfile`) |
 
 Sets: `service`, `entity` (vertical slice), `entity-clean` y `entity-tests`. Las plantillas usan los tokens y las
-condiciones de Stratum (`{{Service}}`, `{{Entity}}`, `@msg:if auth`…). Además, `.msg/config.json` define tokens propios:
+condiciones de Stratum (`{{Service}}`, `{{Entity}}`, `@stratum:if auth`…). Además, `.stratum/config.json` define tokens propios:
 
 ```json
 { "tokens": { "Company": "Acme" } }
@@ -103,10 +121,10 @@ aspire run                 # o: dotnet run --project Shop.AppHost  (requiere Doc
 - PostgreSQL y/o SQL Server según la base de datos de cada servicio (volúmenes persistentes), con su cadena de conexión
   inyectada como `ConnectionStrings__Database` y `Database__MigrateOnStartup=true`: aplica las migraciones al arrancar
   o, si aún no hay ninguna, crea el esquema.
-- La telemetría aparece sola en el dashboard: Aspire pasa `OTEL_EXPORTER_OTLP_ENDPOINT` y `AddMsgOpenTelemetry()` la usa.
+- La telemetría aparece sola en el dashboard: Aspire pasa `OTEL_EXPORTER_OTLP_ENDPOINT` y `AddStratumOpenTelemetry()` la usa.
 - Enlace directo a Scalar en el dashboard para cada servicio con OpenAPI.
 - Service discovery: en `AppHost.cs`, `services.Billing.WithReference(services.Orders)` y Billing llama a `http://orders`.
-- `MsgServices.g.cs` y la `.slnx` se regeneran en cada `stratum aspire`; `AppHost.cs` es tuyo. Volver a ejecutarlo incorpora los servicios nuevos.
+- `StratumServices.g.cs` y la `.slnx` se regeneran en cada `stratum aspire`; `AppHost.cs` es tuyo. Volver a ejecutarlo incorpora los servicios nuevos.
 
 AppHost en Aspire 13.6.5 (la línea validada con .NET 10). Para pasar a Aspire 17: `aspire update`.
 
@@ -122,7 +140,7 @@ Reglas para no pisar tu código:
 
 | Archivos | Qué hace Stratum |
 | --- | --- |
-| `*.g.cs`: propiedades, configuración EF, contratos, CRUD, comandos/queries, tests CRUD, registros, `DbSet`s | Los regenera siempre a partir de `msg.json`. |
+| `*.g.cs`: propiedades, configuración EF, contratos, CRUD, comandos/queries, tests CRUD, registros, `DbSet`s | Los regenera siempre a partir de `stratum.json`. |
 | Clases `partial` sin `.g` (`Product.cs`, `ProductEndpoints.cs`), handlers de eventos, repositorio, `DbContext`, `compose.yaml` | Los crea una vez. A partir de ahí son tuyos. |
 | `.csproj`, `Directory.Packages.props`, `appsettings.Development.json` | Solo añade lo que falta. |
 | Todo lo demás | No lo toca. |
@@ -130,7 +148,7 @@ Reglas para no pisar tu código:
 Tu código va en las clases `partial`: métodos y propiedades calculadas en la entidad, reglas en `EnsureInvariants()` (clean-ddd),
 mapeo EF extra en `Customize(builder)` y endpoints propios en `MapCustomEndpoints(group)`.
 
-La entidad queda en `msg.json`, así que `stratum new --from msg.json` reconstruye el servicio con todas sus entidades.
+La entidad queda en `stratum.json`, así que `stratum new --from stratum.json` reconstruye el servicio con todas sus entidades.
 
 ## Cambiar entidades (`stratum entity`)
 
@@ -143,7 +161,7 @@ stratum entity convert Product                 # entidades creadas antes de Stra
 ```
 
 - `--props` es la lista completa: lo que no esté se elimina. `--rename Viejo=Nuevo` marca un renombrado; queda en `pendingRenames`
-  de `msg.json` para que la migración conserve los datos (`RenameColumn` en lugar de borrar y crear).
+  de `stratum.json` para que la migración conserve los datos (`RenameColumn` en lugar de borrar y crear).
 - Si tu código usa una propiedad eliminada o renombrada, Stratum te dice en qué archivos.
 - En el Studio es lo mismo: cambia el nombre en la fila para renombrar, borra filas, añade otras o elimina la entidad; la pantalla
   de revisión enseña el diff y cuántos archivos tuyos se tocan (solo al convertir o con "borrar también mis archivos").
@@ -220,13 +238,13 @@ stratum feature on auth
 stratum feature convert --dry-run     # Program.cs de antes de la 0.12
 ```
 
-Desde la 0.12, `Program.cs` solo llama a `builder.AddMsgWiring()` y `app.UseMsgWiring()`; lo que activa cada feature
-(Msg.ServiceDefaults.*, OpenAPI + Scalar, auth, validación, entidades) está en `MsgWiring.g.cs`, que Stratum regenera.
+Desde la 0.12, `Program.cs` solo llama a `builder.AddStratumWiring()` y `app.UseStratumWiring()`; lo que activa cada feature
+(Stratum.ServiceDefaults.*, OpenAPI + Scalar, auth, validación, entidades) está en `StratumWiring.g.cs`, que Stratum regenera.
 Tus servicios y middleware van en `Program.cs`, después de esas llamadas.
 
 Al activar o desactivar una feature, Stratum:
 
-- regenera `MsgWiring.g.cs` y el resto de `.g.cs`;
+- regenera `StratumWiring.g.cs` y el resto de `.g.cs`;
 - añade o quita sus paquetes en `.csproj` y `Directory.Packages.props` (solo los que puso él; los tuyos no los toca);
 - crea sus archivos (Dockerfile, workflow de CI, proyecto de tests…) y, al desactivarla, los borra **solo si siguen como él los
   generó**; si los cambiaste, te avisa en lugar de borrarlos o actualizarlos.
@@ -235,7 +253,7 @@ En el Studio, los interruptores de Features funcionan también en servicios exis
 
 ### `.g.cs` editados a mano
 
-Cada `.g.cs` termina con `// msg-hash: …`. Si lo editas a mano, Stratum lo detecta y te avisa antes de regenerarlo (y marca el
+Cada `.g.cs` termina con `// stratum-hash: …`. Si lo editas a mano, Stratum lo detecta y te avisa antes de regenerarlo (y marca el
 archivo como tuyo en la revisión): pasa ese cambio a la clase `partial` o a las plantillas del equipo.
 
 ## Migraciones guiadas
@@ -248,13 +266,13 @@ stratum migration review --dry-run                                   # qué camb
 stratum migration review                                             # corrige la migración y vacía pendingRenames
 ```
 
-- Los renombrados de `msg.json` se convierten en `RenameColumn` (EF Core generaría `DropColumn` + `AddColumn` y se perderían
+- Los renombrados de `stratum.json` se convierten en `RenameColumn` (EF Core generaría `DropColumn` + `AddColumn` y se perderían
   los datos). Si además cambia el tipo, se añade un `AlterColumn` y se avisa: fallará si la base de datos no puede convertir los valores.
 - Avisa de todo lo que borra datos (`DropTable`, `DropColumn`) y de los cambios que pueden fallar con datos existentes
   (cambio de tipo, columna que pasa a obligatoria, longitud máxima menor).
 - En el Studio (página del servicio, sección Migraciones) es un solo paso: **Comprobar** dice si las entidades tienen cambios sin
   migración, **Crear y revisar migración** la crea y la corrige, **Ver SQL** enseña el script y **Deshacer esta migración**
-  la quita (y devuelve sus renombrados a `msg.json`) mientras no se haya aplicado.
+  la quita (y devuelve sus renombrados a `stratum.json`) mientras no se haya aplicado.
 
 ## Eliminar un servicio
 
@@ -266,9 +284,9 @@ stratum service remove D:/apis/payments --path C:/servicios --keep-files --yes  
 
 Se elimina el servicio y lo que cuelga de él:
 
-- su carpeta (código, tests, migraciones, `msg.json`). Con `--keep-files` (solo para servicios de otras carpetas) se conserva;
+- su carpeta (código, tests, migraciones, `stratum.json`). Con `--keep-files` (solo para servicios de otras carpetas) se conserva;
 - las suscripciones de otros servicios a sus eventos: sus contratos y los handlers que no hayas tocado (de los que sí, avisa);
-- su entrada en `msg.workspace.json` y sus referencias en el AppHost y la solución, que se regeneran.
+- su entrada en `stratum.workspace.json` y sus referencias en el AppHost y la solución, que se regeneran.
 
 La base de datos y los topics de Kafka viven en los contenedores de Aspire: Stratum te dice cuáles son para que los borres
 si ya no los necesitas. En el Studio: **General → Zona peligrosa → Eliminar**, con el mismo resumen y confirmación escribiendo
@@ -277,13 +295,13 @@ el nombre del servicio.
 Al quitar una entidad o dejar de publicar sus eventos, los servicios que los escuchaban aparecen marcados en el mapa de
 eventos; `stratum subscribe --sync --prune` (o *Quitar* en su Mensajería) limpia esas suscripciones.
 
-## Servicios en otras carpetas (`msg.workspace.json`)
+## Servicios en otras carpetas (`stratum.workspace.json`)
 
 Un sistema es una carpeta con servicios dentro, pero un servicio puede vivir en otra ruta (otro disco, otro repositorio):
 
 ```bash
 stratum new Payments -o D:/apis/payments
-stratum workspace add D:/apis/payments --path C:/servicios   # lo apunta en C:/servicios/msg.workspace.json
+stratum workspace add D:/apis/payments --path C:/servicios   # lo apunta en C:/servicios/stratum.workspace.json
 stratum workspace list --path C:/servicios
 stratum aspire --path C:/servicios                            # el AppHost lo incluye
 ```
@@ -302,7 +320,7 @@ En el Studio: **Servicio → Mensajería entre servicios** (broker) y **Entidade
 
 Qué genera:
 
-- `MsgWiring.g.cs`: `AddMsgMessaging("shop").UseKafka(...).UseEntityFramework<ShopDbContext>()`.
+- `StratumWiring.g.cs`: `AddStratumMessaging("shop").UseKafka(...).UseEntityFramework<ShopDbContext>()`.
 - Tablas `msg_outbox` y `msg_inbox` (`MessagingConfiguration.g.cs`): crea la migración después de activar la mensajería.
 - `IntegrationEvents/ProductIntegrationEvents.g.cs`: el contrato público, con topic `shop.product-created`, etc.
   - Vertical slice: los endpoints publican con `IEventBus` en la misma transacción que el cambio.
@@ -324,7 +342,7 @@ stratum subscribe --sync --path billing                    # si Orders cambió l
 stratum events map                                         # quién publica y quién escucha cada evento
 ```
 
-- Stratum copia el contrato en `IntegrationEvents/Orders/OrderCreated.g.cs` (en `msg.json` queda una copia de sus datos, así que
+- Stratum copia el contrato en `IntegrationEvents/Orders/OrderCreated.g.cs` (en `stratum.json` queda una copia de sus datos, así que
   el servicio se genera aunque `orders` esté en otro repositorio) y crea `Events/Orders/OrderCreatedHandler.cs`, que es tuyo.
 - El handler se ejecuta una vez por evento (inbox), con reintentos y dead-letter; lo que guardes en él se confirma junto con
   el registro del inbox.
@@ -335,10 +353,10 @@ Paquetes:
 
 | Paquete | Qué hace |
 | --- | --- |
-| `Msg.Messaging` | `IEventBus` (outbox), handlers `IIntegrationEventHandler<T>` que se ejecutan una vez por evento (inbox), reintentos con espera creciente y dead-letter, trazas de extremo a extremo y transporte en memoria. Sin dependencias de terceros. |
-| `Msg.Messaging.EntityFrameworkCore` | Outbox e inbox en la base de datos del servicio: el evento se guarda en la misma transacción que tus cambios, y el handler y su registro en el inbox también. |
-| `Msg.Messaging.Kafka` | Kafka con Confluent.Kafka: un topic por evento, un consumer group por servicio, commit tras procesar, topic `<topic>.dead-letter`, topics creados al primer uso. |
-| `Msg.Messaging.AzureServiceBus` | Azure Service Bus: un topic por evento, una suscripción por servicio, complete tras procesar y dead-letter nativo; funciona con el emulador de Aspire. |
+| `Stratum.Messaging` | `IEventBus` (outbox), handlers `IIntegrationEventHandler<T>` que se ejecutan una vez por evento (inbox), reintentos con espera creciente y dead-letter, trazas de extremo a extremo y transporte en memoria. Sin dependencias de terceros. |
+| `Stratum.Messaging.EntityFrameworkCore` | Outbox e inbox en la base de datos del servicio: el evento se guarda en la misma transacción que tus cambios, y el handler y su registro en el inbox también. |
+| `Stratum.Messaging.Kafka` | Kafka con Confluent.Kafka: un topic por evento, un consumer group por servicio, commit tras procesar, topic `<topic>.dead-letter`, topics creados al primer uso. |
+| `Stratum.Messaging.AzureServiceBus` | Azure Service Bus: un topic por evento, una suscripción por servicio, complete tras procesar y dead-letter nativo; funciona con el emulador de Aspire. |
 
 ### AsyncAPI
 
@@ -346,14 +364,14 @@ Paquetes:
 stratum events asyncapi                    # asyncapi.yaml en la carpeta del sistema (-o eventos.json para JSON)
 ```
 
-Especificación AsyncAPI 3.1 de los eventos del sistema, sacada de los `msg.json` como el mapa de eventos: un channel por
+Especificación AsyncAPI 3.1 de los eventos del sistema, sacada de los `stratum.json` como el mapa de eventos: un channel por
 topic, la operación `send` del servicio que lo publica y una `receive` por cada servicio que lo escucha, el esquema de los
-datos tal como viajan (camelCase) y las cabeceras de `Msg.Messaging`. Sirve para AsyncAPI Studio, generadores de
+datos tal como viajan (camelCase) y las cabeceras de `Stratum.Messaging`. Sirve para AsyncAPI Studio, generadores de
 clientes o para que otros equipos sepan qué pueden escuchar. En el Studio: **Mapa de eventos → Especificación AsyncAPI**.
 
 ### `Idempotency-Key` en la API
 
-Todos los servicios lo tienen (`Msg.ServiceDefaults`): un cliente que manda `POST`/`PUT`/`PATCH`/`DELETE` con la cabecera
+Todos los servicios lo tienen (`Stratum.ServiceDefaults`): un cliente que manda `POST`/`PUT`/`PATCH`/`DELETE` con la cabecera
 `Idempotency-Key` puede reintentar sin miedo (timeout, doble clic). La primera petición se ejecuta y su respuesta se guarda;
 los reintentos con la misma clave reciben la misma respuesta con `Idempotent-Replayed: true` sin volver a ejecutarse.
 
@@ -379,7 +397,7 @@ stratum mcp config            # configuración lista para pegar en Claude Deskto
 - **Plan primero**: las que cambian algo devuelven el plan (lo mismo que `--dry-run`) y solo escriben con
   `"apply": true`, que el asistente envía cuando tú apruebas el plan. Cada herramienta ejecuta el comando de la CLI
   correspondiente: el resultado es el mismo que desde la CLI o el Studio, con la misma protección de tus archivos.
-- **Recursos**: el `msg.json` de cada servicio y `asyncapi.yaml`.
+- **Recursos**: el `stratum.json` de cada servicio y `asyncapi.yaml`.
 - **Prompts**: `design_from_spec` (le pasas requisitos o historias de usuario y propone servicios, entidades y eventos;
   los crea cuando lo apruebas) y `review_system` (busca problemas sin cambiar nada).
 - Protocolo: stdio, compatible con clientes de la revisión 2026-07-28 y anteriores (handshake `initialize`).
@@ -390,7 +408,7 @@ stratum mcp config            # configuración lista para pegar en Claude Deskto
 
 ```
 Orders/
-├── msg.json                     ← definición del servicio (la fuente de verdad)
+├── stratum.json                     ← definición del servicio (la fuente de verdad)
 ├── Orders.slnx
 ├── Directory.Build.props        ← net10.0, nullable, warnings = errores, analyzers
 ├── Directory.Packages.props     ← Central Package Management
@@ -401,19 +419,19 @@ Orders/
 └── tests/Orders.Api.Tests/      ← tests del contrato común
 ```
 
-## Paquetes `Msg.ServiceDefaults.*`
+## Paquetes `Stratum.ServiceDefaults.*`
 
 Uno por feature, para que quien no use una no arrastre sus dependencias:
 
 | Paquete | Qué aporta | Dependencias |
 | --- | --- | --- |
-| `Msg.Ddd` | `AggregateRoot`, `DomainEvent`, `DomainException`, `ICommand`/`IQuery` y sus handlers | Ninguna |
-| `Msg.ServiceDefaults` | `AddMsgServiceDefaults()`, `UseMsgServiceDefaults()`, `MapMsgDefaultEndpoints()`, `AddValidatedOptions<T>()`, `AddMsgApplication()` | Solo ASP.NET Core + `Msg.Ddd` |
-| `Msg.ServiceDefaults.OpenTelemetry` | `AddMsgOpenTelemetry("servicio")` | OpenTelemetry |
-| `Msg.ServiceDefaults.Resilience` | `AddMsgResilience()`, `AddMsgServiceDiscovery()` | Microsoft.Extensions.Http.Resilience, Microsoft.Extensions.ServiceDiscovery |
-| `Msg.ServiceDefaults.Authentication` | `AddMsgAuthentication()` (sección `Auth`) | JwtBearer |
+| `Stratum.Ddd` | `AggregateRoot`, `DomainEvent`, `DomainException`, `ICommand`/`IQuery` y sus handlers | Ninguna |
+| `Stratum.ServiceDefaults` | `AddStratumServiceDefaults()`, `UseStratumServiceDefaults()`, `MapStratumDefaultEndpoints()`, `AddValidatedOptions<T>()`, `AddStratumApplication()` | Solo ASP.NET Core + `Stratum.Ddd` |
+| `Stratum.ServiceDefaults.OpenTelemetry` | `AddStratumOpenTelemetry("servicio")` | OpenTelemetry |
+| `Stratum.ServiceDefaults.Resilience` | `AddStratumResilience()`, `AddStratumServiceDiscovery()` | Microsoft.Extensions.Http.Resilience, Microsoft.Extensions.ServiceDiscovery |
+| `Stratum.ServiceDefaults.Authentication` | `AddStratumAuthentication()` (sección `Auth`) | JwtBearer |
 
-Todos comparten versión con Stratum (`<Version>` en `Directory.Build.props`). Las versiones de sus dependencias viven en `Directory.Packages.props` de este repo; un servicio generado solo fija `Msg.*`.
+Todos comparten versión con Stratum (`<Version>` en `Directory.Build.props`). Las versiones de sus dependencias viven en `Directory.Packages.props` de este repo; un servicio generado solo fija `Stratum.*`.
 
 **Flujo de una actualización de seguridad:** subir la dependencia aquí → nueva versión de Stratum → en cada servicio, `stratum upgrade` → PR.
 
@@ -430,33 +448,33 @@ Todos comparten versión con Stratum (`<Version>` en `Directory.Build.props`). L
 ## Cómo funciona
 
 ```
-msg.json ──► ServiceDefinition ──► ServiceGenerator (puro, en memoria) ──► FileWriter (CLI)
+stratum.json ──► ServiceDefinition ──► ServiceGenerator (puro, en memoria) ──► FileWriter (CLI)
                                          │                                └─► zip / repo (editor visual, futuro)
                                          └── templates/service/** (recursos incrustados)
 ```
 
-- **`src/Msg.Core`**: modelo, motor de plantillas y generador. No escribe en disco, así que el editor visual podrá reutilizarlo tal cual.
-- **`src/Msg.Cli`**: la CLI (`new`, `add entity`, `aspire`, `studio`, `upgrade`). Sin dependencias externas: solo .NET y ASP.NET Core.
-- **`src/Msg.Studio`**: el editor visual (componentes Blazor y estado), sobre `Msg.Core`.
-- **`src/Msg.ServiceDefaults*`**: los paquetes que consumen los servicios generados, con sus tests en `tests/`.
+- **`src/Stratum.Core`**: modelo, motor de plantillas y generador. No escribe en disco, así que el editor visual podrá reutilizarlo tal cual.
+- **`src/Stratum.Cli`**: la CLI (`new`, `add entity`, `aspire`, `studio`, `upgrade`). Sin dependencias externas: solo .NET y ASP.NET Core.
+- **`src/Stratum.Studio`**: el editor visual (componentes Blazor y estado), sobre `Stratum.Core`.
+- **`src/Stratum.ServiceDefaults*`**: los paquetes que consumen los servicios generados, con sus tests en `tests/`.
 - **`templates/service`**: plantillas como archivos reales (C#, XML, YAML, JSON), fáciles de leer y editar:
-  - `{{Service}}`, `{{service-kebab}}`, `{{DevPort}}` y `{{MsgVersion}}` en el contenido; `__Service__` en las rutas.
-  - Líneas con `@msg:if feature`, `@msg:if !feature`, `@msg:else` y `@msg:end` dentro de cualquier comentario. La línea de la directiva se elimina del resultado.
+  - `{{Service}}`, `{{service-kebab}}`, `{{DevPort}}` y `{{StratumVersion}}` en el contenido; `__Service__` en las rutas.
+  - Líneas con `@stratum:if feature`, `@stratum:if !feature`, `@stratum:else` y `@stratum:end` dentro de cualquier comentario. La línea de la directiva se elimina del resultado.
   - Un archivo cuya plantilla queda vacía no se genera.
   - `_gitignore` → `.gitignore` y `_github/` → `.github/`, para que no haya archivos ocultos en las plantillas.
 
 ## Desarrollo
 
 ```bash
-dotnet build Msg.slnx
-dotnet test Msg.slnx
+dotnet build Stratum.slnx
+dotnet test Stratum.slnx
 
 # Mientras los paquetes no estén en nuget.org: empaqueta en local y apunta el servicio a esa carpeta.
-dotnet pack Msg.slnx -c Release -o ./artifacts/packages
-dotnet run --project src/Msg.Cli -- new Orders -o ../Orders --package-source ./artifacts/packages
+dotnet pack Stratum.slnx -c Release -o ./artifacts/packages
+dotnet run --project src/Stratum.Cli -- new Orders -o ../Orders --package-source ./artifacts/packages
 ```
 
-`--package-source` genera en el servicio un `nuget.config` con *package source mapping*: `Msg.*` sale solo de esa carpeta y todo lo demás solo de nuget.org. Si reempaquetas la misma versión, borra la caché: `dotnet nuget locals global-packages --clear` (el smoke test ya lo hace solo para `Msg.*`).
+`--package-source` genera en el servicio un `nuget.config` con *package source mapping*: `Stratum.*` sale solo de esa carpeta y todo lo demás solo de nuget.org. Si reempaquetas la misma versión, borra la caché: `dotnet nuget locals global-packages --clear` (el smoke test ya lo hace solo para `Stratum.*`).
 
 Test de extremo a extremo (genera, compila, arranca y prueba los endpoints):
 
@@ -473,23 +491,24 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
 Para instalar `msg` como herramienta global:
 
 ```bash
-dotnet pack src/Msg.Cli -c Release -o ./artifacts/packages
-dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
+dotnet pack src/Stratum.Cli -c Release -o ./artifacts/packages
+dotnet tool install -g Stratum.Cli --add-source ./artifacts/packages
 ```
 
 ## Roadmap
 
 1. ✅ **Fase 1**: CLI + servicio con la base común.
 2. **Fase 2**
-   - ✅ 2a: lo común en paquetes `Msg.ServiceDefaults.*` + `stratum upgrade`.
+   - ✅ 2a: lo común en paquetes `Stratum.ServiceDefaults.*` + `stratum upgrade`.
    - ✅ 2b: `stratum add entity` con CRUD, EF Core (PostgreSQL o SQL Server) y tests con SQLite en memoria.
    - 2c: publicar los paquetes en nuget.org desde CI al crear un tag.
 3. ✅ `stratum aspire`: AppHost de Aspire para todos los servicios.
-4. ✅ **Fase 3**: editor visual `stratum studio` (Blazor Server sobre `Msg.Core`).
+4. ✅ **Fase 3**: editor visual `stratum studio` (Blazor Server sobre `Stratum.Core`).
 5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`stratum entity`, Studio).
 6. ✅ Migraciones guiadas: renombrados sin perder datos, avisos de lo que borra datos, SQL y deshacer (`stratum migration review`, Studio).
 7. ✅ Features editables en servicios existentes (`stratum feature`, Studio), paquetes y archivos que sobran se quitan, `.g.cs` editados a mano detectados.
-8. En curso: mensajería entre servicios. ✅ `Msg.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). ✅ Suscripciones y mapa de eventos. ✅ Azure Service Bus e `Idempotency-Key`.
+8. En curso: mensajería entre servicios. ✅ `Stratum.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). ✅ Suscripciones y mapa de eventos. ✅ Azure Service Bus e `Idempotency-Key`.
 9. En curso: ✅ AsyncAPI, ✅ servidor MCP, ✅ referencias entre entidades y operaciones del agregado, ✅ importar OpenAPI, ✅ feature `mcp` en los servicios.
-10. Al final: renombrar los paquetes `Msg.*`, publicar en nuget.org.
+10. ✅ Nombres de Stratum: paquetes `Stratum.*`, `stratum.json`, `.stratum`, con migración automática (`stratum upgrade`).
+11. Publicar en nuget.org (prefijo `Stratum.*`, la herramienta como `Stratum.Cli`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

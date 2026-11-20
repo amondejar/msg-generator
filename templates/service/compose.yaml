@@ -2,7 +2,7 @@
 # Connection string for it is in src/{{Service}}.Api/appsettings.Development.json.
 services:
   db:
-    # @msg:if postgres
+    # @stratum:if postgres
     image: postgres:17
     environment:
       POSTGRES_USER: postgres
@@ -12,7 +12,7 @@ services:
       - "5432:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
-    # @msg:else
+    # @stratum:else
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
       ACCEPT_EULA: "Y"
@@ -21,7 +21,7 @@ services:
       - "1433:1433"
     volumes:
       - db-data:/var/opt/mssql
-    # @msg:end
+    # @stratum:end
 
 volumes:
   db-data:

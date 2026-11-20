@@ -1,6 +1,0 @@
-{
-  // Tokens of your team, usable as {{Company}} in any template under .msg/templates.
-  "tokens": {
-    "Company": "MiEmpresa"
-  }
-}

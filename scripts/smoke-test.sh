@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end check: build + test + pack MSG, generate services that consume the local Msg.* packages,
+# End-to-end check: build + test + pack Stratum, generate services that consume the local Stratum.* packages,
 # build them with warnings-as-errors, run one and hit its endpoints, check "stratum upgrade",
 # then build and test the full variants. Usage: scripts/smoke-test.sh
 set -euo pipefail
@@ -17,36 +17,36 @@ fail() { echo "  ✘ $1"; [[ -f "$WORK/app.log" ]] && tail -20 "$WORK/app.log"; 
 # Without nuget.org (offline sandboxes) only the framework-only parts can be built; audit data can't be fetched either.
 if curl -sf -m 5 https://api.nuget.org/v3/index.json >/dev/null 2>&1; then ONLINE=1; AUDIT=(); else ONLINE=0; AUDIT=(-p:NuGetAudit=false); fi
 
-echo "▶ Build, test and pack MSG"
+echo "▶ Build, test and pack Stratum"
 if [[ $ONLINE == 1 ]]; then
-  dotnet build "$ROOT/Msg.slnx" -c Release -v q -nologo >/dev/null
-  dotnet test  "$ROOT/Msg.slnx" -c Release --no-build -v q -nologo >/dev/null && pass "Msg.ServiceDefaults.* and Msg.Messaging tests pass"
-  dotnet pack  "$ROOT/Msg.slnx" -c Release --no-build -o "$PKGS" -v q -nologo >/dev/null
+  dotnet build "$ROOT/Stratum.slnx" -c Release -v q -nologo >/dev/null
+  dotnet test  "$ROOT/Stratum.slnx" -c Release --no-build -v q -nologo >/dev/null && pass "Stratum.ServiceDefaults.* and Stratum.Messaging tests pass"
+  dotnet pack  "$ROOT/Stratum.slnx" -c Release --no-build -o "$PKGS" -v q -nologo >/dev/null
 else
   echo "  – nuget.org not reachable: building/packing only the framework-only projects"
   # Without nuget.org the Blazor framework assets package can't be restored: build the CLI without it.
-  dotnet build "$ROOT/src/Msg.Cli" -c Release -v q -nologo -p:RequiresAspNetWebAssets=false >/dev/null
-  dotnet pack  "$ROOT/src/Msg.Ddd" -c Release -o "$PKGS" -v q -nologo >/dev/null
-  dotnet pack  "$ROOT/src/Msg.ServiceDefaults" -c Release -o "$PKGS" -v q -nologo >/dev/null
-  dotnet pack  "$ROOT/src/Msg.Messaging" -c Release -o "$PKGS" -v q -nologo >/dev/null
+  dotnet build "$ROOT/src/Stratum.Cli" -c Release -v q -nologo -p:RequiresAspNetWebAssets=false >/dev/null
+  dotnet pack  "$ROOT/src/Stratum.Ddd" -c Release -o "$PKGS" -v q -nologo >/dev/null
+  dotnet pack  "$ROOT/src/Stratum.ServiceDefaults" -c Release -o "$PKGS" -v q -nologo >/dev/null
+  dotnet pack  "$ROOT/src/Stratum.Messaging" -c Release -o "$PKGS" -v q -nologo >/dev/null
 fi
 pass "packed: $(ls "$PKGS" | tr '\n' ' ')"
-MSG=(dotnet "$ROOT/src/Msg.Cli/bin/Release/net10.0/stratum.dll")
+MSG=(dotnet "$ROOT/src/Stratum.Cli/bin/Release/net10.0/stratum.dll")
 VERSION="$("${MSG[@]}" --version)"
 
-# The global NuGet cache keeps packages by id+version: drop old Msg.* builds so we test the ones just packed.
+# The global NuGet cache keeps packages by id+version: drop old Stratum.* builds so we test the ones just packed.
 GLOBAL="$(dotnet nuget locals global-packages --list | sed 's/^global-packages: //')"
 rm -rf "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd "$GLOBAL"/msg.messaging*
 
-echo "▶ Generate every feature combination worth checking (MSG $VERSION)"
+echo "▶ Generate every feature combination worth checking (Stratum $VERSION)"
 "${MSG[@]}" new Orders  -o "$WORK/full" --package-source "$PKGS"        >/dev/null && pass "full (default features)"
 "${MSG[@]}" new Billing -o "$WORK/auth" --package-source "$PKGS" --auth >/dev/null && pass "full + auth"
 "${MSG[@]}" new Catalog -o "$WORK/core" --package-source "$PKGS" \
   --no-observability --no-openapi --no-resilience --no-tests            >/dev/null && pass "core (framework only)"
-"${MSG[@]}" new --from "$WORK/auth/msg.json" -o "$WORK/from" --package-source "$PKGS" >/dev/null && pass "--from msg.json"
+"${MSG[@]}" new --from "$WORK/auth/stratum.json" -o "$WORK/from" --package-source "$PKGS" >/dev/null && pass "--from stratum.json"
 
 echo "▶ Template sanity"
-if grep -rn "@msg:\|{{Service}}\|{{service-kebab}}\|{{DevPort}}\|{{MsgVersion}}\|__Service__" "$WORK"/{full,auth,core,from} ; then
+if grep -rn "@stratum:\|{{Service}}\|{{service-kebab}}\|{{DevPort}}\|{{StratumVersion}}\|__Service__" "$WORK"/{full,auth,core,from} ; then
   fail "unrendered template markers found"
 fi
 pass "no template markers left"
@@ -55,12 +55,12 @@ for f in $(find "$WORK"/{full,auth,core,from} -name "*.json"); do
 done
 pass "all JSON files are valid"
 diff -r "$WORK/auth" "$WORK/from" >/dev/null && pass "--from reproduces the same service" || fail "--from differs"
-grep -q "Include=\"Msg.ServiceDefaults\" Version=\"$VERSION\"" "$WORK/core/Directory.Packages.props" \
-  && pass "service pins Msg.ServiceDefaults $VERSION" || fail "Msg.ServiceDefaults version"
+grep -q "Include=\"Stratum.ServiceDefaults\" Version=\"$VERSION\"" "$WORK/core/Directory.Packages.props" \
+  && pass "service pins Stratum.ServiceDefaults $VERSION" || fail "Stratum.ServiceDefaults version"
 
 echo "▶ Build 'core' service (TreatWarningsAsErrors)"
 dotnet build "$WORK/core" -c Release -v q -nologo "${AUDIT[@]}" >/dev/null || dotnet build "$WORK/core" -c Release -nologo "${AUDIT[@]}" | tail -20
-pass "core builds against the local Msg.ServiceDefaults package with zero warnings"
+pass "core builds against the local Stratum.ServiceDefaults package with zero warnings"
 
 echo "▶ Run 'core' service and test the contract"
 PORT=5987
@@ -99,9 +99,9 @@ grep -q "SemVer" "$WORK/bad.log" && pass "invalid Service:Version stops startup 
 echo "▶ stratum upgrade"
 cp -r "$WORK/core" "$WORK/upgraded"
 "${MSG[@]}" upgrade --path "$WORK/upgraded" --to 9.9.9 >/dev/null
-grep -q 'Include="Msg.ServiceDefaults" Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
-  && grep -q '"msgVersion": "9.9.9"' "$WORK/upgraded/msg.json" \
-  && pass "upgrade bumps Msg.* packages and msg.json" || fail "upgrade"
+grep -q 'Include="Stratum.ServiceDefaults" Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
+  && grep -q '"stratumVersion": "9.9.9"' "$WORK/upgraded/stratum.json" \
+  && pass "upgrade bumps Stratum.* packages and stratum.json" || fail "upgrade"
 
 echo "▶ stratum add entity"
 "${MSG[@]}" add entity Product  --path "$WORK/full" --props "Name:string, Price:decimal, Description:string?, Stock:int" >/dev/null
@@ -114,7 +114,7 @@ grep -q "MapProductEndpoints" "$WORK/full/src/Orders.Api/Features/FeatureRegistr
   && grep -q "Npgsql.EntityFrameworkCore.PostgreSQL" "$WORK/full/Directory.Packages.props" \
   && grep -q '"Database"' "$WORK/full/src/Orders.Api/appsettings.Development.json" \
   && pass "registration, packages and connection string wired" || fail "entity wiring"
-"${MSG[@]}" new --from "$WORK/full/msg.json" -o "$WORK/regen" --package-source "$PKGS" >/dev/null && pass "stratum new --from regenerates the entities"
+"${MSG[@]}" new --from "$WORK/full/stratum.json" -o "$WORK/regen" --package-source "$PKGS" >/dev/null && pass "stratum new --from regenerates the entities"
 
 echo "▶ Clean Architecture + DDD"
 "${MSG[@]}" new Catalog -o "$WORK/clean" --architecture clean-ddd --package-source "$PKGS" >/dev/null
@@ -127,14 +127,14 @@ grep -q "AggregateRoot<Guid>" "$WORK/clean/src/Catalog.Domain/Products/Product.g
   && grep -q "ICommandHandler<CreateProduct, Guid>" "$WORK/clean/src/Catalog.Application/Products/ProductCommands.g.cs" \
   && grep -q "AddScoped<IProductRepository, ProductRepository>" "$WORK/clean/src/Catalog.Infrastructure/Persistence/RepositoryRegistration.g.cs" \
   && pass "Domain / Application / Infrastructure / Api with aggregates, use cases and repositories" || fail "clean-ddd structure"
-if grep -rn "@msg:\|{{Service}}\|{{Entity}}\|__Entity__" "$WORK/clean"; then fail "unrendered markers in clean-ddd"; fi
+if grep -rn "@stratum:\|{{Service}}\|{{Entity}}\|__Entity__" "$WORK/clean"; then fail "unrendered markers in clean-ddd"; fi
 pass "no template markers left in clean-ddd"
 
 echo "▶ Editable entities (stratum entity)"
 CP="$WORK/clean/src/Catalog.Domain/Products/Product.cs"
 # User code in the partial class: must survive every regeneration.
 cat > "$CP" <<'CS'
-using Msg.Ddd;
+using Stratum.Ddd;
 
 namespace Catalog.Domain.Products;
 
@@ -157,7 +157,7 @@ grep -q "Product.Name se renombra a Title" <<<"$OUT" && grep -q "Product.Descrip
 grep -q "Label => " "$CP" && grep -q "public string Title" "$WORK/clean/src/Catalog.Domain/Products/Product.g.cs" \
   && ! grep -q "Description" "$WORK/clean/src/Catalog.Domain/Products/Product.g.cs" \
   && pass "properties regenerated in .g.cs, user partial untouched" || fail "entity update"
-grep -q '"from": "Name"' "$WORK/clean/msg.json" && pass "rename recorded in msg.json (pendingRenames)" || fail "pendingRenames"
+grep -q '"from": "Name"' "$WORK/clean/stratum.json" && pass "rename recorded in stratum.json (pendingRenames)" || fail "pendingRenames"
 sed -i 's/{Name} ({Price})/{Title} ({Price})/' "$CP"
 "${MSG[@]}" entity update Product --path "$WORK/clean" --props "Title:string, Price:decimal, Stock:int" | grep -q "Nada que cambiar" \
   && pass "no-op update changes nothing" || fail "no-op update"
@@ -180,7 +180,7 @@ grep -q "HasOne<global::Catalog.Domain.Products.Product>().WithMany().HasForeign
   && ! "${MSG[@]}" entity remove Product --path "$WORK/clean" >/dev/null 2>&1 \
   && pass "clean-ddd: references (foreign keys, checks) and aggregate operations" || fail "clean-ddd references/operations"
 "${MSG[@]}" feature on mcp --path "$WORK/clean" >/dev/null
-grep -q 'app.MapMcp("/mcp")' "$CR/Catalog.Api/MsgWiring.g.cs" \
+grep -q 'app.MapMcp("/mcp")' "$CR/Catalog.Api/StratumWiring.g.cs" \
   && grep -q 'Name = "discontinue_product"' "$CR/Catalog.Api/Features/Products/ProductMcpTools.g.cs" \
   && grep -q 'Name = "create_review"' "$CR/Catalog.Api/Features/Reviews/ReviewMcpTools.g.cs" \
   && grep -q 'Include="ModelContextProtocol.AspNetCore"' "$CR/Catalog.Api/Catalog.Api.csproj" \
@@ -193,8 +193,8 @@ grep -q "MissingReferencesAsync" "$WORK/full/src/Orders.Api/Features/Shipments/S
   && ! "${MSG[@]}" entity operation add Supplier Approve --path "$WORK/full" >/dev/null 2>&1 \
   && ! "${MSG[@]}" add entity Bad --path "$WORK/full" --props "X:Nope" >/dev/null 2>&1 \
   && pass "vertical slice: references with 400/409 checks and test data" || fail "vertical references"
-# An entity from MSG < 0.10 (no "layout" in msg.json) is read-only until converted.
-python3 - "$WORK/full/msg.json" <<'PY'
+# An entity from Stratum < 0.10 (no "layout" in stratum.json) is read-only until converted.
+python3 - "$WORK/full/stratum.json" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
 for e in d["entities"]:
@@ -310,18 +310,50 @@ echo "$OUT" | grep -q "Author (/api/v1/authors): FullName:string, Born:date?" \
   && [[ -f "$WORK/imported/src/LibraryAPI.Domain/Books/Book.Lend.cs" ]] \
   && pass "import openapi: entities, references, operations and a report of the rest" || { echo "$OUT"; fail "import openapi"; }
 
+echo "▶ stratum upgrade: services from before 0.22 (Msg.*, msg.json)"
+OLD="$WORK/oldnames"
+"${MSG[@]}" new Shipping -o "$OLD" --package-source "$PKGS" >/dev/null
+"${MSG[@]}" add entity Parcel --path "$OLD" --props "Code:string" >/dev/null
+"${MSG[@]}" messaging on --broker inMemory --path "$OLD" >/dev/null
+"${MSG[@]}" events on Parcel --path "$OLD" >/dev/null
+python3 - "$OLD" <<'PY'
+import os, re, sys
+root = sys.argv[1]
+for d, dirs, files in os.walk(root):
+    dirs[:] = [x for x in dirs if x not in ("bin", "obj")]
+    for n in files:
+        p = os.path.join(d, n)
+        try: s = open(p, encoding="utf-8").read()
+        except UnicodeDecodeError: continue
+        t = re.sub(r"\bStratum\.(?=(ServiceDefaults|Ddd|Messaging)\b)", "Msg.", s)
+        t = re.sub(r"\b(Add|Use|Map)Stratum(?=[A-Z])", r"\1Msg", t)
+        t = t.replace("StratumWiring", "MsgWiring").replace('"stratumVersion"', '"msgVersion"').replace('pattern="Stratum.*"', 'pattern="Msg.*"')
+        if t != s: open(p, "w", encoding="utf-8").write(t)
+os.rename(os.path.join(root, "stratum.json"), os.path.join(root, "msg.json"))
+w = os.path.join(root, "src", "Shipping.Api")
+os.rename(os.path.join(w, "StratumWiring.g.cs"), os.path.join(w, "MsgWiring.g.cs"))
+PY
+BLOCKED=$("${MSG[@]}" add entity Box --path "$OLD" --props "Size:int" 2>&1 || true)
+PLAN=$("${MSG[@]}" upgrade --path "$OLD" --dry-run)
+echo "$BLOCKED" | grep -q "stratum upgrade" && echo "$PLAN" | grep -q "msg.json → stratum.json" \
+  && "${MSG[@]}" upgrade --path "$OLD" >/dev/null \
+  && [[ -f "$OLD/stratum.json" && ! -f "$OLD/msg.json" && -f "$OLD/src/Shipping.Api/StratumWiring.g.cs" && ! -f "$OLD/src/Shipping.Api/MsgWiring.g.cs" ]] \
+  && grep -q "AddStratumWiring()" "$OLD/src/Shipping.Api/Program.cs" \
+  && ! grep -rqE "\bMsg\.(ServiceDefaults|Ddd|Messaging)|AddMsg|UseMsg" "$OLD" --include=*.cs --include=*.csproj --include=*.props \
+  && pass "upgrade migrates Msg.* / msg.json / MsgWiring to Stratum (user code included)" || fail "legacy names migration"
+
 echo "▶ Features on/off in an existing service (stratum feature)"
 FS="$WORK/features"
 "${MSG[@]}" new Shop -o "$FS" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" add entity Product --path "$FS" --props "Name:string" >/dev/null
 "${MSG[@]}" feature off docker openApi --path "$FS" >/dev/null
-[[ ! -f "$FS/Dockerfile" ]] && ! grep -q "Scalar.AspNetCore" "$FS/src/Shop.Api/Shop.Api.csproj" "$FS/Directory.Packages.props" "$FS/src/Shop.Api/MsgWiring.g.cs" \
-  && grep -q "AddMsgWiring()" "$FS/src/Shop.Api/Program.cs" \
+[[ ! -f "$FS/Dockerfile" ]] && ! grep -q "Scalar.AspNetCore" "$FS/src/Shop.Api/Shop.Api.csproj" "$FS/Directory.Packages.props" "$FS/src/Shop.Api/StratumWiring.g.cs" \
+  && grep -q "AddStratumWiring()" "$FS/src/Shop.Api/Program.cs" \
   && pass "feature off removes its files, packages and wiring (Program.cs untouched)" || fail "feature off"
 "${MSG[@]}" feature on docker openApi --path "$FS" >/dev/null
-[[ -f "$FS/Dockerfile" ]] && grep -q 'Include="Scalar.AspNetCore"' "$FS/src/Shop.Api/Shop.Api.csproj" && grep -q "MapScalarApiReference" "$FS/src/Shop.Api/MsgWiring.g.cs" \
+[[ -f "$FS/Dockerfile" ]] && grep -q 'Include="Scalar.AspNetCore"' "$FS/src/Shop.Api/Shop.Api.csproj" && grep -q "MapScalarApiReference" "$FS/src/Shop.Api/StratumWiring.g.cs" \
   && pass "feature on brings them back" || fail "feature on"
-sed -i 's/builder.AddFeatures();/builder.AddFeatures(); \/\/ tweak/' "$FS/src/Shop.Api/MsgWiring.g.cs"
+sed -i 's/builder.AddFeatures();/builder.AddFeatures(); \/\/ tweak/' "$FS/src/Shop.Api/StratumWiring.g.cs"
 "${MSG[@]}" feature on auth --path "$FS" --dry-run | grep -q "Has editado a mano" \
   && pass "a hand-edited .g.cs is detected before overwriting it" || fail "hand-edit detection"
 "${MSG[@]}" feature on auth --path "$FS" >/dev/null   # restores the generated wiring (and keeps auth for the build below)
@@ -330,23 +362,23 @@ cat > "$LP/src/Shop.Api/Program.cs" <<'CS'
 using Shop.Api;
 using Shop.Api.Endpoints;
 using Shop.Api.Features;
-using Msg.ServiceDefaults;
+using Stratum.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.AddMsgServiceDefaults();
+builder.AddStratumServiceDefaults();
 builder.Services.AddValidatedOptions<ServiceOptions>(ServiceOptions.SectionName);
 builder.Services.AddValidation();
 builder.AddFeatures();
 var app = builder.Build();
-app.UseMsgServiceDefaults();
-app.MapMsgDefaultEndpoints();
+app.UseStratumServiceDefaults();
+app.MapStratumDefaultEndpoints();
 var v1 = app.MapGroup("/api/v1");
 v1.MapPingEndpoints();
 v1.MapFeatures();
 await app.RunAsync().ConfigureAwait(false);
 CS
 if "${MSG[@]}" feature off docker --path "$LP" >/dev/null 2>&1; then fail "features changed with a Program.cs from before 0.12"; fi
-"${MSG[@]}" feature convert --path "$LP" >/dev/null && grep -q "AddMsgWiring()" "$LP/src/Shop.Api/Program.cs" \
+"${MSG[@]}" feature convert --path "$LP" >/dev/null && grep -q "AddStratumWiring()" "$LP/src/Shop.Api/Program.cs" \
   && "${MSG[@]}" feature off docker --path "$LP" >/dev/null \
   && pass "Program.cs from before 0.12: blocked, converted, then editable" || fail "feature convert"
 
@@ -354,9 +386,9 @@ echo "▶ Messaging (stratum messaging / stratum events)"
 if "${MSG[@]}" events on Product --path "$FS" >/dev/null 2>&1; then fail "events published without messaging"; fi
 "${MSG[@]}" messaging on --broker kafka --path "$FS" >/dev/null
 "${MSG[@]}" events on Product --path "$FS" >/dev/null
-grep -q "UseKafka(builder.Configuration)" "$FS/src/Shop.Api/MsgWiring.g.cs" \
-  && grep -q "UseEntityFramework<ShopDbContext>" "$FS/src/Shop.Api/MsgWiring.g.cs" \
-  && grep -q 'Include="Msg.Messaging.Kafka"' "$FS/src/Shop.Api/Shop.Api.csproj" \
+grep -q "UseKafka(builder.Configuration)" "$FS/src/Shop.Api/StratumWiring.g.cs" \
+  && grep -q "UseEntityFramework<ShopDbContext>" "$FS/src/Shop.Api/StratumWiring.g.cs" \
+  && grep -q 'Include="Stratum.Messaging.Kafka"' "$FS/src/Shop.Api/Shop.Api.csproj" \
   && grep -q '"kafka": "localhost:9092"' "$FS/src/Shop.Api/appsettings.Development.json" \
   && grep -q "MessagingModel.ConfigureOutbox" "$FS/src/Shop.Api/Data/MessagingConfiguration.g.cs" \
   && pass "messaging on: Kafka, outbox/inbox tables, packages and connection string" || fail "messaging on"
@@ -386,7 +418,7 @@ grep -q 'IntegrationEvent("shop.product-deleted")' "$WORK/clean/src/Catalog.Appl
   && pass "a changed contract is detected and --sync copies it again" || fail "subscribe --sync"
 "${MSG[@]}" events off Product --path "$FS" >/dev/null
 "${MSG[@]}" subscribe --sync --prune --path "$WORK/clean" >/dev/null
-[[ ! -d "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop" ]] && ! grep -q '"service": "Shop"' "$WORK/clean/msg.json" \
+[[ ! -d "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop" ]] && ! grep -q '"service": "Shop"' "$WORK/clean/stratum.json" \
   && pass "--prune drops subscriptions to events no longer published" || fail "subscribe --prune"
 "${MSG[@]}" events on Product --path "$FS" >/dev/null
 
@@ -447,24 +479,24 @@ grep -q "RenameColumn" <<<"$OUT" && grep -q "BORRA DATOS: Borra la tabla tags" <
   && pass "review --dry-run reports the rename fix and the dropped table without writing" || { echo "$OUT"; fail "migration review --dry-run"; }
 "${MSG[@]}" migration review --path "$MIG" >/dev/null
 grep -q 'migrationBuilder.RenameColumn' "$MF" && ! grep -q 'name: "Title",' <<<"$(sed -n '/void Up/,/void Down/p' "$MF" | grep -A1 AddColumn)" \
-  && ! grep -q pendingRenames "$MIG/msg.json" \
+  && ! grep -q pendingRenames "$MIG/stratum.json" \
   && pass "review turns drop + add into RenameColumn and clears pendingRenames" || { cat "$MF"; fail "migration review"; }
 
-echo "▶ Team templates (.msg)"
+echo "▶ Team templates (.stratum)"
 TEAM="$WORK/team"; mkdir -p "$TEAM/services"
 "${MSG[@]}" templates eject service/src/__Service__.Api/Program.cs --path "$TEAM" >/dev/null
-sed -i '1i // {{Company}} conventions' "$TEAM/.msg/templates/service/src/__Service__.Api/Program.cs"
-printf '{ "tokens": { "Company": "Acme" } }\n' > "$TEAM/.msg/config.json"
-printf '* @{{Company}}/backend\n' > "$TEAM/.msg/templates/service/CODEOWNERS"
-: > "$TEAM/.msg/templates/service/Dockerfile"
+sed -i '1i // {{Company}} conventions' "$TEAM/.stratum/templates/service/src/__Service__.Api/Program.cs"
+printf '{ "tokens": { "Company": "Acme" } }\n' > "$TEAM/.stratum/config.json"
+printf '* @{{Company}}/backend\n' > "$TEAM/.stratum/templates/service/CODEOWNERS"
+: > "$TEAM/.stratum/templates/service/Dockerfile"
 "${MSG[@]}" new Orders -o "$TEAM/services/orders" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" add entity Product --path "$TEAM/services/orders" --props "Name:string" >/dev/null
 head -1 "$TEAM/services/orders/src/Orders.Api/Program.cs" | grep -q "Acme conventions" \
   && [[ "$(cat "$TEAM/services/orders/CODEOWNERS")" == "* @Acme/backend" ]] \
   && [[ ! -f "$TEAM/services/orders/Dockerfile" ]] \
   && pass "team templates: replace, add, remove and tokens (found walking up)" || fail "team templates"
-echo '// @msg:if bogus' >> "$TEAM/.msg/templates/service/CODEOWNERS"
-{ "${MSG[@]}" new Broken -o "$TEAM/services/broken" 2>&1 || true; } | grep -q ".msg/templates/service/CODEOWNERS, línea 2" \
+echo '// @stratum:if bogus' >> "$TEAM/.stratum/templates/service/CODEOWNERS"
+{ "${MSG[@]}" new Broken -o "$TEAM/services/broken" 2>&1 || true; } | grep -q ".stratum/templates/service/CODEOWNERS, línea 2" \
   && pass "a broken team template is reported with file and line" || fail "broken template error"
 
 echo "▶ stratum aspire"
@@ -476,34 +508,34 @@ SYS="$WORK/system"; mkdir -p "$SYS"
 "${MSG[@]}" messaging on --broker kafka --path "$SYS/orders" >/dev/null
 "${MSG[@]}" events on Order --path "$SYS/orders" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
-for f in Shop.AppHost/Shop.AppHost.csproj Shop.AppHost/AppHost.cs Shop.AppHost/MsgServices.g.cs Shop.slnx .aspire/settings.json; do
+for f in Shop.AppHost/Shop.AppHost.csproj Shop.AppHost/AppHost.cs Shop.AppHost/StratumServices.g.cs Shop.slnx .aspire/settings.json; do
   [[ -f "$SYS/$f" ]] || fail "missing $f"
 done
-grep -q 'AddKafka("kafka")' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'WithKafkaUI' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+grep -q 'AddKafka("kafka")' "$SYS/Shop.AppHost/StratumServices.g.cs" && grep -q 'WithKafkaUI' "$SYS/Shop.AppHost/StratumServices.g.cs" \
   && grep -q 'Aspire.Hosting.Kafka' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
   && pass "AppHost: Kafka + Kafka UI for the services with messaging" || fail "AppHost Kafka"
-grep -q 'AddProject<Projects.Orders_Api>("orders")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
-  && grep -q 'connectionName: "Database"' "$SYS/Shop.AppHost/MsgServices.g.cs" \
-  && grep -q 'AddPostgres' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'AddSqlServer' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+grep -q 'AddProject<Projects.Orders_Api>("orders")' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q 'connectionName: "Database"' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q 'AddPostgres' "$SYS/Shop.AppHost/StratumServices.g.cs" && grep -q 'AddSqlServer' "$SYS/Shop.AppHost/StratumServices.g.cs" \
   && pass "AppHost with both services, their databases and health checks" || fail "AppHost content"
 [[ -z "$("${MSG[@]}" aspire --path "$SYS" --name Shop | grep '^  [+~]')" ]] && pass "stratum aspire is idempotent" || fail "stratum aspire rewrote files"
 "${MSG[@]}" new Payments -o "$WORK/elsewhere/payments" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" workspace add "$WORK/elsewhere/payments" --path "$SYS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
-grep -q '"../elsewhere/payments"' "$SYS/msg.workspace.json" \
+grep -q '"../elsewhere/payments"' "$SYS/stratum.workspace.json" \
   && grep -q 'elsewhere\\payments\\src\\Payments.Api\\Payments.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
-  && grep -q 'AddProject<Projects.Payments_Api>("payments")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
-  && "${MSG[@]}" workspace list --path "$SYS" | grep -q "msg.workspace.json" \
-  && pass "a service in another folder joins the system (msg.workspace.json → AppHost)" || fail "workspace add"
+  && grep -q 'AddProject<Projects.Payments_Api>("payments")' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && "${MSG[@]}" workspace list --path "$SYS" | grep -q "stratum.workspace.json" \
+  && pass "a service in another folder joins the system (stratum.workspace.json → AppHost)" || fail "workspace add"
 "${MSG[@]}" new Notifications -o "$SYS/notifications" --package-source "$PKGS" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
 "${MSG[@]}" messaging on --broker azureServiceBus --path "$SYS/notifications" >/dev/null
 "${MSG[@]}" subscribe "$SYS/orders" Order.Created --path "$SYS/notifications" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
-grep -q 'AddAzureServiceBus("servicebus")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
-  && grep -q 'AddServiceBusSubscription("notifications-orders-order-created", "notifications")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+grep -q 'AddAzureServiceBus("servicebus")' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q 'AddServiceBusSubscription("notifications-orders-order-created", "notifications")' "$SYS/Shop.AppHost/StratumServices.g.cs" \
   && grep -q 'Aspire.Hosting.Azure.ServiceBus' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
-  && grep -q "UseAzureServiceBus" "$SYS/notifications/src/Notifications.Api/MsgWiring.g.cs" \
+  && grep -q "UseAzureServiceBus" "$SYS/notifications/src/Notifications.Api/StratumWiring.g.cs" \
   && "${MSG[@]}" events map --path "$SYS" | grep -q "no le llegarán" \
   && pass "Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported" || fail "Azure Service Bus"
 "${MSG[@]}" events asyncapi --path "$SYS" >/dev/null
@@ -525,9 +557,9 @@ MCP_OUT=$(printf '%s\n' \
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
 "${MSG[@]}" service remove "$SYS/legacy" --path "$SYS" | grep -q "No se ha tocado nada" && [[ -d "$SYS/legacy" ]] \
   && "${MSG[@]}" service remove "$SYS/legacy" --path "$SYS" --yes >/dev/null && [[ ! -d "$SYS/legacy" ]] \
-  && ! grep -q "Legacy" "$SYS/Shop.AppHost/Shop.AppHost.csproj" "$SYS/Shop.AppHost/MsgServices.g.cs" "$SYS/Shop.slnx" \
+  && ! grep -q "Legacy" "$SYS/Shop.AppHost/Shop.AppHost.csproj" "$SYS/Shop.AppHost/StratumServices.g.cs" "$SYS/Shop.slnx" \
   && pass "service remove: dry run first, then folder and AppHost references gone" || fail "service remove"
-grep -q 'Notifications_Api' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'Notifications.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+grep -q 'Notifications_Api' "$SYS/Shop.AppHost/StratumServices.g.cs" && grep -q 'Notifications.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
   && pass "a new service is added to the AppHost" || fail "new service not added"
 
 echo "▶ stratum studio"
@@ -554,7 +586,7 @@ kill "$PID"; wait "$PID" 2>/dev/null || true; PID=""
 
 echo "▶ Full services (need nuget.org)"
 if [[ $ONLINE == 1 ]]; then
-  for s in full auth regen clean features imported team/services/orders; do
+  for s in full auth regen clean features imported oldnames team/services/orders; do
     dotnet build "$WORK/$s" -c Release -v q -nologo >/dev/null && pass "$s builds"
     dotnet test  "$WORK/$s" -c Release --no-build -v q -nologo >/dev/null && pass "$s tests pass"
   done

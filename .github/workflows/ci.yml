@@ -21,7 +21,7 @@ jobs:
         with:
           global-json-file: global.json
 
-      # Builds MSG, generates every service variant, builds them (warnings as errors + NuGet audit),
+      # Builds Stratum, generates every service variant, builds them (warnings as errors + NuGet audit),
       # runs one and checks the common contract, then builds and tests the full variants.
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'

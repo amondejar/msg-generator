@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Stratum.Messaging.AzureServiceBus</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <Description>Azure Service Bus broker for Stratum.Messaging: one topic per integration event, one subscription per service, completes after handling, native dead-letter queue. Works with Aspire's Service Bus resource and its local emulator (connection string "servicebus").</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Stratum.Messaging.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Stratum.Messaging\Stratum.Messaging.csproj" />
+  </ItemGroup>
+
+</Project>

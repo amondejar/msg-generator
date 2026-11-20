@@ -12,9 +12,9 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" />
-    <!-- @msg:if persistence -->
+    <!-- @stratum:if persistence -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
-    <!-- @msg:end -->
+    <!-- @stratum:end -->
   </ItemGroup>
 
   <ItemGroup>

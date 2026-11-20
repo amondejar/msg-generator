@@ -1,13 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
-// @msg:if !auth
+// @stratum:if !auth
 using {{Service}}.Api.Endpoints;
-// @msg:end
+// @stratum:end
 
 namespace {{Service}}.Api.Tests;
 
 /// <summary>
-/// Guards the contract every MSG service must keep: health endpoints, ProblemDetails, correlation id.
+/// Guards the contract every Stratum service must keep: health endpoints, ProblemDetails, correlation id.
 /// If one of these fails, the service no longer behaves like the rest of the platform.
 /// </summary>
 public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<ApiFactory>
@@ -29,13 +29,13 @@ public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<Api
         using var client = factory.CreateClient();
         var response = await client.GetAsync(new Uri("/does-not-exist", UriKind.Relative));
 
-        // @msg:if auth
+        // @stratum:if auth
         // Fallback policy applies to every request, even unmatched routes: anonymous callers get 401
         // instead of 404, so they can't discover which routes exist.
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        // @msg:else
+        // @stratum:else
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        // @msg:end
+        // @stratum:end
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
     }
 
@@ -50,7 +50,7 @@ public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<Api
 
         Assert.Equal("test-123", Assert.Single(response.Headers.GetValues("X-Correlation-ID")));
     }
-    // @msg:if openApi
+    // @stratum:if openApi
 
     [Theory]
     [InlineData("/openapi/v1.json")]
@@ -63,8 +63,8 @@ public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<Api
 
         Assert.True(response.IsSuccessStatusCode, $"{path} returned {(int)response.StatusCode}");
     }
-    // @msg:end
-    // @msg:if auth
+    // @stratum:end
+    // @stratum:if auth
 
     [Fact]
     public async Task ApiRequiresAuthentication()
@@ -74,7 +74,7 @@ public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<Api
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
-    // @msg:else
+    // @stratum:else
 
     [Fact]
     public async Task PingReturnsServiceInfo()
@@ -85,5 +85,5 @@ public sealed class ServiceDefaultsTests(ApiFactory factory) : IClassFixture<Api
         Assert.NotNull(ping);
         Assert.Equal("{{service-kebab}}", ping.Service);
     }
-    // @msg:end
+    // @stratum:end
 }

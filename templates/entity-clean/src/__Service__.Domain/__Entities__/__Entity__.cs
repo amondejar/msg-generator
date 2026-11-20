@@ -1,9 +1,9 @@
 namespace {{Service}}.Domain.{{Entities}};
 
 /// <summary>
-/// Your part of the <see cref="{{Entity}}"/> aggregate. Created once by MSG and never overwritten.
-/// Properties, Create, Update and Delete are generated in {{Entity}}.g.cs from msg.json: change the
-/// properties in the Studio or with "msg entity update". Here go your rules and operations, e.g.:
+/// Your part of the <see cref="{{Entity}}"/> aggregate. Created once by Stratum and never overwritten.
+/// Properties, Create, Update and Delete are generated in {{Entity}}.g.cs from stratum.json: change the
+/// properties in the Studio or with "stratum entity update". Here go your rules and operations, e.g.:
 /// <code>
 /// partial void EnsureInvariants()
 /// {

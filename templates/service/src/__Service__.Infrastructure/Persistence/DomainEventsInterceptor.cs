@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Msg.Ddd;
+using Stratum.Ddd;
 
 namespace {{Service}}.Infrastructure.Persistence;
 

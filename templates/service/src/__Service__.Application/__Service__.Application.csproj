@@ -9,12 +9,12 @@
     <RootNamespace>{{Service}}.Application</RootNamespace>
   </PropertyGroup>
 
-  <!-- @msg:if messaging -->
+  <!-- @stratum:if messaging -->
   <ItemGroup>
-    <PackageReference Include="Msg.Messaging" />
+    <PackageReference Include="Stratum.Messaging" />
   </ItemGroup>
 
-  <!-- @msg:end -->
+  <!-- @stratum:end -->
   <ItemGroup>
     <ProjectReference Include="..\{{Service}}.Domain\{{Service}}.Domain.csproj" />
   </ItemGroup>

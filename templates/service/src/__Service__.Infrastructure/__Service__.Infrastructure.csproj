@@ -11,18 +11,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- @msg:if postgres -->
+    <!-- @stratum:if postgres -->
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
-    <!-- @msg:end -->
-    <!-- @msg:if sqlserver -->
+    <!-- @stratum:end -->
+    <!-- @stratum:if sqlserver -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
-    <!-- @msg:end -->
-    <!-- @msg:if persistence -->
+    <!-- @stratum:end -->
+    <!-- @stratum:if persistence -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
-    <!-- @msg:if messaging -->
-    <PackageReference Include="Msg.Messaging.EntityFrameworkCore" />
-    <!-- @msg:end -->
-    <!-- @msg:end -->
+    <!-- @stratum:if messaging -->
+    <PackageReference Include="Stratum.Messaging.EntityFrameworkCore" />
+    <!-- @stratum:end -->
+    <!-- @stratum:end -->
   </ItemGroup>
 
   <ItemGroup>

@@ -1,9 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <RootNamespace>Msg.Ddd</RootNamespace>
-    <IsPackable>true</IsPackable>
-    <Description>Stratum DDD building blocks: aggregates, domain events, domain exceptions, commands, queries and handler contracts. No dependencies, safe to reference from a Domain project.</Description>
-  </PropertyGroup>
-
-</Project>

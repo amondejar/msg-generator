@@ -21,12 +21,12 @@ jobs:
       - name: Build
         run: dotnet build --no-restore -c Release
 
-      # @msg:if tests
+      # @stratum:if tests
       - name: Test
         run: dotnet test --no-build -c Release --collect:"XPlat Code Coverage"
-      # @msg:end
+      # @stratum:end
 
-      # @msg:if docker
+      # @stratum:if docker
       - name: Docker image
         run: docker build -t {{service-kebab}}:${{ github.sha }} .
-      # @msg:end
+      # @stratum:end

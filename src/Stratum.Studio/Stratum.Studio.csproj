@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <!-- stratum studio: the visual editor. Blazor Server components on top of Stratum.Core (same engine as the CLI). -->
+
+  <PropertyGroup>
+    <RootNamespace>Stratum.Studio</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Stratum.Core\Stratum.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -2,7 +2,7 @@
 
   <!--
     The heart of the service: aggregates, value objects, domain events and repository contracts.
-    No framework, no EF Core, no ASP.NET: only Msg.Ddd (building blocks without dependencies).
+    No framework, no EF Core, no ASP.NET: only Stratum.Ddd (building blocks without dependencies).
   -->
 
   <PropertyGroup>
@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Msg.Ddd" />
+    <PackageReference Include="Stratum.Ddd" />
   </ItemGroup>
 
 </Project>

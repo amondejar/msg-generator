@@ -1,7 +1,7 @@
 <Project>
   <!--
-    Versions of everything the Msg.* packages depend on. Generated services only pin Msg.* itself,
-    so bumping a dependency here + releasing MSG + "msg upgrade" updates every service.
+    Versions of everything the Stratum.* packages depend on. Generated services only pin Stratum.* itself,
+    so bumping a dependency here + releasing Stratum + "stratum upgrade" updates every service.
   -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
@@ -10,16 +10,16 @@
     <NuGetAuditLevel>low</NuGetAuditLevel>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Msg.ServiceDefaults.OpenTelemetry -->
+    <!-- Stratum.ServiceDefaults.OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.21.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.21.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.21.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.21.0" />
-    <!-- Msg.ServiceDefaults.Resilience -->
+    <!-- Stratum.ServiceDefaults.Resilience -->
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.11.0" />
-    <!-- Msg.ServiceDefaults.Authentication -->
+    <!-- Stratum.ServiceDefaults.Authentication -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" />
     <!-- Tests -->
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />

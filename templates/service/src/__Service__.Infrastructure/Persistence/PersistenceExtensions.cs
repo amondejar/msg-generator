@@ -29,11 +29,11 @@ public static class PersistenceExtensions
 
         builder.Services.AddScoped<IInterceptor, DomainEventsInterceptor>();
         builder.Services.AddDbContext<{{Service}}DbContext>((services, options) => options
-            // @msg:if postgres
+            // @stratum:if postgres
             .UseNpgsql(connectionString)
-            // @msg:else
+            // @stratum:else
             .UseSqlServer(connectionString)
-            // @msg:end
+            // @stratum:end
             .AddInterceptors(services.GetServices<IInterceptor>()));
 
         builder.Services.AddScoped<IUnitOfWork>(services => services.GetRequiredService<{{Service}}DbContext>());

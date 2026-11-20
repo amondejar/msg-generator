@@ -1,5 +1,5 @@
 using {{Service}}.Domain.{{Entities}};
-using Msg.Ddd;
+using Stratum.Ddd;
 
 namespace {{Service}}.Application.{{Entities}};
 

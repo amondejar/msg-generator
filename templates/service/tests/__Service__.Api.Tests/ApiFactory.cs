@@ -2,9 +2,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-// @msg:if auth
+// @stratum:if auth
 using Microsoft.AspNetCore.Authentication;
-// @msg:end
+// @stratum:end
 
 namespace {{Service}}.Api.Tests;
 
@@ -14,7 +14,7 @@ namespace {{Service}}.Api.Tests;
 /// </summary>
 public sealed partial class ApiFactory : WebApplicationFactory<Program>
 {
-    // @msg:if auth
+    // @stratum:if auth
     /// <summary>A client that is authenticated as a test user (see <see cref="TestAuthHandler"/>).</summary>
     public HttpClient CreateAuthenticatedClient(string user = "test-user")
     {
@@ -23,14 +23,14 @@ public sealed partial class ApiFactory : WebApplicationFactory<Program>
         return client;
     }
 
-    // @msg:end
+    // @stratum:end
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.ConfigureServices(services =>
         {
-            // @msg:if auth
+            // @stratum:if auth
             // Real JWT validation needs an identity provider; tests use a header-based scheme instead.
             services.AddAuthentication()
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>(TestAuthHandler.SchemeName, _ => { });
@@ -40,7 +40,7 @@ public sealed partial class ApiFactory : WebApplicationFactory<Program>
                 options.DefaultChallengeScheme = TestAuthHandler.SchemeName;
             });
 
-            // @msg:end
+            // @stratum:end
             ConfigureTestServices(services);
         });
     }
