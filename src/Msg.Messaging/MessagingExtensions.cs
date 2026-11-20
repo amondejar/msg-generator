@@ -28,6 +28,13 @@ public static class MessagingExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddScoped<IEventBus, OutboxEventBus>();
 
+        // Outbox and inbox in memory unless a database takes over (UseEntityFramework): without a database the
+        // outbox doesn't survive a restart.
+        services.TryAddSingleton<InMemoryOutbox>();
+        services.TryAddScoped<IOutboxWriter>(sp => sp.GetRequiredService<InMemoryOutbox>());
+        services.TryAddScoped<IOutboxStore>(sp => sp.GetRequiredService<InMemoryOutbox>());
+        services.TryAddSingleton<IInbox, InMemoryInbox>();
+
         var registry = services.Select(d => d.ImplementationInstance).OfType<HandlerRegistry>().FirstOrDefault();
         if (registry is null)
         {
@@ -49,17 +56,13 @@ public sealed class MessagingBuilder(IServiceCollection services, HandlerRegistr
     public IServiceCollection Services { get; } = services;
 
     /// <summary>
-    /// In-process broker, outbox and inbox (nothing persisted). With Msg.Messaging.EntityFrameworkCore the
-    /// outbox and inbox go to the database instead.
+    /// In-process broker: events don't leave this process (tests, or one service alone). The outbox and inbox are
+    /// in memory too, unless Msg.Messaging.EntityFrameworkCore puts them in the database.
     /// </summary>
     public MessagingBuilder UseInMemory()
     {
         Services.TryAddSingleton<InMemoryTransport>();
         Services.Replace(ServiceDescriptor.Singleton<IMessageTransport>(sp => sp.GetRequiredService<InMemoryTransport>()));
-        Services.TryAddSingleton<InMemoryOutbox>();
-        Services.TryAddScoped<IOutboxWriter>(sp => sp.GetRequiredService<InMemoryOutbox>());
-        Services.TryAddScoped<IOutboxStore>(sp => sp.GetRequiredService<InMemoryOutbox>());
-        Services.TryAddSingleton<IInbox, InMemoryInbox>();
         return this;
     }
 

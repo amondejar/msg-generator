@@ -5,6 +5,20 @@
 #nullable enable
 using {{Service}}.Api.Features;
 using Msg.ServiceDefaults;
+// @msg:if messaging
+using Msg.Messaging;
+// @msg:if persistence
+using Msg.Messaging.EntityFrameworkCore;
+using {{DbContextNamespace}};
+// @msg:end
+// @msg:if kafka
+using Msg.Messaging.Kafka;
+// @msg:end
+// @msg:if cleanDdd
+using {{Service}}.Application;
+using {{Service}}.Infrastructure;
+// @msg:end
+// @msg:end
 // @msg:if openApi
 using Scalar.AspNetCore;
 // @msg:end
@@ -32,6 +46,27 @@ internal static class MsgWiring
         // @msg:end
 
         builder.Services.AddValidation();   // DataAnnotations on request DTOs → 400 ProblemDetails
+        // @msg:if messaging
+
+        // Integration events (before AddFeatures: the outbox interceptor must run before the domain events one).
+        builder.AddMsgMessaging("{{service-kebab}}")
+            // @msg:if kafka
+            .UseKafka(builder.Configuration)                     // ConnectionStrings:kafka (Aspire) or Messaging:Kafka
+            // @msg:else
+            .UseInMemory()                                       // only inside this process: switch to Kafka to reach other services
+            // @msg:end
+            // @msg:if persistence
+            .UseEntityFramework<{{Service}}DbContext>()          // outbox and inbox in this service's database
+            // @msg:end
+            // @msg:if cleanDdd
+            .AddFromAssembly(typeof(IUnitOfWork).Assembly)              // handlers of other services' events
+            .AddFromAssembly(typeof(InfrastructureExtensions).Assembly) // domain → integration event mappers
+            // @msg:else
+            .AddFromAssembly(typeof(Program).Assembly)
+            // @msg:end
+            ;
+        // @msg:end
+
         builder.AddFeatures();              // entities of msg.json
         // @msg:if openApi
         builder.Services.AddOpenApi();

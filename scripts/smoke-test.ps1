@@ -324,6 +324,26 @@ await app.RunAsync().ConfigureAwait(false);
     Invoke-Dotnet $MsgDll feature off docker --path $lp
     Pass 'Program.cs from before 0.12: blocked, converted, then editable'
 
+    Step 'Messaging (msg messaging / msg events)'
+    $out = Get-DotnetOutput $MsgDll events on Product --path $fs
+    if ($LASTEXITCODE -eq 0) { Fail 'events published without messaging' }
+    Invoke-Dotnet $MsgDll messaging on --broker kafka --path $fs
+    Invoke-Dotnet $MsgDll events on Product --path $fs
+    $wiringCode = Get-Content $wiring -Raw
+    $devSettings = Join-Path $fs 'src\Shop.Api\appsettings.Development.json'
+    if ($wiringCode -like '*UseKafka(builder.Configuration)*' -and $wiringCode -like '*UseEntityFramework<ShopDbContext>*' -and (Get-Content $apiProj -Raw) -like '*Include="Msg.Messaging.Kafka"*' -and (Get-Content $devSettings -Raw) -like '*"kafka": "localhost:9092"*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Data\MessagingConfiguration.g.cs') -Raw) -like '*MessagingModel.ConfigureOutbox*') {
+        Pass 'messaging on: Kafka, outbox/inbox tables, packages and connection string'
+    } else { Fail 'messaging on' }
+    Get-Content $devSettings -Raw | ConvertFrom-Json | Out-Null
+    if ((Get-Content (Join-Path $fs 'src\Shop.Api\IntegrationEvents\ProductIntegrationEvents.g.cs') -Raw) -like '*IntegrationEvent("shop.product-created")*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Features\Products\ProductEndpoints.g.cs') -Raw) -like '*PublishAsync(new ProductCreated*') {
+        Pass 'vertical slice: Product events published from the endpoints (outbox)'
+    } else { Fail 'events on (vertical)' }
+    Invoke-Dotnet $MsgDll messaging on --broker kafka --path $clean
+    Invoke-Dotnet $MsgDll events on Product --path $clean
+    if ((Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Products\ProductIntegrationEventsMapper.g.cs') -Raw) -like '*ProductIntegrationEventsMapper : IIntegrationEventMapper*' -and (Get-Content (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\ProductIntegrationEvents.g.cs') -Raw) -like '*IntegrationEvent("catalog.product-created")*') {
+        Pass 'clean + DDD: domain events mapped to integration events'
+    } else { Fail 'events on (clean)' }
+
     Step 'Guided migrations (msg migration review)'
     $mig = Join-Path $Work 'migration'
     Copy-Item -Recurse $clean $mig
@@ -415,11 +435,16 @@ namespace Catalog.Infrastructure.Migrations
     Invoke-Dotnet $MsgDll add entity Order --path (Join-Path $sys 'orders') --props 'Number:string, Total:decimal'
     Invoke-Dotnet $MsgDll new Billing -o (Join-Path $sys 'billing') --architecture clean-ddd --package-source $Pkgs
     Invoke-Dotnet $MsgDll add entity Invoice --path (Join-Path $sys 'billing') --db sqlserver --props 'Number:string'
+    Invoke-Dotnet $MsgDll messaging on --broker kafka --path (Join-Path $sys 'orders')
+    Invoke-Dotnet $MsgDll events on Order --path (Join-Path $sys 'orders')
     Invoke-Dotnet $MsgDll aspire --path $sys --name Shop
     foreach ($f in 'Shop.AppHost\Shop.AppHost.csproj', 'Shop.AppHost\AppHost.cs', 'Shop.AppHost\MsgServices.g.cs', 'Shop.slnx', '.aspire\settings.json') {
         if (-not (Test-Path (Join-Path $sys $f))) { Fail "missing $f" }
     }
     $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\MsgServices.g.cs') -Raw
+    if ($hostCode -like '*AddKafka("kafka")*' -and $hostCode -like '*WithKafkaUI*' -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -like '*Aspire.Hosting.Kafka*') {
+        Pass 'AppHost: Kafka + Kafka UI for the services with messaging'
+    } else { Fail 'AppHost Kafka' }
     if ($hostCode -like '*AddProject<Projects.Orders_Api>("orders")*' -and $hostCode -like '*connectionName: "Database"*' -and $hostCode -like '*AddPostgres*' -and $hostCode -like '*AddSqlServer*') {
         Pass 'AppHost with both services, their databases and health checks'
     } else { Fail 'AppHost content' }

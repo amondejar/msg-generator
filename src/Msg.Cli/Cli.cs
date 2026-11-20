@@ -33,6 +33,11 @@ internal static partial class Cli
                                              (observability, openApi, resilience, auth, tests, docker, ci)
           msg feature convert [--path] [--dry-run]
                                              Pasa un Program.cs anterior a 0.12 a MsgWiring.g.cs
+          msg messaging on --broker kafka|inMemory [--path] [--dry-run]
+          msg messaging off [--path] [--dry-run]
+                                             Eventos de integración entre servicios (outbox, inbox, reintentos)
+          msg events on|off <Entidad>... [--path] [--dry-run]
+                                             Publica <Entidad>Created/Updated/Deleted para otros servicios
           msg migration review [--path <carpeta>] [--dry-run]
                                              Revisa la última migración de EF Core: aplica los renombrados
                                              (RenameColumn) y avisa de lo que borra datos
@@ -105,6 +110,8 @@ internal static partial class Cli
             "entity" => Entity(args[1..], output),
             "migration" => Migration(args[1..], output),
             "feature" => Feature(args[1..], output),
+            "messaging" => Messaging(args[1..], output),
+            "events" => Events(args[1..], output),
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
             _ => throw new MsgException($"Comando desconocido '{args[0]}'. Usa 'msg --help'."),
@@ -777,6 +784,106 @@ internal static partial class Cli
             plan = ServicePlanner.Plan(path, current, ServicePlanner.SetFeatures(path, current, features), options);
         }
 
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+        }
+
+        return 0;
+    }
+
+    private static int Messaging(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: msg messaging on --broker kafka|inMemory | msg messaging off  [--path <carpeta>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("on" or "off"))
+        {
+            throw new MsgException(usage);
+        }
+
+        var path = ".";
+        var dryRun = false;
+        string? broker = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--broker" when args[0] == "on":
+                    broker = Value(args, ref i, args[i]);
+                    break;
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+            }
+        }
+
+        if (args[0] == "on" && broker is null)
+        {
+            throw new MsgException($"Falta --broker. Válidos: {string.Join(", ", MessagingSettings.Brokers)}.");
+        }
+
+        var current = ServicePlanner.Load(path);
+        var updated = ServicePlanner.SetMessaging(path, current, broker);
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+            if (updated.Messaging is not null && current.Messaging is null && current.Persistence is not null)
+            {
+                output.WriteLine();
+                output.WriteLine("Siguiente paso: crea la migración con las tablas msg_outbox y msg_inbox (Studio, o dotnet ef migrations add AddMessaging).");
+            }
+
+            if (updated.Messaging?.Broker == MessagingSettings.Kafka)
+            {
+                output.WriteLine("Para ejecutarlo con Kafka, regenera el AppHost (msg aspire, o desde el Studio): añade Kafka y Kafka UI.");
+            }
+        }
+
+        return 0;
+    }
+
+    private static int Events(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: msg events on|off <Entidad>... [--path <carpeta>] [--dry-run]";
+        if (args.Length < 2 || args[0] is not ("on" or "off"))
+        {
+            throw new MsgException(usage);
+        }
+
+        var path = ".";
+        var dryRun = false;
+        var names = new List<string>();
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    if (args[i].StartsWith('-'))
+                    {
+                        throw new MsgException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    names.Add(args[i]);
+                    break;
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        var updated = names.Aggregate(current, (definition, name) => ServicePlanner.SetPublishEvents(definition, name, args[0] == "on"));
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
         PrintPlan(output, plan, dryRun);
         if (!dryRun && plan.Changes.Count > 0)
         {

@@ -94,6 +94,33 @@ else
             <span class="hint">@(draft.ProviderLocked ? "Fijada: el servicio ya tiene entidades en esta base de datos." : "Se fija con la primera entidad. Los tests usan SQLite en memoria, así que no necesitan Docker.")</span>
         </section>
 
+        <section class="stack" aria-labelledby="h-messaging">
+            <h2 class="section" id="h-messaging">Mensajería entre servicios</h2>
+            <div class="seg" role="group" aria-label="Broker de mensajería">
+                <button type="button" aria-pressed="@(draft.Broker is null ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(null)">Sin mensajería</button>
+                <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.Kafka ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.Kafka)">Kafka</button>
+                <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.InMemory ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.InMemory)">En memoria</button>
+            </div>
+            <span class="hint">
+                @if (draft.Broker == MessagingSettings.Kafka)
+                {
+                    <span>Eventos de integración con outbox (no se pierden si Kafka cae), inbox (cada evento se procesa una vez), reintentos y dead-letter. Con Aspire, MSG añade Kafka y Kafka UI al AppHost. Elige qué entidades publican sus eventos en <a href="entities">Entidades</a>.</span>
+                }
+                else if (draft.Broker == MessagingSettings.InMemory)
+                {
+                    <span>Los eventos no salen de este proceso: útil para empezar o para un servicio solo. Cambia a Kafka para que lleguen a otros servicios; tus handlers no cambian.</span>
+                }
+                else
+                {
+                    <span>Actívala para que este servicio publique eventos (OrderCreated…) o reaccione a los de otros.</span>
+                }
+                @if (draft.Broker is not null && draft.ProviderLocked && !draft.IsNew)
+                {
+                    <span> Después de aplicar, crea una migración: añade las tablas <span class="mono">msg_outbox</span> y <span class="mono">msg_inbox</span>.</span>
+                }
+            </span>
+        </section>
+
         <section class="stack" aria-labelledby="h-entities">
             <div class="row" style="justify-content: space-between">
                 <h2 class="section" id="h-entities">Entidades</h2>
@@ -170,6 +197,20 @@ else
     private void Toggle(string feature, bool enabled)
     {
         State.Current!.Features = State.Current.Features.With(feature, enabled);
+        State.Recompute();
+    }
+
+    private void SetBroker(string? broker)
+    {
+        State.Current!.Broker = broker;
+        if (broker is null)
+        {
+            foreach (var entity in State.Current.Entities)
+            {
+                entity.PublishEvents = false;
+            }
+        }
+
         State.Recompute();
     }
 

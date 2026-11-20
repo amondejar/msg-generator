@@ -28,6 +28,15 @@
     <!-- @msg:if auth -->
     <PackageVersion Include="Msg.ServiceDefaults.Authentication" Version="{{MsgVersion}}" />
     <!-- @msg:end -->
+    <!-- @msg:if messaging -->
+    <PackageVersion Include="Msg.Messaging" Version="{{MsgVersion}}" />
+    <!-- @msg:if persistence -->
+    <PackageVersion Include="Msg.Messaging.EntityFrameworkCore" Version="{{MsgVersion}}" />
+    <!-- @msg:end -->
+    <!-- @msg:if kafka -->
+    <PackageVersion Include="Msg.Messaging.Kafka" Version="{{MsgVersion}}" />
+    <!-- @msg:end -->
+    <!-- @msg:end -->
   </ItemGroup>
   <ItemGroup>
     <!-- @msg:if openApi -->

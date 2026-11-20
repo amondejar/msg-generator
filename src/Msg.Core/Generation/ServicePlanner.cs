@@ -228,6 +228,45 @@ public static class ServicePlanner
         return current with { Features = features };
     }
 
+    /// <summary>Turns messaging on (with a broker) or off (<paramref name="broker"/> null). Lives in MsgWiring.g.cs, like the features.</summary>
+    public static ServiceDefinition SetMessaging(string directory, ServiceDefinition current, string? broker)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var messaging = broker is null ? null : new MessagingSettings { Broker = MessagingSettings.Validate(broker) };
+        if (messaging == current.Messaging)
+        {
+            return current;
+        }
+
+        if (!UsesMsgWiring(directory, current))
+        {
+            throw new MsgException(
+                $"src/{current.Service.Name}.Api/Program.cs es de una versión de MSG anterior a la 0.12: pásalo a MsgWiring.g.cs " +
+                "primero (msg feature convert --dry-run, o desde el Studio) para que MSG pueda configurar la mensajería.");
+        }
+
+        return current with { Messaging = messaging };
+    }
+
+    /// <summary>Publish (or stop publishing) the Created/Updated/Deleted integration events of an entity.</summary>
+    public static ServiceDefinition SetPublishEvents(ServiceDefinition current, string entityName, bool publish)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var entity = FindEntity(current, entityName);
+        RequireEditable(entity);
+
+        if (publish && current.Messaging is null)
+        {
+            throw new MsgException(
+                "Para publicar eventos el servicio necesita mensajería. Actívala antes: msg messaging on --broker kafka");
+        }
+
+        return current with
+        {
+            Entities = [.. current.Entities.Select(e => e == entity ? e with { PublishEvents = publish ? true : null } : e)],
+        };
+    }
+
     /// <summary>
     /// Rewrites a Program.cs from before MSG 0.12 so it delegates to MsgWiring.g.cs. The user's own lines must be
     /// added back (the plan shows the previous file).

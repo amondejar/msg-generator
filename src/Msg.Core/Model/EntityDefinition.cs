@@ -10,6 +10,23 @@ public sealed record PersistenceSettings
     public required string Provider { get; init; }
 }
 
+/// <summary>Integration events between services (Msg.Messaging). Null in msg.json: no messaging.</summary>
+public sealed record MessagingSettings
+{
+    public const string Kafka = "kafka";
+
+    /// <summary>In-process broker: one service alone, or tests. Events don't reach other services.</summary>
+    public const string InMemory = "inMemory";
+
+    public static IReadOnlyList<string> Brokers { get; } = [Kafka, InMemory];
+
+    public required string Broker { get; init; }
+
+    public static string Validate(string broker) =>
+        Brokers.FirstOrDefault(b => b.Equals(broker?.Trim(), StringComparison.OrdinalIgnoreCase))
+        ?? throw new MsgException($"Broker desconocido '{broker}'. Válidos: {string.Join(", ", Brokers)}.");
+}
+
 public sealed record EntityDefinition
 {
     /// <summary>PascalCase singular, e.g. <c>Product</c>.</summary>
@@ -28,6 +45,15 @@ public sealed record EntityDefinition
     public int? Layout { get; init; }
 
     public const int CurrentLayout = 2;
+
+    /// <summary>
+    /// Publish {Entity}Created / Updated / Deleted integration events (with the entity's data) for other services.
+    /// Needs messaging in the service. Null = false (keeps older msg.json files unchanged).
+    /// </summary>
+    public bool? PublishEvents { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Publishes => PublishEvents == true;
 
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsEditable => Layout >= CurrentLayout;

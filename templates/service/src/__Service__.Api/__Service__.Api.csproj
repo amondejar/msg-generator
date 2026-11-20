@@ -15,6 +15,17 @@
     <!-- @msg:if auth -->
     <PackageReference Include="Msg.ServiceDefaults.Authentication" />
     <!-- @msg:end -->
+    <!-- @msg:if kafka -->
+    <PackageReference Include="Msg.Messaging.Kafka" />
+    <!-- @msg:end -->
+    <!-- @msg:if verticalSlice -->
+    <!-- @msg:if messaging -->
+    <PackageReference Include="Msg.Messaging" />
+    <!-- @msg:if persistence -->
+    <PackageReference Include="Msg.Messaging.EntityFrameworkCore" />
+    <!-- @msg:end -->
+    <!-- @msg:end -->
+    <!-- @msg:end -->
     <!-- @msg:if openApi -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />

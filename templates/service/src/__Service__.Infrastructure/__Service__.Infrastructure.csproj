@@ -19,6 +19,9 @@
     <!-- @msg:end -->
     <!-- @msg:if persistence -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+    <!-- @msg:if messaging -->
+    <PackageReference Include="Msg.Messaging.EntityFrameworkCore" />
+    <!-- @msg:end -->
     <!-- @msg:end -->
   </ItemGroup>
 

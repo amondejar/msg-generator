@@ -137,6 +137,28 @@ else
                 }
             </section>
 
+            <section class="stack" aria-labelledby="h-events">
+                <h2 class="section" id="h-events">Eventos para otros servicios</h2>
+                @if (draft.Broker is null)
+                {
+                    <span class="hint">El servicio no tiene mensajería. Actívala en <a href="service#h-messaging">Servicio</a> para publicar los eventos de @(entity.Name).</span>
+                }
+                else
+                {
+                    <label class="row" style="gap: 8px">
+                        <input type="checkbox" checked="@entity.PublishEvents" disabled="@(!entity.CanEdit)"
+                               @onchange="e => { entity.PublishEvents = e.Value is true; State.Recompute(); }" />
+                        Publicar <span class="mono">@(entity.Name)Created</span>, <span class="mono">@(entity.Name)Updated</span> y <span class="mono">@(entity.Name)Deleted</span> con sus datos
+                    </label>
+                    @if (entity.PublishEvents)
+                    {
+                        var service = ServiceName.ToKebab(draft.Name);
+                        var name = System.Text.RegularExpressions.Regex.Replace(entity.Name, "(?<=[a-z0-9])([A-Z])", "-$1").ToLowerInvariant();
+                        <span class="hint">Topics: <span class="mono">@($"{service}.{name}-created")</span>, <span class="mono">-updated</span>, <span class="mono">-deleted</span>. Se guardan en el outbox en la misma transacción que el cambio y se envían después, con reintentos.</span>
+                    }
+                }
+            </section>
+
             @if (draft.Architecture == Architectures.CleanDdd)
             {
                 <section class="stack" aria-labelledby="h-behavior">

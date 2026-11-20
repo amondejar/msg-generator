@@ -1,37 +1,40 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Msg.Messaging.EntityFrameworkCore;
 
-public static class MessagingModelBuilderExtensions
+/// <summary>Tables msg_outbox and msg_inbox. "dotnet ef migrations add" creates them.</summary>
+public static class MessagingModel
 {
-    /// <summary>
-    /// Tables msg_outbox and msg_inbox. Call it from OnModelCreating; "dotnet ef migrations add" then creates them.
-    /// </summary>
+    /// <summary>Both tables, from OnModelCreating. (MSG generates IEntityTypeConfiguration classes instead.)</summary>
     public static ModelBuilder AddMsgMessaging(this ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
-
-        modelBuilder.Entity<OutboxMessage>(b =>
-        {
-            b.ToTable("msg_outbox");
-            b.HasKey(m => m.Id);
-            b.Property(m => m.Topic).HasMaxLength(250).IsRequired();
-            b.Property(m => m.Type).HasMaxLength(500).IsRequired();
-            b.Property(m => m.Payload).IsRequired();
-            b.Property(m => m.CorrelationId).HasMaxLength(100);
-            b.Property(m => m.TraceParent).HasMaxLength(100);
-            b.Property(m => m.LastError).HasMaxLength(2000);
-            b.HasIndex(m => new { m.SentAt, m.NextAttemptAt, m.OccurredAt });
-        });
-
-        modelBuilder.Entity<InboxMessage>(b =>
-        {
-            b.ToTable("msg_inbox");
-            b.HasKey(m => new { m.MessageId, m.Consumer });
-            b.Property(m => m.MessageId).HasMaxLength(100);
-            b.Property(m => m.Consumer).HasMaxLength(500);
-        });
-
+        modelBuilder.Entity<OutboxMessage>(ConfigureOutbox);
+        modelBuilder.Entity<InboxMessage>(ConfigureInbox);
         return modelBuilder;
+    }
+
+    public static void ConfigureOutbox(EntityTypeBuilder<OutboxMessage> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.ToTable("msg_outbox");
+        builder.HasKey(m => m.Id);
+        builder.Property(m => m.Topic).HasMaxLength(250).IsRequired();
+        builder.Property(m => m.Type).HasMaxLength(500).IsRequired();
+        builder.Property(m => m.Payload).IsRequired();
+        builder.Property(m => m.CorrelationId).HasMaxLength(100);
+        builder.Property(m => m.TraceParent).HasMaxLength(100);
+        builder.Property(m => m.LastError).HasMaxLength(2000);
+        builder.HasIndex(m => new { m.SentAt, m.NextAttemptAt, m.OccurredAt });
+    }
+
+    public static void ConfigureInbox(EntityTypeBuilder<InboxMessage> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.ToTable("msg_inbox");
+        builder.HasKey(m => new { m.MessageId, m.Consumer });
+        builder.Property(m => m.MessageId).HasMaxLength(100);
+        builder.Property(m => m.Consumer).HasMaxLength(500);
     }
 }

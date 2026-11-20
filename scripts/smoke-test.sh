@@ -220,6 +220,26 @@ if "${MSG[@]}" feature off docker --path "$LP" >/dev/null 2>&1; then fail "featu
   && "${MSG[@]}" feature off docker --path "$LP" >/dev/null \
   && pass "Program.cs from before 0.12: blocked, converted, then editable" || fail "feature convert"
 
+echo "▶ Messaging (msg messaging / msg events)"
+if "${MSG[@]}" events on Product --path "$FS" >/dev/null 2>&1; then fail "events published without messaging"; fi
+"${MSG[@]}" messaging on --broker kafka --path "$FS" >/dev/null
+"${MSG[@]}" events on Product --path "$FS" >/dev/null
+grep -q "UseKafka(builder.Configuration)" "$FS/src/Shop.Api/MsgWiring.g.cs" \
+  && grep -q "UseEntityFramework<ShopDbContext>" "$FS/src/Shop.Api/MsgWiring.g.cs" \
+  && grep -q 'Include="Msg.Messaging.Kafka"' "$FS/src/Shop.Api/Shop.Api.csproj" \
+  && grep -q '"kafka": "localhost:9092"' "$FS/src/Shop.Api/appsettings.Development.json" \
+  && grep -q "MessagingModel.ConfigureOutbox" "$FS/src/Shop.Api/Data/MessagingConfiguration.g.cs" \
+  && pass "messaging on: Kafka, outbox/inbox tables, packages and connection string" || fail "messaging on"
+grep -q 'IntegrationEvent("shop.product-created")' "$FS/src/Shop.Api/IntegrationEvents/ProductIntegrationEvents.g.cs" \
+  && grep -q "PublishAsync(new ProductCreated" "$FS/src/Shop.Api/Features/Products/ProductEndpoints.g.cs" \
+  && pass "vertical slice: Product events published from the endpoints (outbox)" || fail "events on (vertical)"
+"${MSG[@]}" messaging on --broker kafka --path "$WORK/clean" >/dev/null
+"${MSG[@]}" events on Product --path "$WORK/clean" >/dev/null
+grep -q "ProductIntegrationEventsMapper : IIntegrationEventMapper" "$WORK/clean/src/Catalog.Infrastructure/Persistence/Products/ProductIntegrationEventsMapper.g.cs" \
+  && grep -q 'IntegrationEvent("catalog.product-created")' "$WORK/clean/src/Catalog.Application/IntegrationEvents/ProductIntegrationEvents.g.cs" \
+  && pass "clean + DDD: domain events mapped to integration events" || fail "events on (clean)"
+python3 -m json.tool "$FS/src/Shop.Api/appsettings.Development.json" >/dev/null || fail "invalid appsettings.Development.json with Kafka"
+
 echo "▶ Guided migrations (msg migration review)"
 MIG="$WORK/migration"; cp -r "$WORK/clean" "$MIG"
 mkdir -p "$MIG/src/Catalog.Infrastructure/Migrations"
@@ -303,10 +323,15 @@ SYS="$WORK/system"; mkdir -p "$SYS"
 "${MSG[@]}" add entity Order --path "$SYS/orders" --props "Number:string, Total:decimal" >/dev/null
 "${MSG[@]}" new Billing -o "$SYS/billing" --architecture clean-ddd --package-source "$PKGS" >/dev/null
 "${MSG[@]}" add entity Invoice --path "$SYS/billing" --db sqlserver --props "Number:string" >/dev/null
+"${MSG[@]}" messaging on --broker kafka --path "$SYS/orders" >/dev/null
+"${MSG[@]}" events on Order --path "$SYS/orders" >/dev/null
 "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
 for f in Shop.AppHost/Shop.AppHost.csproj Shop.AppHost/AppHost.cs Shop.AppHost/MsgServices.g.cs Shop.slnx .aspire/settings.json; do
   [[ -f "$SYS/$f" ]] || fail "missing $f"
 done
+grep -q 'AddKafka("kafka")' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'WithKafkaUI' "$SYS/Shop.AppHost/MsgServices.g.cs" \
+  && grep -q 'Aspire.Hosting.Kafka' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && pass "AppHost: Kafka + Kafka UI for the services with messaging" || fail "AppHost Kafka"
 grep -q 'AddProject<Projects.Orders_Api>("orders")' "$SYS/Shop.AppHost/MsgServices.g.cs" \
   && grep -q 'connectionName: "Database"' "$SYS/Shop.AppHost/MsgServices.g.cs" \
   && grep -q 'AddPostgres' "$SYS/Shop.AppHost/MsgServices.g.cs" && grep -q 'AddSqlServer' "$SYS/Shop.AppHost/MsgServices.g.cs" \

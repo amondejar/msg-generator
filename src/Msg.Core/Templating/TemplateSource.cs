@@ -28,6 +28,12 @@ public static class TemplateSource
     /// <summary>The user's half of a partial class (X.cs next to X.g.cs on purpose). Older templates had no partial classes.</summary>
     private static bool IsPartialStub(string content) => content.Contains(" partial ", StringComparison.Ordinal);
 
+    private static readonly HashSet<string> RemovedTemplates = new(StringComparer.Ordinal)
+    {
+        // 0.14: replaced by ApiFactory.g.cs (database and broker replacements in one file).
+        "service/tests/__Service__.Api.Tests/ApiFactory.Database.g.cs",
+    };
+
     /// <summary>MSG's own templates only (what "msg templates eject" copies).</summary>
     public static IReadOnlyList<TemplateFile> LoadEmbedded(string templateName)
     {
@@ -51,11 +57,13 @@ public static class TemplateSource
                         && files.Any(o => o.Path == f.Path[..^".g.cs".Length] + ".cs" && !IsPartialStub(o.Content)))
             .Select(f => f.Path[..^".g.cs".Length] + ".cs")
             .ToList();
+        // Templates that older versions had and this one removed (a zip unpacked over the repo doesn't delete them).
+        stale.AddRange(files.Select(f => $"{templateName}/{f.Path}").Where(RemovedTemplates.Contains).Select(p => p[(templateName.Length + 1)..]));
         if (stale.Count > 0)
         {
             throw new MsgException(
                 $"La plantilla '{templateName}' mezcla archivos de dos versiones de MSG: {string.Join(", ", stale)} " +
-                $"{(stale.Count == 1 ? "es" : "son")} de una versión anterior (ahora se generan como .g.cs). Borra la carpeta templates del repositorio de MSG, " +
+                $"{(stale.Count == 1 ? "es" : "son")} de una versión anterior y ya no se usa. Borra la carpeta templates del repositorio de MSG, " +
                 "vuelve a copiar la de esta versión y recompila.");
         }
 

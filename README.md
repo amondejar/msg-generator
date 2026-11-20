@@ -182,24 +182,33 @@ msg migration review                                             # corrige la mi
   migración, **Crear y revisar migración** la crea y la corrige, **Ver SQL** enseña el script y **Deshacer esta migración**
   la quita (y devuelve sus renombrados a `msg.json`) mientras no se haya aplicado.
 
-## Mensajería entre servicios (`Msg.Messaging`, en construcción)
+## Mensajería entre servicios (Kafka)
 
-Paquetes listos (la generación desde MSG y el Studio llegan en los siguientes pasos):
+```bash
+msg messaging on --broker kafka        # o inMemory (solo dentro del proceso)
+msg events on Product                  # publica ProductCreated / ProductUpdated / ProductDeleted
+msg aspire                             # añade Kafka y Kafka UI al AppHost
+```
+
+En el Studio: **Servicio → Mensajería entre servicios** (broker) y **Entidades → Eventos para otros servicios** (qué entidad publica).
+
+Qué genera:
+
+- `MsgWiring.g.cs`: `AddMsgMessaging("shop").UseKafka(...).UseEntityFramework<ShopDbContext>()`.
+- Tablas `msg_outbox` y `msg_inbox` (`MessagingConfiguration.g.cs`): crea la migración después de activar la mensajería.
+- `IntegrationEvents/ProductIntegrationEvents.g.cs`: el contrato público, con topic `shop.product-created`, etc.
+  - Vertical slice: los endpoints publican con `IEventBus` en la misma transacción que el cambio.
+  - Clean + DDD: `ProductIntegrationEventsMapper.g.cs` convierte los eventos de dominio en eventos de integración al guardar.
+- Tests: el broker se sustituye por uno en memoria (`ApiFactory.g.cs`), no hace falta Kafka.
+- AppHost: `AddKafka("kafka").WithKafkaUI()` y `WithReference(kafka).WaitFor(kafka)` en cada servicio con Kafka.
+
+Paquetes:
 
 | Paquete | Qué hace |
 | --- | --- |
 | `Msg.Messaging` | `IEventBus` (outbox), handlers `IIntegrationEventHandler<T>` que se ejecutan una vez por evento (inbox), reintentos con espera creciente y dead-letter, trazas de extremo a extremo y transporte en memoria. Sin dependencias de terceros. |
-| `Msg.Messaging.EntityFrameworkCore` | Outbox e inbox en la base de datos del servicio (`msg_outbox`, `msg_inbox`): el evento se guarda en la misma transacción que tus cambios, y el handler y su registro en el inbox también. Convierte eventos de dominio en eventos de integración (`IIntegrationEventMapper`). |
-
-```csharp
-builder.AddMsgMessaging("orders")
-    .UseInMemory()                        // o UseKafka(...) / UseAzureServiceBus(...) (próximamente)
-    .UseEntityFramework<OrdersDbContext>()
-    .AddFromAssembly(typeof(Program).Assembly);
-
-// En el DbContext: modelBuilder.AddMsgMessaging();  y  options.AddInterceptors(sp.GetRequiredService<IntegrationEventsInterceptor>(), ...)
-await bus.PublishAsync(new OrderCreated(order.Id, order.Total));   // se envía tras SaveChanges, con reintentos
-```
+| `Msg.Messaging.EntityFrameworkCore` | Outbox e inbox en la base de datos del servicio: el evento se guarda en la misma transacción que tus cambios, y el handler y su registro en el inbox también. |
+| `Msg.Messaging.Kafka` | Kafka con Confluent.Kafka: un topic por evento, un consumer group por servicio, commit tras procesar, topic `<topic>.dead-letter`, topics creados al primer uso. |
 
 ## Qué genera
 
@@ -303,6 +312,6 @@ dotnet tool install -g Msg.Cli --add-source ./artifacts/packages
 5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`msg entity`, Studio).
 6. ✅ Migraciones guiadas: renombrados sin perder datos, avisos de lo que borra datos, SQL y deshacer (`msg migration review`, Studio).
 7. ✅ Features editables en servicios existentes (`msg feature`, Studio), paquetes y archivos que sobran se quitan, `.g.cs` editados a mano detectados.
-8. En curso: mensajería entre servicios. ✅ `Msg.Messaging` + `Msg.Messaging.EntityFrameworkCore`. Siguiente: Kafka y Azure Service Bus con Aspire; generación y Studio (publicar, suscribirse, mapa de eventos); `Idempotency-Key` en la API.
+8. En curso: mensajería entre servicios. ✅ `Msg.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). Siguiente: suscribirse a eventos de otros servicios y mapa de eventos en el Studio; Azure Service Bus; `Idempotency-Key` en la API.
 9. Después: métodos propios del agregado y relaciones entre entidades desde el Studio; publicar en nuget.org.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

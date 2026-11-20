@@ -7,6 +7,10 @@
 using {{Service}}.Api.Data;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
+// @msg:if publishEvents
+using {{Service}}.IntegrationEvents;
+using Msg.Messaging;
+// @msg:end
 
 namespace {{Service}}.Api.Features.{{Entities}};
 
@@ -56,18 +60,32 @@ public static partial class {{Entity}}Endpoints
     }
 
     private static async Task<CreatedAtRoute<{{Entity}}Response>> Create(
-        {{Entity}}Request request, {{Service}}DbContext db, CancellationToken cancellationToken)
+        {{Entity}}Request request,
+        {{Service}}DbContext db,
+        // @msg:if publishEvents
+        IEventBus bus,
+        // @msg:end
+        CancellationToken cancellationToken)
     {
         var entity = request.ToEntity();
 
         db.{{Entities}}.Add(entity);
+        // @msg:if publishEvents
+        await bus.PublishAsync(new {{Entity}}Created(entity.Id, {{EntityArguments}}), cancellationToken);   // saved with the entity (outbox)
+        // @msg:end
         await db.SaveChangesAsync(cancellationToken);
 
         return TypedResults.CreatedAtRoute({{Entity}}Response.From(entity), "Get{{Entity}}", new { id = entity.Id });
     }
 
     private static async Task<Results<NoContent, NotFound>> Update(
-        Guid id, {{Entity}}Request request, {{Service}}DbContext db, CancellationToken cancellationToken)
+        Guid id,
+        {{Entity}}Request request,
+        {{Service}}DbContext db,
+        // @msg:if publishEvents
+        IEventBus bus,
+        // @msg:end
+        CancellationToken cancellationToken)
     {
         var entity = await db.{{Entities}}.FindAsync([id], cancellationToken);
         if (entity is null)
@@ -77,15 +95,36 @@ public static partial class {{Entity}}Endpoints
 
         request.ApplyTo(entity);
         entity.UpdatedAt = DateTimeOffset.UtcNow;
+        // @msg:if publishEvents
+        await bus.PublishAsync(new {{Entity}}Updated(entity.Id, {{EntityArguments}}), cancellationToken);
+        // @msg:end
 
         await db.SaveChangesAsync(cancellationToken);
         return TypedResults.NoContent();
     }
 
     private static async Task<Results<NoContent, NotFound>> Delete(
-        Guid id, {{Service}}DbContext db, CancellationToken cancellationToken)
+        Guid id,
+        {{Service}}DbContext db,
+        // @msg:if publishEvents
+        IEventBus bus,
+        // @msg:end
+        CancellationToken cancellationToken)
     {
+        // @msg:if publishEvents
+        // The delete and its event in one transaction (ExecuteDelete doesn't go through SaveChanges).
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var deleted = await db.{{Entities}}.Where(e => e.Id == id).ExecuteDeleteAsync(cancellationToken);
+        if (deleted > 0)
+        {
+            await bus.PublishAsync(new {{Entity}}Deleted(id), cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        // @msg:else
+        var deleted = await db.{{Entities}}.Where(e => e.Id == id).ExecuteDeleteAsync(cancellationToken);
+        // @msg:end
         return deleted == 0 ? TypedResults.NotFound() : TypedResults.NoContent();
     }
 }

@@ -43,6 +43,9 @@ public sealed class EntityDraft
 
     public bool CanEdit => !Removed && (IsNew || !IsLegacy || Convert);
 
+    /// <summary>Publish {Entity}Created/Updated/Deleted integration events (needs messaging in the service).</summary>
+    public bool PublishEvents { get; set; }
+
     public List<PropertyDraft> Properties { get; } = [];
 
     public string EffectivePlural =>
@@ -61,7 +64,7 @@ public sealed class EntityDraft
 
     public static EntityDraft From(EntityDefinition entity)
     {
-        var draft = new EntityDraft { Name = entity.Name, Plural = entity.Plural, IsNew = false, IsLegacy = !entity.IsEditable };
+        var draft = new EntityDraft { Name = entity.Name, Plural = entity.Plural, IsNew = false, IsLegacy = !entity.IsEditable, PublishEvents = entity.Publishes };
         draft.Properties.AddRange(entity.Properties.Select(PropertyDraft.From));
         return draft;
     }
@@ -102,6 +105,9 @@ public sealed class ServiceDraft
 
     public bool CanEditFeatures => IsNew || UsesWiring || ConvertWiring;
 
+    /// <summary>Broker for integration events (MessagingSettings.Kafka / InMemory), or null: no messaging.</summary>
+    public string? Broker { get; set; }
+
     public static ServiceDraft ForExisting(string directory, ServiceDefinition definition)
     {
         var draft = new ServiceDraft
@@ -113,6 +119,7 @@ public sealed class ServiceDraft
             Features = definition.Features,
             Provider = definition.Persistence?.Provider ?? PersistenceSettings.Postgres,
             ProviderLocked = definition.Persistence is not null,
+            Broker = definition.Messaging?.Broker,
             MsgVersion = definition.MsgVersion,
         };
         draft.Entities.AddRange(definition.Entities.Select(EntityDraft.From));

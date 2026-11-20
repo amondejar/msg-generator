@@ -39,7 +39,6 @@ public static class ServiceGenerator
     [
         ("tests/", "tests"),
         ("tests/__Service__.Api.Tests/TestAuthHandler.cs", "auth"),
-        ("tests/__Service__.Api.Tests/ApiFactory.Database.g.cs", "persistence"),
         ("Dockerfile", "docker"),
         ("_dockerignore", "docker"),
         ("_github/", "ci"),
@@ -119,8 +118,12 @@ public static class ServiceGenerator
             entityTokens[key] = value;
         }
 
-        bool EntityConditions(string feature) =>
-            feature == "hasRequiredString" ? EntityCodeGen.HasRequiredString(entity) : isEnabled(feature);
+        bool EntityConditions(string feature) => feature switch
+        {
+            "hasRequiredString" => EntityCodeGen.HasRequiredString(entity),
+            "publishEvents" => entity.Publishes && definition.Messaging is not null,
+            _ => isEnabled(feature),
+        };
 
         var architectureTemplates = definition.Architecture == Architectures.CleanDdd
             ? CleanEntityTemplateName
@@ -248,9 +251,14 @@ public static class ServiceGenerator
             "persistence" => provider is not null,
             "postgres" => provider == PersistenceSettings.Postgres,
             "sqlserver" => provider == PersistenceSettings.SqlServer,
+            "messaging" => definition.Messaging is not null,
+            "connectionStrings" => provider is not null || definition.Messaging?.Broker == MessagingSettings.Kafka,
+            "kafka" => definition.Messaging?.Broker == MessagingSettings.Kafka,
+            "publishesEvents" => definition.Messaging is not null && definition.Entities.Any(e => e.IsEditable && e.Publishes),
             _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new MsgException(
                 $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
-                "persistence, postgres, sqlserver, cleanDdd, verticalSlice (y hasRequiredString en plantillas de entidad)."),
+                "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, publishesEvents " +
+                "(y hasRequiredString, publishEvents en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };
     }

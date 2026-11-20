@@ -229,6 +229,7 @@ public sealed class StudioState(StudioOptions options)
                 Architecture = draft.Architecture,
                 Features = draft.Features,
                 MsgVersion = draft.MsgVersion,
+                Messaging = draft.Broker is null ? null : new MessagingSettings { Broker = draft.Broker },
             }
             : ServicePlanner.Load(Path.Combine(Workspace, draft.Directory));
 
@@ -237,6 +238,13 @@ public sealed class StudioState(StudioOptions options)
             definition = draft.ConvertWiring
                 ? definition with { Features = draft.Features }
                 : ServicePlanner.SetFeatures(Path.Combine(Workspace, draft.Directory), definition, draft.Features);
+        }
+
+        if (!draft.IsNew && draft.Broker != definition.Messaging?.Broker)
+        {
+            definition = draft.ConvertWiring
+                ? definition with { Messaging = draft.Broker is null ? null : new MessagingSettings { Broker = draft.Broker } }
+                : ServicePlanner.SetMessaging(Path.Combine(Workspace, draft.Directory), definition, draft.Broker);
         }
 
         // Existing entities: convert, remove or update them (same rules as "msg entity ...").
@@ -265,6 +273,10 @@ public sealed class StudioState(StudioOptions options)
                     .Select(p => new PropertyRename { Entity = entity.Name, From = p.OriginalName!, To = p.Name.Trim() })
                     .ToList();
                 definition = ServicePlanner.UpdateEntity(definition, entity.Name, entity.ToDefinition().Properties, renames);
+                if (entity.PublishEvents != ServicePlanner.FindEntity(definition, entity.Name).Publishes)
+                {
+                    definition = ServicePlanner.SetPublishEvents(definition, entity.Name, entity.PublishEvents);
+                }
             }
             catch (MsgException ex)
             {
@@ -279,6 +291,10 @@ public sealed class StudioState(StudioOptions options)
             {
                 var accepted = ServicePlanner.ValidateEntity(entity.ToDefinition(), definition);
                 definition = definition with { Entities = [.. definition.Entities, accepted] };
+                if (entity.PublishEvents)
+                {
+                    definition = ServicePlanner.SetPublishEvents(definition, accepted.Name, publish: true);
+                }
             }
             catch (MsgException ex)
             {

@@ -38,6 +38,8 @@ internal static partial class EntityCodeGen
             ["Entities"] = entity.Plural,
             ["entities-kebab"] = WordBoundary().Replace(entity.Plural, "-$1").ToLowerInvariant(),
             ["entities_snake"] = WordBoundary().Replace(entity.Plural, "_$1").ToLowerInvariant(),
+            ["entity-kebab"] = WordBoundary().Replace(entity.Name, "-$1").ToLowerInvariant(),
+            ["IntegrationEventParameters"] = string.Join(", ", props.Select(p => $"{PropertyTypes.ToCSharp(p)} {p.Name}")),
 
             // --- shared / vertical slice ---
             ["EntityProperties"] = string.Join("\n\n", props.Select(p =>

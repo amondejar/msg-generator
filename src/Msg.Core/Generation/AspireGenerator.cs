@@ -169,6 +169,11 @@ public static class AspireGenerator
             packages.Append($"    <PackageReference Include=\"Aspire.Hosting.SqlServer\" Version=\"{AspireVersion}\" />\n");
         }
 
+        if (UsesKafka(services))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Kafka\" Version=\"{AspireVersion}\" />\n");
+        }
+
         var projects = string.Concat(services.Select(s => $"    <ProjectReference Include=\"..\\{s.ApiProject.Replace('/', '\\')}\" />\n"));
 
         return $"""
@@ -240,6 +245,15 @@ public static class AspireGenerator
                 .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
         }
 
+        if (UsesKafka(services))
+        {
+            // One broker for the whole system; Kafka UI (link in the dashboard) shows topics and messages.
+            body.Append("        var kafka = builder.AddKafka(\"kafka\")\n")
+                .Append("            .WithKafkaUI()\n")
+                .Append("            .WithDataVolume()\n")
+                .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+        }
+
         foreach (var service in services)
         {
             var variable = Variable(service);
@@ -257,6 +271,12 @@ public static class AspireGenerator
                 body.Append($"            .WithReference({variable}Db, connectionName: \"Database\")\n")
                     .Append($"            .WaitFor({variable}Db)\n")
                     .Append("            .WithEnvironment(\"Database__MigrateOnStartup\", \"true\")\n");
+            }
+
+            if (service.Definition.Messaging?.Broker == MessagingSettings.Kafka)
+            {
+                body.Append("            .WithReference(kafka)\n")       // ConnectionStrings__kafka
+                    .Append("            .WaitFor(kafka)\n");
             }
 
             if (service.Definition.Features.OpenApi)
@@ -361,6 +381,9 @@ public static class AspireGenerator
 
             """;
     }
+
+    private static bool UsesKafka(IReadOnlyList<AspireService> services) =>
+        services.Any(s => s.Definition.Messaging?.Broker == MessagingSettings.Kafka);
 
     private static string Variable(AspireService service) => EntityCodeGen.Camel(service.Name);
 

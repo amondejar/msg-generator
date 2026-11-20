@@ -57,5 +57,7 @@ public sealed record MessageContext(string MessageId, string Topic, string Sourc
 /// </summary>
 public interface IIntegrationEventMapper
 {
-    IEnumerable<IIntegrationEvent> Map(object domainEvent);
+    /// <param name="domainEvent">The domain event raised.</param>
+    /// <param name="source">The aggregate that raised it, in its state at SaveChanges (for the event's data).</param>
+    IEnumerable<IIntegrationEvent> Map(object domainEvent, object source);
 }

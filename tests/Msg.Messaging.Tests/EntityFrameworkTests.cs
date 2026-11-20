@@ -24,7 +24,7 @@ public sealed record OrderPlaced(Guid OrderId, decimal Total) : DomainEvent;
 /// <summary>What MSG generates from msg.json for the events marked as published.</summary>
 public sealed class OrderEventsMapper : IIntegrationEventMapper
 {
-    public IEnumerable<IIntegrationEvent> Map(object domainEvent) => domainEvent switch
+    public IEnumerable<IIntegrationEvent> Map(object domainEvent, object source) => domainEvent switch
     {
         OrderPlaced e => [new OrderCreated(e.OrderId, e.Total)],
         _ => [],

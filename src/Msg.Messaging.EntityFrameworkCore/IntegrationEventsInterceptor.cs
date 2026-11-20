@@ -24,9 +24,9 @@ public sealed class IntegrationEventsInterceptor(IEnumerable<IIntegrationEventMa
         if (_mappers.Length > 0 && eventData.Context is { } context)
         {
             var integrationEvents = context.ChangeTracker.Entries<IHasDomainEvents>()
-                .SelectMany(e => e.Entity.DomainEvents)
-                .Where(_mapped.Add)
-                .SelectMany(domainEvent => _mappers.SelectMany(m => m.Map(domainEvent)))
+                .SelectMany(e => e.Entity.DomainEvents.Select(domainEvent => (DomainEvent: domainEvent, Source: e.Entity)))
+                .Where(x => _mapped.Add(x.DomainEvent))
+                .SelectMany(x => _mappers.SelectMany(m => m.Map(x.DomainEvent, x.Source)))
                 .ToList();
 
             foreach (var integrationEvent in integrationEvents)
