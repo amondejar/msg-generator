@@ -82,8 +82,22 @@ internal static partial class ProjectFileMerger
         return result == text ? null : result;
     }
 
-    [GeneratedRegex("""(?<prefix><PackageVersion\s+Include="Stratum\.[^"]+"\s+Version=")(?<version>[^"]+)(?<suffix>")""")]
+    [GeneratedRegex("""(?<prefix><PackageVersion\s+Include="Stratum(?:Kit)?\.[^"]+"\s+Version=")(?<version>[^"]+)(?<suffix>")""")]
     private static partial Regex StratumVersion();
+
+    [GeneratedRegex("""(?<prefix><(?:PackageVersion|PackageReference)\s+Include=")Stratum\.(?<rest>[^"]+")""")]
+    private static partial Regex OldPackageId();
+
+    /// <summary>
+    /// Package references of services from before 0.36.1: Stratum.X → StratumKit.X (the packages on nuget.org).
+    /// </summary>
+    /// <returns>The new text, or null when there was nothing to rename.</returns>
+    public static string? RenameStratumPackages(string text)
+    {
+        var result = OldPackageId().Replace(text, m => m.Groups["prefix"].Value + StratumInfo.PackagePrefix + m.Groups["rest"].Value)
+            .Replace("<package pattern=\"Stratum.*\" />", $"<package pattern=\"{StratumInfo.PackagePrefix}*\" />", StringComparison.Ordinal);
+        return result == text ? null : result;
+    }
 
     /// <summary>
     /// Every Stratum.* package of Directory.Packages.props at <paramref name="version"/>: the generated code goes with the

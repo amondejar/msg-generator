@@ -246,6 +246,11 @@ public static class AspireGenerator
         else if (StratumPackages.LocalSource() is { } source)
         {
             var rootConfig = Path.Combine(root, "nuget.config");
+            if (File.Exists(rootConfig) && ProjectFileMerger.RenameStratumPackages(File.ReadAllText(rootConfig)) is { } renamedConfig)
+            {
+                File.WriteAllText(rootConfig, renamedConfig);   // Stratum.* → StratumKit.* (0.36.1)
+            }
+
             var existed = File.Exists(rootConfig);
             if (StratumPackages.EnsureSource(rootConfig, source))
             {

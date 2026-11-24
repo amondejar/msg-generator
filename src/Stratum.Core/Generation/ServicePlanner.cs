@@ -855,9 +855,10 @@ public static class ServicePlanner
                 continue;
             }
 
+            var renamedPrevious = ProjectFileMerger.RenameStratumPackages(previous) ?? previous;   // Stratum.* → StratumKit.*
             var text = oldFiles.TryGetValue(projectFile, out var oldRender)
-                ? ProjectFileMerger.RemoveItems(previous, oldRender, rendered) ?? previous
-                : previous;
+                ? ProjectFileMerger.RemoveItems(renamedPrevious, oldRender, rendered) ?? renamedPrevious
+                : renamedPrevious;
             text = ProjectFileMerger.MergeItems(text, rendered) ?? text;
             if (Path.GetFileName(projectFile) == ServiceUpgrader.PackagesFileName
                 && ProjectFileMerger.AlignStratumVersions(text, StratumInfo.Version) is { } aligned)
@@ -870,6 +871,13 @@ public static class ServicePlanner
             {
                 changes.Add(new FileChange(projectFile, ChangeKind.Merge, text, previous));
             }
+        }
+
+        // nuget.config from before 0.36.1: its local source maps Stratum.*, the packages are StratumKit.* now.
+        if (Read("nuget.config") is { } nugetConfig && ProjectFileMerger.RenameStratumPackages(nugetConfig) is { } renamedConfig
+            && !changes.Any(c => c.Path == "nuget.config"))
+        {
+            changes.Add(new FileChange("nuget.config", ChangeKind.Merge, renamedConfig, nugetConfig));
         }
 
         if (files.FirstOrDefault(f => f.Path == appSettingsDevelopment) is { } settings

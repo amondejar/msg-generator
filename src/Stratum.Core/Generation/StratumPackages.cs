@@ -64,7 +64,7 @@ public static class StratumPackages
                 return null;
             }
 
-            var has = Directory.EnumerateFiles(feed, $"Stratum.ServiceDefaults.{StratumInfo.Version}.nupkg").Any();
+            var has = Directory.EnumerateFiles(feed, $"{StratumInfo.PackagePrefix}ServiceDefaults.{StratumInfo.Version}.nupkg").Any();
             _source = has ? feed : null;
             return _source;
         }
@@ -91,7 +91,7 @@ public static class StratumPackages
 
         var patterns = System.Text.RegularExpressions.Regex.Matches(text, "<package pattern=\"(?<p>[^\"]+)\"").Select(m => m.Groups["p"].Value).ToList();
         var sources = System.Text.RegularExpressions.Regex.Matches(text, "<add key=\"[^\"]+\" value=\"(?<v>[^\"]+)\"").Select(m => m.Groups["v"].Value).ToList();
-        var onlyStratumBesidesNuGetOrg = patterns.All(p => p is "*" or "Stratum.*")
+        var onlyStratumBesidesNuGetOrg = patterns.All(p => p is "*" or "Stratum.*" or "StratumKit.*")
             && sources.All(v => v.StartsWith("https://api.nuget.org/", StringComparison.OrdinalIgnoreCase) || !v.Contains("://", StringComparison.Ordinal));
         if (!onlyStratumBesidesNuGetOrg)
         {
@@ -131,7 +131,7 @@ public static class StratumPackages
         var nl = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var key = text.Contains($"key=\"{SourceKey}\"", StringComparison.Ordinal) ? $"{SourceKey}-{StratumInfo.Version}" : SourceKey;
         text = text.Replace("  </packageSources>", $"    <add key=\"{key}\" value=\"{escaped}\" />{nl}  </packageSources>", StringComparison.Ordinal)
-            .Replace("  </packageSourceMapping>", $"    <packageSource key=\"{key}\">{nl}      <package pattern=\"Stratum.*\" />{nl}    </packageSource>{nl}  </packageSourceMapping>", StringComparison.Ordinal);
+            .Replace("  </packageSourceMapping>", $"    <packageSource key=\"{key}\">{nl}      <package pattern=\"{StratumInfo.PackagePrefix}*\" />{nl}    </packageSource>{nl}  </packageSourceMapping>", StringComparison.Ordinal);
         File.WriteAllText(nugetConfig, text);
         return true;
     }

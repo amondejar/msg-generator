@@ -757,7 +757,12 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
 
 ### Publicar una versión en nuget.org
 
-Los paquetes (`Stratum.Cli` y las librerías `Stratum.*`) se publican desde GitHub Actions al subir un tag de versión,
+Los paquetes se llaman **`StratumKit.*`** en nuget.org (`StratumKit.Cli`, `StratumKit.ServiceDefaults`,
+`StratumKit.Messaging`…): el prefijo `Stratum.` lo tiene reservado otra cuenta. Los namespaces, los ensamblados y el
+comando `stratum` siguen llamándose Stratum. Los servicios de antes de la 0.36.1 usan `Stratum.*`: cualquier cambio o
+`stratum upgrade` los renombra.
+
+Los paquetes (`StratumKit.Cli` y las librerías `StratumKit.*`) se publican desde GitHub Actions al subir un tag de versión,
 con *Trusted Publishing* de nuget.org: no hay ninguna API key guardada en el repositorio.
 
 Una sola vez:
@@ -766,7 +771,7 @@ Una sola vez:
    `release.yml`.
 2. En GitHub: **Settings → Secrets and variables → Actions → New repository secret** `NUGET_USER` con tu nombre de
    usuario de nuget.org (no una clave).
-3. Opcional: pide a nuget.org la reserva del prefijo `Stratum.` (account@nuget.org) para que nadie más publique
+3. Opcional: pide a nuget.org la reserva del prefijo `StratumKit.` (account@nuget.org) para que nadie más publique
    paquetes con ese prefijo.
 
 En cada versión:
@@ -784,7 +789,7 @@ volver a subir ni borrar (solo ocultar): si algo falla, se corrige con la siguie
 Con Stratum en nuget.org:
 
 ```bash
-dotnet tool install -g Stratum.Cli     # o: dotnet tool update -g Stratum.Cli
+dotnet tool install -g StratumKit.Cli     # o: dotnet tool update -g StratumKit.Cli
 stratum upgrade --path <sistema>       # versiones al día; quita los nuget.config que solo servían para los paquetes locales
 stratum aspire --path <sistema>        # lo mismo en la raíz del sistema
 ```
@@ -793,7 +798,7 @@ Para instalar `stratum` como herramienta global desde el código (sin publicar):
 
 ```bash
 dotnet pack src/Stratum.Cli -c Release -o ./artifacts/packages
-dotnet tool update -g Stratum.Cli --add-source ./artifacts/packages
+dotnet tool update -g StratumKit.Cli --add-source ./artifacts/packages
 ```
 
 Empaquetada así (en local), la herramienta lleva dentro los paquetes `Stratum.*` de su versión (`dotnet pack` de la CLI empaqueta también las
@@ -830,5 +835,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 20. ✅ Studio en español e inglés.
 21. ✅ Relaciones 1–N y 1–1 con qué pasa al borrar, filtros por referencia y composición (`stratum relation`, diseñador de entidades). Siguiente: relaciones N–M.
 22. ✅ Trazas de eventos en el Studio: del outbox al broker y a cada servicio que escucha, con lo que no ha llegado, errores y enlaces a Aspire y Kafka UI.
-23. Publicar en nuget.org (prefijo `Stratum.*`, la herramienta como `Stratum.Cli`).
+23. ✅ Publicar en nuget.org (prefijo `StratumKit.*`, la herramienta como `StratumKit.Cli`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

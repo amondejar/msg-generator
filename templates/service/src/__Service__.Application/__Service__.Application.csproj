@@ -11,7 +11,7 @@
 
   <!-- @stratum:if messaging -->
   <ItemGroup>
-    <PackageReference Include="Stratum.Messaging" />
+    <PackageReference Include="StratumKit.Messaging" />
   </ItemGroup>
 
   <!-- @stratum:end -->

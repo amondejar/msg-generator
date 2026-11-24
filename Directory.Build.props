@@ -12,9 +12,15 @@
       Single source of truth for the Stratum version: the CLI, the Stratum.* packages and the
       version written into generated services (stratum.json, Directory.Packages.props) all come from here.
     -->
-    <Version>0.36.1</Version>
+    <Version>0.36.2</Version>
     <Authors>Stratum</Authors>
     <PackageTags>dotnet;microservices;aspnetcore;service-defaults;aspire;ddd;messaging;generator</PackageTags>
+
+    <!--
+      Package IDs: StratumKit.* (the "Stratum" prefix is reserved by someone else on nuget.org). Assemblies, namespaces
+      and the "stratum" command keep the Stratum name.
+    -->
+    <PackageId Condition="$(MSBuildProjectName.StartsWith('Stratum.'))">StratumKit.$(MSBuildProjectName.Substring(8))</PackageId>
 
     <!-- nuget.org metadata. The repository URL comes from GitHub Actions when the release workflow packs. -->
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

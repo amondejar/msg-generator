@@ -39,7 +39,7 @@ HELP_MAIN="$("${MSG[@]}" --help 2>&1)"; HELP_NEW="$("${MSG[@]}" new --help 2>&1)
 
 # The global NuGet cache keeps packages by id+version: drop old Stratum.* builds so we test the ones just packed.
 GLOBAL="$(dotnet nuget locals global-packages --list | sed 's/^global-packages: //')"
-rm -rf "$GLOBAL"/stratum.servicedefaults* "$GLOBAL"/stratum.ddd "$GLOBAL"/stratum.messaging* "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd "$GLOBAL"/msg.messaging*
+rm -rf "$GLOBAL"/stratumkit.servicedefaults* "$GLOBAL"/stratumkit.ddd "$GLOBAL"/stratumkit.messaging* "$GLOBAL"/stratum.servicedefaults* "$GLOBAL"/stratum.ddd "$GLOBAL"/stratum.messaging* "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd "$GLOBAL"/msg.messaging*
 
 echo "▶ Generate every feature combination worth checking (Stratum $VERSION)"
 "${MSG[@]}" new Orders  -o "$WORK/full" --package-source "$PKGS"        >/dev/null && pass "full (default features)"
@@ -58,8 +58,8 @@ for f in $(find "$WORK"/{full,auth,core,from} -name "*.json"); do
 done
 pass "all JSON files are valid"
 diff -r "$WORK/auth" "$WORK/from" >/dev/null && pass "--from reproduces the same service" || fail "--from differs"
-grep -q "Include=\"Stratum.ServiceDefaults\" Version=\"$VERSION\"" "$WORK/core/Directory.Packages.props" \
-  && pass "service pins Stratum.ServiceDefaults $VERSION" || fail "Stratum.ServiceDefaults version"
+grep -q "Include=\"StratumKit.ServiceDefaults\" Version=\"$VERSION\"" "$WORK/core/Directory.Packages.props" \
+  && pass "service pins StratumKit.ServiceDefaults $VERSION" || fail "StratumKit.ServiceDefaults version"
 
 echo "▶ Build 'core' service (TreatWarningsAsErrors)"
 dotnet build "$WORK/core" -c Release -v q -nologo "${AUDIT[@]}" >/dev/null || dotnet build "$WORK/core" -c Release -nologo "${AUDIT[@]}" | tail -20
@@ -102,11 +102,11 @@ grep -q "SemVer" "$WORK/bad.log" && pass "invalid Service:Version stops startup 
 echo "▶ stratum upgrade"
 cp -r "$WORK/core" "$WORK/upgraded"
 "${MSG[@]}" upgrade --path "$WORK/upgraded" --to 9.9.9 >/dev/null
-grep -q 'Include="Stratum.ServiceDefaults" Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
+grep -q 'Include="StratumKit.ServiceDefaults" Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
   && grep -q '"stratumVersion": "9.9.9"' "$WORK/upgraded/stratum.json" \
   && pass "upgrade bumps Stratum.* packages and stratum.json" || fail "upgrade"
 "${MSG[@]}" enum add Tier --values "Basic, Gold" --path "$WORK/upgraded" >/dev/null
-grep -q "Include=\"Stratum.ServiceDefaults\" Version=\"$VERSION\"" "$WORK/upgraded/Directory.Packages.props" \
+grep -q "Include=\"StratumKit.ServiceDefaults\" Version=\"$VERSION\"" "$WORK/upgraded/Directory.Packages.props" \
   && ! grep -q 'Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
   && pass "a change made with this Stratum puts every Stratum.* package at $VERSION" || fail "packages not aligned"
 
@@ -416,9 +416,9 @@ for d, dirs, files in os.walk(root):
         p = os.path.join(d, n)
         try: s = open(p, encoding="utf-8").read()
         except UnicodeDecodeError: continue
-        t = re.sub(r"\bStratum\.(?=(ServiceDefaults|Ddd|Messaging)\b)", "Msg.", s)
+        t = re.sub(r"\bStratum(?:Kit)?\.(?=(ServiceDefaults|Ddd|Messaging)\b)", "Msg.", s)
         t = re.sub(r"\b(Add|Use|Map)Stratum(?=[A-Z])", r"\1Msg", t)
-        t = t.replace("StratumWiring", "MsgWiring").replace('"stratumVersion"', '"msgVersion"').replace('pattern="Stratum.*"', 'pattern="Msg.*"')
+        t = t.replace("StratumWiring", "MsgWiring").replace('"stratumVersion"', '"msgVersion"').replace('pattern="StratumKit.*"', 'pattern="Msg.*"')
         if t != s: open(p, "w", encoding="utf-8").write(t)
 os.rename(os.path.join(root, "stratum.json"), os.path.join(root, "msg.json"))
 w = os.path.join(root, "src", "Shipping.Api")
@@ -431,7 +431,16 @@ echo "$BLOCKED" | grep -q "stratum upgrade" && echo "$PLAN" | grep -q "msg.json 
   && [[ -f "$OLD/stratum.json" && ! -f "$OLD/msg.json" && -f "$OLD/src/Shipping.Api/StratumWiring.g.cs" && ! -f "$OLD/src/Shipping.Api/MsgWiring.g.cs" ]] \
   && grep -q "AddStratumWiring()" "$OLD/src/Shipping.Api/Program.cs" \
   && ! grep -rqE "\bMsg\.(ServiceDefaults|Ddd|Messaging)|AddMsg|UseMsg" "$OLD" --include=*.cs --include=*.csproj --include=*.props \
+  && grep -q 'Include="StratumKit.ServiceDefaults"' "$OLD/Directory.Packages.props" \
   && pass "upgrade migrates Msg.* / msg.json / MsgWiring to Stratum (user code included)" || fail "legacy names migration"
+# Services from before 0.36.1 reference Stratum.* packages; on nuget.org they are StratumKit.*: any change renames them.
+KIT="$WORK/kit"
+"${MSG[@]}" new Kit -o "$KIT" --package-source "$PKGS" >/dev/null
+find "$KIT" -name '*.csproj' -o -name 'Directory.Packages.props' -o -name 'nuget.config' | xargs sed -i 's/Include="StratumKit\./Include="Stratum./; s/pattern="StratumKit\.\*"/pattern="Stratum.*"/'
+"${MSG[@]}" add entity Box --path "$KIT" --props "Size:int" >/dev/null
+! grep -rq 'Include="Stratum\.' "$KIT" --include=*.csproj --include=*.props \
+  && grep -q 'Include="StratumKit.ServiceDefaults"' "$KIT/Directory.Packages.props" && grep -q 'pattern="StratumKit.\*"' "$KIT/nuget.config" \
+  && pass "packages renamed Stratum.* → StratumKit.* on the next change" || fail "StratumKit rename"
 
 echo "▶ Features on/off in an existing service (stratum feature)"
 FS="$WORK/features"
@@ -480,7 +489,7 @@ OUT="$("${MSG[@]}" events on Product --path "$FS")"
 "${MSG[@]}" messaging on --broker kafka --path "$FS" >/dev/null
 grep -q "UseKafka(builder.Configuration)" "$FS/src/Shop.Api/StratumWiring.g.cs" \
   && grep -q "UseEntityFramework<ShopDbContext>" "$FS/src/Shop.Api/StratumWiring.g.cs" \
-  && grep -q 'Include="Stratum.Messaging.Kafka"' "$FS/src/Shop.Api/Shop.Api.csproj" \
+  && grep -q 'Include="StratumKit.Messaging.Kafka"' "$FS/src/Shop.Api/Shop.Api.csproj" \
   && grep -q '"kafka": "localhost:9092"' "$FS/src/Shop.Api/appsettings.Development.json" \
   && grep -q "MessagingModel.ConfigureOutbox" "$FS/src/Shop.Api/Data/MessagingConfiguration.g.cs" \
   && pass "messaging on: Kafka, outbox/inbox tables, packages and connection string" || fail "messaging on"

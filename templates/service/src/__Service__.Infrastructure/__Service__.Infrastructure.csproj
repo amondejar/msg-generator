@@ -20,7 +20,7 @@
     <!-- @stratum:if persistence -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
     <!-- @stratum:if messaging -->
-    <PackageReference Include="Stratum.Messaging.EntityFrameworkCore" />
+    <PackageReference Include="StratumKit.Messaging.EntityFrameworkCore" />
     <!-- @stratum:end -->
     <!-- @stratum:end -->
   </ItemGroup>

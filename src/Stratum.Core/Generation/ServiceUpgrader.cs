@@ -13,7 +13,7 @@ public static partial class ServiceUpgrader
 {
     public const string PackagesFileName = "Directory.Packages.props";
 
-    [GeneratedRegex("""(?<prefix><PackageVersion\s+Include="(?<id>Stratum\.[^"]+)"\s+Version=")(?<version>[^"]+)(?<suffix>")""")]
+    [GeneratedRegex("""(?<prefix><PackageVersion\s+Include="(?<id>Stratum(?:Kit)?\.[^"]+)"\s+Version=")(?<version>[^"]+)(?<suffix>")""")]
     private static partial Regex StratumPackageVersion();
 
     /// <summary>The versions of the Stratum.* packages a service uses (empty if it has none).</summary>
@@ -64,11 +64,16 @@ public static partial class ServiceUpgrader
         var updated = StratumPackageVersion().Replace(props, m => m.Groups["prefix"].Value + targetVersion + m.Groups["suffix"].Value);
         File.WriteAllText(packagesPath, updated);
         File.WriteAllText(definitionPath, ServiceGenerator.Serialize(definition with { StratumVersion = targetVersion }));
+        var renamed = UsesKitPackages(targetVersion) ? RenamePackages(serviceDirectory) : 0;
 
         // The new packages may come with new generated code (e.g. the msg_received table in 0.35): Stratum's own
         // files are rewritten with this version's templates; the user's files aren't touched.
         var hints = Hints(serviceDirectory, definition);
         var regenerated = 0;
+        if (renamed > 0)
+        {
+            hints.Add($"Paquetes renombrados de Stratum.* a {StratumInfo.PackagePrefix}* en {renamed} archivo(s): así se llaman en nuget.org (el prefijo \"Stratum.\" está reservado por otra cuenta). Tu código no cambia: los namespaces siguen siendo Stratum.*.");
+        }
 
         // Where to restore the new Stratum.* packages from (they come with the tool until they're on nuget.org).
         var nugetConfig = Path.Combine(serviceDirectory, "nuget.config");
@@ -164,6 +169,33 @@ public static partial class ServiceUpgrader
         }
 
         return hints;
+    }
+
+    /// <summary>From 0.36.1 the packages are StratumKit.* (Stratum.* before).</summary>
+    internal static bool UsesKitPackages(string version) =>
+        System.Version.TryParse(version.Split('-', '+')[0], out var v) && v >= new System.Version(0, 36, 1);
+
+    /// <summary>Stratum.X → StratumKit.X in the project files, Directory.Packages.props and nuget.config of a service.</summary>
+    /// <returns>How many files changed.</returns>
+    private static int RenamePackages(string serviceDirectory)
+    {
+        var files = Directory.EnumerateFiles(serviceDirectory, "*.csproj", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                        && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Append(Path.Combine(serviceDirectory, PackagesFileName))
+            .Append(Path.Combine(serviceDirectory, "nuget.config"))
+            .Where(File.Exists);
+        var changed = 0;
+        foreach (var file in files)
+        {
+            if (ProjectFileMerger.RenameStratumPackages(File.ReadAllText(file)) is { } renamed)
+            {
+                File.WriteAllText(file, renamed);
+                changed++;
+            }
+        }
+
+        return changed;
     }
 
     /// <summary>Some migration of the service already mentions <paramref name="table"/>.</summary>

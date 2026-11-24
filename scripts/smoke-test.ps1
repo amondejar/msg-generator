@@ -91,7 +91,7 @@ try {
     $globalLine = (& dotnet nuget locals global-packages --list | Out-String).Trim()
     $global = $globalLine.Substring($globalLine.IndexOf(':') + 1).Trim()
     Get-ChildItem $global -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'stratum.servicedefaults*' -or $_.Name -eq 'stratum.ddd' -or $_.Name -like 'stratum.messaging*' -or $_.Name -like 'msg.servicedefaults*' -or $_.Name -eq 'msg.ddd' -or $_.Name -like 'msg.messaging*' } |
+        Where-Object { $_.Name -like 'stratumkit.*' -or $_.Name -like 'stratum.servicedefaults*' -or $_.Name -eq 'stratum.ddd' -or $_.Name -like 'stratum.messaging*' -or $_.Name -like 'msg.servicedefaults*' -or $_.Name -eq 'msg.ddd' -or $_.Name -like 'msg.messaging*' } |
         Remove-Item -Recurse -Force
 
     Step "Generate every feature combination worth checking (Stratum $Version)"
@@ -125,7 +125,7 @@ try {
     Pass '--from reproduces the same service'
 
     $props = Get-Content (Join-Path $Work 'core\Directory.Packages.props') -Raw
-    if ($props -like "*Include=""Stratum.ServiceDefaults"" Version=""$Version""*") { Pass "service pins Stratum.ServiceDefaults $Version" } else { Fail 'Stratum.ServiceDefaults version' }
+    if ($props -like "*Include=""StratumKit.ServiceDefaults"" Version=""$Version""*") { Pass "service pins Stratum.ServiceDefaults $Version" } else { Fail 'Stratum.ServiceDefaults version' }
 
     Step "Build 'core' service (TreatWarningsAsErrors)"
     Invoke-Dotnet build (Join-Path $Work 'core') -c Release -v q -nologo
@@ -181,12 +181,12 @@ try {
     Invoke-Dotnet $StratumDll upgrade --path $upgraded --to 9.9.9
     $upProps = Get-Content (Join-Path $upgraded 'Directory.Packages.props') -Raw
     $upJson  = Get-Content (Join-Path $upgraded 'stratum.json') -Raw
-    if ($upProps -like '*Include="Stratum.ServiceDefaults" Version="9.9.9"*' -and $upJson -like '*"stratumVersion": "9.9.9"*') {
+    if ($upProps -like '*Include="StratumKit.ServiceDefaults" Version="9.9.9"*' -and $upJson -like '*"stratumVersion": "9.9.9"*') {
         Pass 'upgrade bumps Stratum.* packages and stratum.json'
     } else { Fail 'upgrade' }
     Invoke-Dotnet $StratumDll enum add Tier --values "Basic, Gold" --path $upgraded
     $alignedProps = Get-Content (Join-Path $upgraded 'Directory.Packages.props') -Raw
-    if ($alignedProps -like "*Include=""Stratum.ServiceDefaults"" Version=""$Version""*" -and $alignedProps -notlike '*Version="9.9.9"*') {
+    if ($alignedProps -like "*Include=""StratumKit.ServiceDefaults"" Version=""$Version""*" -and $alignedProps -notlike '*Version="9.9.9"*') {
         Pass "a change made with this Stratum puts every Stratum.* package at $Version"
     } else { Fail 'packages not aligned' }
 
@@ -457,7 +457,7 @@ await app.RunAsync().ConfigureAwait(false);
     Invoke-Dotnet $StratumDll messaging on --broker kafka --path $fs
     $wiringCode = Get-Content $wiring -Raw
     $devSettings = Join-Path $fs 'src\Shop.Api\appsettings.Development.json'
-    if ($wiringCode -like '*UseKafka(builder.Configuration)*' -and $wiringCode -like '*UseEntityFramework<ShopDbContext>*' -and (Get-Content $apiProj -Raw) -like '*Include="Stratum.Messaging.Kafka"*' -and (Get-Content $devSettings -Raw) -like '*"kafka": "localhost:9092"*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Data\MessagingConfiguration.g.cs') -Raw) -like '*MessagingModel.ConfigureOutbox*') {
+    if ($wiringCode -like '*UseKafka(builder.Configuration)*' -and $wiringCode -like '*UseEntityFramework<ShopDbContext>*' -and (Get-Content $apiProj -Raw) -like '*Include="StratumKit.Messaging.Kafka"*' -and (Get-Content $devSettings -Raw) -like '*"kafka": "localhost:9092"*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Data\MessagingConfiguration.g.cs') -Raw) -like '*MessagingModel.ConfigureOutbox*') {
         Pass 'messaging on: Kafka, outbox/inbox tables, packages and connection string'
         if ((Get-Content (Join-Path $fs 'src\Shop.Api\Data\MessagingConfiguration.g.cs') -Raw) -like '*MessagingModel.ConfigureReceived*' -and (Get-Content $wiring -Raw) -like '*app.MapStratumMessagingDiagnostics()*') {
             Pass 'event traces: msg_received journal and GET /_stratum/messaging (Development)'
@@ -895,9 +895,9 @@ components:
     Invoke-Dotnet $StratumDll events on Parcel --path $old
     Get-ChildItem $old -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } | ForEach-Object {
         $text = [IO.File]::ReadAllText($_.FullName)
-        $new = [regex]::Replace($text, '\bStratum\.(?=(ServiceDefaults|Ddd|Messaging)\b)', 'Msg.')
+        $new = [regex]::Replace($text, '\bStratum(?:Kit)?\.(?=(ServiceDefaults|Ddd|Messaging)\b)', 'Msg.')
         $new = [regex]::Replace($new, '\b(Add|Use|Map)Stratum(?=[A-Z])', '${1}Msg')
-        $new = $new.Replace('StratumWiring', 'MsgWiring').Replace('"stratumVersion"', '"msgVersion"').Replace('pattern="Stratum.*"', 'pattern="Msg.*"')
+        $new = $new.Replace('StratumWiring', 'MsgWiring').Replace('"stratumVersion"', '"msgVersion"').Replace('pattern="StratumKit.*"', 'pattern="Msg.*"')
         if ($new -ne $text) { [IO.File]::WriteAllText($_.FullName, $new) }
     }
     Rename-Item (Join-Path $old 'stratum.json') 'msg.json'
@@ -909,7 +909,8 @@ components:
         Select-String -Pattern '\bMsg\.(ServiceDefaults|Ddd|Messaging)|AddMsg|UseMsg'
     if ($blocked -like '*stratum upgrade*' -and $plan -like '*stratum.json*' -and (Test-Path (Join-Path $old 'stratum.json')) -and -not (Test-Path (Join-Path $old 'msg.json')) `
         -and (Test-Path (Join-Path $old 'src\Shipping.Api\StratumWiring.g.cs')) -and -not (Test-Path (Join-Path $old 'src\Shipping.Api\MsgWiring.g.cs')) `
-        -and (Get-Content (Join-Path $old 'src\Shipping.Api\Program.cs') -Raw) -like '*AddStratumWiring()*' -and -not $leftovers) {
+        -and (Get-Content (Join-Path $old 'src\Shipping.Api\Program.cs') -Raw) -like '*AddStratumWiring()*' -and -not $leftovers `
+        -and (Get-Content (Join-Path $old 'Directory.Packages.props') -Raw) -like '*Include="StratumKit.ServiceDefaults"*') {
         Pass 'upgrade migrates Msg.* / msg.json / MsgWiring to Stratum (user code included)'
     } else { $leftovers | Out-Host; Fail 'legacy names migration' }
 

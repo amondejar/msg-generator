@@ -15,29 +15,29 @@
       Stratum platform packages. Always the same version; "stratum upgrade" bumps them.
       Their own dependencies (OpenTelemetry, Polly, JwtBearer...) are managed by Stratum.
     -->
-    <PackageVersion Include="Stratum.ServiceDefaults" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.ServiceDefaults" Version="{{StratumVersion}}" />
     <!-- @stratum:if cleanDdd -->
-    <PackageVersion Include="Stratum.Ddd" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.Ddd" Version="{{StratumVersion}}" />
     <!-- @stratum:end -->
     <!-- @stratum:if observability -->
-    <PackageVersion Include="Stratum.ServiceDefaults.OpenTelemetry" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.ServiceDefaults.OpenTelemetry" Version="{{StratumVersion}}" />
     <!-- @stratum:end -->
     <!-- @stratum:if resilience -->
-    <PackageVersion Include="Stratum.ServiceDefaults.Resilience" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.ServiceDefaults.Resilience" Version="{{StratumVersion}}" />
     <!-- @stratum:end -->
     <!-- @stratum:if auth -->
-    <PackageVersion Include="Stratum.ServiceDefaults.Authentication" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.ServiceDefaults.Authentication" Version="{{StratumVersion}}" />
     <!-- @stratum:end -->
     <!-- @stratum:if messaging -->
-    <PackageVersion Include="Stratum.Messaging" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.Messaging" Version="{{StratumVersion}}" />
     <!-- @stratum:if persistence -->
-    <PackageVersion Include="Stratum.Messaging.EntityFrameworkCore" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.Messaging.EntityFrameworkCore" Version="{{StratumVersion}}" />
     <!-- @stratum:end -->
     <!-- @stratum:if kafka -->
-    <PackageVersion Include="Stratum.Messaging.Kafka" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.Messaging.Kafka" Version="{{StratumVersion}}" />
     <!-- @stratum:end -->
     <!-- @stratum:if azureServiceBus -->
-    <PackageVersion Include="Stratum.Messaging.AzureServiceBus" Version="{{StratumVersion}}" />
+    <PackageVersion Include="StratumKit.Messaging.AzureServiceBus" Version="{{StratumVersion}}" />
     <!-- @stratum:end -->
     <!-- @stratum:end -->
   </ItemGroup>

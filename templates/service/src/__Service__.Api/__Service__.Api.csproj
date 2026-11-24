@@ -8,27 +8,27 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Stratum.ServiceDefaults" />
+    <PackageReference Include="StratumKit.ServiceDefaults" />
     <!-- @stratum:if observability -->
-    <PackageReference Include="Stratum.ServiceDefaults.OpenTelemetry" />
+    <PackageReference Include="StratumKit.ServiceDefaults.OpenTelemetry" />
     <!-- @stratum:end -->
     <!-- @stratum:if resilience -->
-    <PackageReference Include="Stratum.ServiceDefaults.Resilience" />
+    <PackageReference Include="StratumKit.ServiceDefaults.Resilience" />
     <!-- @stratum:end -->
     <!-- @stratum:if auth -->
-    <PackageReference Include="Stratum.ServiceDefaults.Authentication" />
+    <PackageReference Include="StratumKit.ServiceDefaults.Authentication" />
     <!-- @stratum:end -->
     <!-- @stratum:if kafka -->
-    <PackageReference Include="Stratum.Messaging.Kafka" />
+    <PackageReference Include="StratumKit.Messaging.Kafka" />
     <!-- @stratum:end -->
     <!-- @stratum:if azureServiceBus -->
-    <PackageReference Include="Stratum.Messaging.AzureServiceBus" />
+    <PackageReference Include="StratumKit.Messaging.AzureServiceBus" />
     <!-- @stratum:end -->
     <!-- @stratum:if verticalSlice -->
     <!-- @stratum:if messaging -->
-    <PackageReference Include="Stratum.Messaging" />
+    <PackageReference Include="StratumKit.Messaging" />
     <!-- @stratum:if persistence -->
-    <PackageReference Include="Stratum.Messaging.EntityFrameworkCore" />
+    <PackageReference Include="StratumKit.Messaging.EntityFrameworkCore" />
     <!-- @stratum:end -->
     <!-- @stratum:end -->
     <!-- @stratum:end -->

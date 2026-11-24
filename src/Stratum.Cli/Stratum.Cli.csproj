@@ -9,7 +9,7 @@
     <IsPackable>true</IsPackable>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>stratum</ToolCommandName>
-    <PackageId>Stratum.Cli</PackageId>
+    <PackageId>StratumKit.Cli</PackageId>
 
     <!--
       stratum studio hosts Blazor components that live in Stratum.Studio. Since .NET 10, blazor.web.js comes from the

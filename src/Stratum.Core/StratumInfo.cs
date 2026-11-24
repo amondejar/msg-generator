@@ -11,6 +11,12 @@ public static class StratumInfo
     public static string Version { get; } = ReadVersion();
 
     /// <summary>
+    /// Prefix of the package IDs: StratumKit.ServiceDefaults, StratumKit.Messaging… ("Stratum." is reserved by someone
+    /// else on nuget.org). Services generated before 0.36.1 use Stratum.*; any change or upgrade renames them.
+    /// </summary>
+    public const string PackagePrefix = "StratumKit.";
+
+    /// <summary>
     /// Built by the release workflow (-p:StratumPublished=true): the Stratum.* packages of this version are on
     /// nuget.org, so services need no local package source.
     /// </summary>
