@@ -48,11 +48,12 @@ jobs:
 
       # Symbols (.snupkg) next to each package are pushed with it. --skip-duplicate: re-running the job is safe.
       - name: Push to nuget.org
-        run: >
-          dotnet nuget push "artifacts/release/*.nupkg"
-          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
-          --source https://api.nuget.org/v3/index.json
-          --skip-duplicate
+        run: |
+          skip=""
+          if [ "$GITHUB_RUN_ATTEMPT" -gt 1 ]; then skip="--skip-duplicate"; fi
+          dotnet nuget push "artifacts/release/*.nupkg" \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json $skip
 
       - name: GitHub release
         uses: softprops/action-gh-release@v2
