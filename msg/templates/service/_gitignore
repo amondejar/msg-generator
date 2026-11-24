@@ -1,8 +1,0 @@
-bin/
-obj/
-artifacts/
-TestResults/
-.vs/
-.idea/
-*.user
-appsettings.Local.json

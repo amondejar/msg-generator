@@ -1,4 +1,0 @@
-# Normalize line endings in the repo; keep scripts runnable on each platform.
-* text=auto
-*.sh  text eol=lf
-*.ps1 text eol=crlf
