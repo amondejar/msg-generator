@@ -12,7 +12,7 @@
       Single source of truth for the Stratum version: the CLI, the Stratum.* packages and the
       version written into generated services (stratum.json, Directory.Packages.props) all come from here.
     -->
-    <Version>0.36.2</Version>
+    <Version>0.36.3</Version>
     <Authors>Stratum</Authors>
     <PackageTags>dotnet;microservices;aspnetcore;service-defaults;aspire;ddd;messaging;generator</PackageTags>
 
@@ -26,6 +26,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Copyright>Copyright (c) Stratum contributors</Copyright>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl Condition="'$(GITHUB_REPOSITORY)' != ''">$(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY)</RepositoryUrl>

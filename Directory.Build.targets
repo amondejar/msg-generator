@@ -1,7 +1,8 @@
 <Project>
-  <!-- What every package of Stratum carries on nuget.org: its README (the license is an SPDX expression). -->
+  <!-- What every package of Stratum carries on nuget.org: its README and icon (the license is an SPDX expression). -->
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <None Include="$(MSBuildThisFileDirectory)docs/nuget/README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)docs/nuget/icon.png" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
   <!-- Release builds (-p:StratumPublished=true): the CLI knows its packages are on nuget.org. -->
