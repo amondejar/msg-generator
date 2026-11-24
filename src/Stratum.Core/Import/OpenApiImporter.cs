@@ -13,7 +13,9 @@ public sealed record OpenApiImport(
     string? Title,
     IReadOnlyList<EntityDefinition> Entities,
     IReadOnlyList<string> Notes,
-    IReadOnlyList<string> ManualEndpoints);
+    IReadOnlyList<string> ManualEndpoints,
+    IReadOnlyList<EnumDefinition> Enums,
+    IReadOnlyList<ItemTypeDefinition> Types);
 
 /// <summary>The entities of an import, validated against the service they go into, and the report.</summary>
 public sealed record PreparedImport(
@@ -22,13 +24,25 @@ public sealed record PreparedImport(
     string Architecture,
     IReadOnlyList<EntityDefinition> Entities,
     IReadOnlyList<string> Notes,
-    IReadOnlyList<string> ManualEndpoints)
+    IReadOnlyList<string> ManualEndpoints,
+    IReadOnlyList<EnumDefinition> Enums,
+    IReadOnlyList<ItemTypeDefinition> Types)
 {
     /// <summary>The report the CLI prints (and the Studio shows).</summary>
     public string Report()
     {
         var text = new StringBuilder();
         text.AppendLine($"OpenAPI{(Title is null ? string.Empty : $" \"{Title}\"")} → {ServiceName} ({Architecture}): {Entities.Count} entidad(es)");
+        foreach (var e in Enums)
+        {
+            text.AppendLine($"  enum {e.Name}: {string.Join(", ", e.Values)}");
+        }
+
+        foreach (var t in Types)
+        {
+            text.AppendLine($"  tipo {t.Name}: {PropertyTypes.Spec(t.Properties)}");
+        }
+
         foreach (var entity in Entities)
         {
             text.AppendLine($"  {entity.Name} (/api/v1/{EntityCodeGen.Kebab(entity.Plural)}): {PropertyTypes.Spec(entity.Properties)}");
@@ -120,6 +134,75 @@ public static partial class OpenApiImporter
         var serviceName = current?.Service.Name ?? Model.ServiceName.Normalize(name ?? Pascal(import.Title ?? "Api"));
         var definition = current ?? new ServiceDefinition { Service = new ServiceInfo { Name = serviceName }, Architecture = architecture };
         var notes = import.Notes.ToList();
+
+        // Enumerations: the service's own win; new ones are added (a clash with an entity name keeps it as text).
+        var newEnums = new List<EnumDefinition>();
+        foreach (var e in import.Enums)
+        {
+            if (definition.EnumNames.Contains(e.Name) || import.Entities.Any(x => x.Name == e.Name) || definition.Entities.Any(x => x.Name == e.Name))
+            {
+                if (!definition.EnumNames.Contains(e.Name))
+                {
+                    notes.Add($"enum {e.Name}: se llama como una entidad; sus propiedades se importan como texto.");
+                }
+
+                continue;
+            }
+
+            newEnums.Add(e);
+        }
+
+        var enumNames = definition.EnumNames.Concat(newEnums.Select(e => e.Name)).ToHashSet(StringComparer.Ordinal);
+        definition = definition with { Enums = [.. definition.Enums ?? [], .. newEnums] };
+        if (definition.Enums is { Count: 0 })
+        {
+            definition = definition with { Enums = null };
+        }
+
+        IReadOnlyList<PropertyDefinition> Known(IReadOnlyList<PropertyDefinition> properties) =>
+            [.. properties.Select(p => p.Enum is { } n && !enumNames.Contains(n) ? p with { Type = "string", Enum = null } : p)];
+
+        // Item types: the service's own win (same name); new ones are added.
+        var newTypes = new List<ItemTypeDefinition>();
+        foreach (var t in import.Types)
+        {
+            if (definition.TypeNames.Contains(t.Name))
+            {
+                notes.Add($"tipo {t.Name}: ya existe en el servicio; se usa el que hay.");
+                continue;
+            }
+
+            if (enumNames.Contains(t.Name) || import.Entities.Any(x => x.Name == t.Name) || definition.Entities.Any(x => x.Name == t.Name))
+            {
+                notes.Add($"tipo {t.Name}: se llama como una entidad o un enumerado; las listas que lo usan no se importan.");
+                continue;
+            }
+
+            newTypes.Add(t with { Properties = Known(t.Properties) });
+        }
+
+        definition = definition with { Types = [.. definition.Types ?? [], .. newTypes] };
+        if (definition.Types is { Count: 0 })
+        {
+            definition = definition with { Types = null };
+        }
+
+        var typeNames = definition.TypeNames.ToHashSet(StringComparer.Ordinal);
+        foreach (var x in import.Entities)
+        {
+            foreach (var p in x.Properties.Where(p => p.IsObjectList && !typeNames.Contains(p.Of!)))
+            {
+                notes.Add($"{x.Name}.{p.Name}: lista de {p.Of}, que no se ha podido importar.");
+            }
+        }
+        import = import with
+        {
+            Entities = [.. import.Entities.Select(x => x with
+            {
+                Properties = Known([.. x.Properties.Where(p => !p.IsObjectList || typeNames.Contains(p.Of!))]),
+                Operations = x.Operations is null ? null : [.. x.Operations.Select(o => o with { Parameters = Known(o.Parameters) })],
+            })],
+        };
         var accepted = new List<EntityDefinition>();
         foreach (var entity in import.Entities)
         {
@@ -139,7 +222,7 @@ public static partial class OpenApiImporter
             Properties = [.. e.Properties.Select(p => p.References is { } t && !known.Contains(t) ? p with { References = null } : p)],
         })];
 
-        return new PreparedImport(serviceName, import.Title, architecture, accepted, notes, import.ManualEndpoints);
+        return new PreparedImport(serviceName, import.Title, architecture, accepted, notes, import.ManualEndpoints, newEnums, newTypes);
     }
 
     public static OpenApiImport Import(JsonObject doc, string architecture)
@@ -147,6 +230,8 @@ public static partial class OpenApiImporter
         ArgumentNullException.ThrowIfNull(doc);
         var notes = new List<string>();
         var manual = new List<string>();
+        var enums = new EnumCollector();
+        var types = new List<ItemTypeDefinition>();
         var schemas = (doc["components"]?["schemas"] ?? doc["definitions"]) as JsonObject ?? [];
         var paths = doc["paths"] as JsonObject ?? [];
 
@@ -240,7 +325,7 @@ public static partial class OpenApiImporter
                 }
 
                 var nullable = !required.Contains(propertyName) || propertySchema?["nullable"]?.GetValue<bool>() == true || IsNullableType(propertySchema);
-                if (Map(propertySchema, schemas, doc, entityNames, names, pascal, out var type, out var target, out var problem))
+                if (Map(propertySchema, schemas, doc, entityNames, names, pascal, enums, name + pascal, out var type, out var target, out var problem, types))
                 {
                     var finalName = target is not null && !pascal.EndsWith("Id", StringComparison.Ordinal) ? pascal + "Id" : pascal;
                     if (properties.Any(p => p.Name == finalName))
@@ -248,7 +333,16 @@ public static partial class OpenApiImporter
                         continue;
                     }
 
-                    properties.Add(new PropertyDefinition { Name = finalName, Type = type!, Nullable = nullable || target == name, References = target });
+                    properties.Add(EnumAware(new PropertyDefinition { Name = finalName, Type = type!, Nullable = nullable || target == name, References = target }));
+                    if (properties[^1].IsList)
+                    {
+                        properties[^1] = properties[^1] with { Nullable = false };
+                    }
+
+                    if (problem is not null)
+                    {
+                        notes.Add($"{name}.{pascal}: {problem}");
+                    }
                 }
                 else
                 {
@@ -290,9 +384,14 @@ public static partial class OpenApiImporter
                 var bodyRequired = RequiredOf(body, schemas, doc);
                 foreach (var (pn, ps) in PropertiesOf(body, schemas, doc))
                 {
-                    if (Map(ps, schemas, doc, entityNames, names, Pascal(pn), out var type, out var target, out var problem))
+                    if (Map(ps, schemas, doc, entityNames, names, Pascal(pn), enums, entity.Name + verb + Pascal(pn), out var type, out var target, out var problem)
+                        && type!.EndsWith("[]", StringComparison.Ordinal))
                     {
-                        parameters.Add(new PropertyDefinition { Name = Pascal(pn), Type = type!, Nullable = !bodyRequired.Contains(pn), References = target });
+                        notes.Add($"{entity.Name}.{verb}({Pascal(pn)}): las operaciones no admiten listas como parámetro todavía.");
+                    }
+                    else if (problem is null && type is not null)
+                    {
+                        parameters.Add(EnumAware(new PropertyDefinition { Name = Pascal(pn), Type = type!, Nullable = !bodyRequired.Contains(pn), References = target }));
                     }
                     else
                     {
@@ -320,7 +419,7 @@ public static partial class OpenApiImporter
         }
 
         // 4. Required references in a cycle can't be created: make them optional.
-        var probe = new ServiceDefinition { Service = new ServiceInfo { Name = "Probe" }, Architecture = architecture, Entities = entities };
+        var probe = new ServiceDefinition { Service = new ServiceInfo { Name = "Probe" }, Architecture = architecture, Entities = entities, Enums = enums.All.Count == 0 ? null : enums.All, Types = types.Count == 0 ? null : types };
         try
         {
             ModelRules.Validate(probe);
@@ -331,10 +430,137 @@ public static partial class OpenApiImporter
             entities = [.. entities.Select(e => e with { Properties = [.. e.Properties.Select(p => p.References is null ? p : p with { Nullable = true })] })];
         }
 
-        return new OpenApiImport(doc["info"]?["title"]?.GetValue<string>(), entities, notes, manual.Distinct().ToList());
+        notes.AddRange(enums.Renamed);
+        return new OpenApiImport(doc["info"]?["title"]?.GetValue<string>(), entities, notes, manual.Distinct().ToList(), enums.All, types);
     }
 
     private enum PathKind { Collection, Item, Action }
+
+    /// <summary>"enum:OrderStatus", "string[]", "object:OrderLine[]" from <see cref="Map"/> → the property.</summary>
+    private static PropertyDefinition EnumAware(PropertyDefinition property)
+    {
+        if (property.Type.EndsWith("[]", StringComparison.Ordinal))
+        {
+            property = EnumAware(property with { Type = property.Type[..^2] }) with { List = true, Nullable = false };
+        }
+
+        if (property.Type.StartsWith(PropertyTypes.ObjectType + ":", StringComparison.Ordinal))
+        {
+            return property with { Type = PropertyTypes.ObjectType, Of = property.Type[(PropertyTypes.ObjectType.Length + 1)..] };
+        }
+
+        return property.Type.StartsWith(PropertyTypes.EnumType + ":", StringComparison.Ordinal)
+            ? property with { Type = PropertyTypes.EnumType, Enum = property.Type[(PropertyTypes.EnumType.Length + 1)..] }
+            : property;
+    }
+
+    /// <summary>
+    /// The items of an array of objects → an item type (name from its schema, or entity + property + "Item"). Its
+    /// properties: basic types and enumerations; anything else goes to the notes. Null when nothing can be generated.
+    /// </summary>
+    private static string? ItemType(JsonNode? items, JsonObject schemas, JsonObject doc, Dictionary<string, string> entityNames,
+        HashSet<string> names, EnumCollector enums, List<ItemTypeDefinition> types, string fallbackName, out string? problem)
+    {
+        problem = null;
+        var referenced = RefName(items);
+        var node = referenced is not null ? Resolve(items!["$ref"]!.ToString(), doc) as JsonObject : items as JsonObject;
+        if (node is null)
+        {
+            problem = "lista de objetos sin esquema";
+            return null;
+        }
+
+        var typeName = Pascal(referenced ?? fallbackName);
+        if (types.Any(t => t.Name == typeName))
+        {
+            return typeName;
+        }
+
+        var required = RequiredOf(node, schemas, doc);
+        var properties = new List<PropertyDefinition>();
+        var skipped = new List<string>();
+        foreach (var (pn, ps) in PropertiesOf(node, schemas, doc))
+        {
+            var pascal = Pascal(pn);
+            if (pascal == "Id")
+            {
+                pascal = typeName + "Id";
+            }
+
+            if (Map(ps, schemas, doc, entityNames, [], pascal, enums, typeName + pascal, out var type, out _, out _) && !type!.EndsWith("[]", StringComparison.Ordinal))
+            {
+                properties.Add(EnumAware(new PropertyDefinition { Name = pascal, Type = type, Nullable = !required.Contains(pn) }));
+            }
+            else
+            {
+                skipped.Add(pascal);
+            }
+        }
+
+        if (properties.Count == 0)
+        {
+            problem = $"los elementos de la lista ({typeName}) no tienen propiedades que Stratum sepa generar";
+            return null;
+        }
+
+        if (skipped.Count > 0)
+        {
+            problem = $"de {typeName} no se importan {string.Join(", ", skipped)} (listas u objetos dentro de un elemento)";
+        }
+
+        types.Add(new ItemTypeDefinition { Name = typeName, Properties = properties });
+        return typeName;
+    }
+
+    /// <summary>Enumerations found while mapping (string schemas with "enum"), deduplicated by name and values.</summary>
+    private sealed class EnumCollector
+    {
+        private readonly List<EnumDefinition> _all = [];
+
+        public IReadOnlyList<EnumDefinition> All => _all;
+
+        /// <summary>Enumerations whose values had to change to be C# names ("in_progress" → "InProgress").</summary>
+        public List<string> Renamed { get; } = [];
+
+        /// <returns>The enumeration's name, or null when the values can't be C# identifiers (then it stays a string).</returns>
+        public string? Register(string suggested, JsonArray values)
+        {
+            var names = values.Where(v => v is not null).Select(v => v!.GetValueKind() == JsonValueKind.String ? Pascal(v.GetValue<string>()) : null).ToList();
+            if (names.Any(n => string.IsNullOrEmpty(n) || n!.Length > 64) || names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != names.Count)
+            {
+                return null;
+            }
+
+            var name = Pascal(suggested);
+            if (name.Length == 0)
+            {
+                return null;
+            }
+
+            for (var i = 2; ; i++)
+            {
+                var existing = _all.FirstOrDefault(e => e.Name == name);
+                if (existing is null)
+                {
+                    _all.Add(new EnumDefinition { Name = name, Values = names! });
+                    var original = values.Where(v => v is not null).Select(v => v!.GetValue<string>()).ToList();
+                    if (!original.SequenceEqual(names!))
+                    {
+                        Renamed.Add($"enum {name}: la API generada envía {string.Join(", ", names!)} (la especificación decía {string.Join(", ", original)}).");
+                    }
+
+                    return name;
+                }
+
+                if (existing.Values.SequenceEqual(names!))
+                {
+                    return name;   // the same enum used by several properties
+                }
+
+                name = Pascal(suggested) + i.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+    }
 
     private sealed class Resource(string collection)
     {
@@ -541,7 +767,8 @@ public static partial class OpenApiImporter
 
     /// <summary>OpenAPI property → Stratum type, a reference to another entity, or the reason it can't be generated.</summary>
     private static bool Map(JsonNode? schema, JsonObject schemas, JsonObject doc, Dictionary<string, string> entityNames, HashSet<string> names,
-        string propertyName, out string? type, out string? target, out string? problem)
+        string propertyName, EnumCollector enums, string enumName, out string? type, out string? target, out string? problem,
+        List<ItemTypeDefinition>? types = null)
     {
         type = null;
         target = null;
@@ -559,7 +786,7 @@ public static partial class OpenApiImporter
             var resolved = Resolve(schema!["$ref"]!.ToString(), doc);
             if (resolved?["enum"] is not null || TypeName(resolved) is "string" or "integer" or "number" or "boolean")
             {
-                return Map(resolved, schemas, doc, entityNames, names, propertyName, out type, out target, out problem);
+                return Map(resolved, schemas, doc, entityNames, names, propertyName, enums, Pascal(referenced), out type, out target, out problem);
             }
 
             problem = $"objeto anidado '{referenced}': Stratum no genera objetos dentro de una entidad (hazlo entidad propia con una referencia, o guárdalo en tu código)";
@@ -568,7 +795,7 @@ public static partial class OpenApiImporter
 
         if (schema?["allOf"] is JsonArray { Count: 1 } single)
         {
-            return Map(single[0], schemas, doc, entityNames, names, propertyName, out type, out target, out problem);
+            return Map(single[0], schemas, doc, entityNames, names, propertyName, enums, enumName, out type, out target, out problem);
         }
 
         var format = schema?["format"]?.ToString();
@@ -587,6 +814,12 @@ public static partial class OpenApiImporter
                     target = propertyName[..^2];
                 }
 
+                // enum: [draft, confirmed] → an enumeration of the service (stored as text, like the API sends it).
+                if (type == "string" && schema?["enum"] is JsonArray { Count: > 0 } values && enums.Register(enumName, values) is { } registered)
+                {
+                    type = PropertyTypes.EnumType + ":" + registered;
+                }
+
                 return true;
             case "integer":
                 type = format == "int64" ? "long" : "int";
@@ -598,10 +831,50 @@ public static partial class OpenApiImporter
                 type = "bool";
                 return true;
             case "array":
-                problem = RefName(schema!["items"]) is { } items && entityNames.TryGetValue(items, out var child)
-                    ? $"lista de {child}: dale a {child} una referencia a esta entidad ({child} → …Id) en lugar de la lista"
-                    : "lista: Stratum no genera colecciones dentro de una entidad";
+            {
+                var items = schema!["items"];
+                if (RefName(items) is { } itemRef && entityNames.TryGetValue(itemRef, out var child))
+                {
+                    problem = $"lista de {child}: dale a {child} una referencia a esta entidad ({child} → …Id) en lugar de la lista";
+                    return false;
+                }
+
+                var resolved = RefName(items) is not null ? Resolve(items!["$ref"]!.ToString(), doc) : items;
+                if (TypeName(resolved) is "object" || resolved?["properties"] is not null)
+                {
+                    if (types is null)
+                    {
+                        problem = "lista de objetos dentro de un elemento de lista";
+                        return false;
+                    }
+
+                    var itemType = ItemType(items, schemas, doc, entityNames, names, enums, types, enumName + "Item", out var itemProblem);
+                    if (itemType is null)
+                    {
+                        problem = itemProblem;
+                        return false;
+                    }
+
+                    type = PropertyTypes.ObjectType + ":" + itemType + "[]";
+                    problem = itemProblem;   // partial: reported by the caller only when it fails, so note it here
+                    return true;
+                }
+
+                if (TypeName(resolved) is "array")
+                {
+                    problem = "lista de listas: Stratum no la genera";
+                    return false;
+                }
+
+                if (Map(items, schemas, doc, entityNames, [], propertyName, enums, enumName, out var itemTypeName, out _, out problem) && !itemTypeName!.EndsWith("[]", StringComparison.Ordinal))
+                {
+                    type = itemTypeName + "[]";
+                    return true;
+                }
+
+                problem ??= "lista de un tipo que Stratum no sabe generar";
                 return false;
+            }
             case "object":
                 problem = "objeto anidado: Stratum no genera objetos dentro de una entidad";
                 return false;

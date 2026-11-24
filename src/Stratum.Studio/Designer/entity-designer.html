@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{Diseñador de entidades::Entity designer}} · Stratum</title>
+<style>
+  :root {
+    --bg: #0B0D11; --bar: #0F1217; --panel: #151922; --panel-2: #1B202B; --line: #232A36; --line-2: #2E3746;
+    --text: #E6E9EF; --text-2: #B4BCCB; --muted: #7C8698; --accent: #2DD4BF; --accent-bg: rgba(45, 212, 191, .12);
+    --link: #93C5FD; --ok: #34D399; --warn: #FBBF24; --err: #F87171; --new: #A3E635;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .btn { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 14px; }
+  .btn:hover { border-color: var(--muted); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--accent); color: #04211D; border-color: var(--accent); font-weight: 600; }
+  .icon { background: none; border: 0; color: var(--muted); padding: 2px 5px; border-radius: 5px; line-height: 1; }
+  .icon:hover { color: var(--text); background: var(--panel-2); }
+  .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .hint { color: var(--muted); font-size: 12.5px; }
+  header { height: 56px; display: flex; align-items: center; gap: 14px; padding: 0 16px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header .spacer { flex: 1; }
+  #status { font-size: 13px; color: var(--muted); }
+  #status.dirty { color: var(--warn); }
+  #app { display: grid; grid-template-columns: 300px 1fr; height: calc(100% - 56px); }
+  aside { background: var(--bar); border-right: 1px solid var(--line); overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  aside h3 { margin: 6px 0 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .pal { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel); cursor: grab; }
+  .pal.on { cursor: pointer; opacity: .75; }
+  .pal .name { font-weight: 600; flex: 1; }
+  .pal small { color: var(--muted); }
+  .change { display: flex; gap: 6px; align-items: flex-start; padding: 6px 8px; border-radius: 6px; background: var(--panel); border-left: 3px solid var(--new); font-size: 13px; }
+  .change.remove { border-left-color: var(--err); }
+  .change span { flex: 1; }
+  .plan { font-size: 12.5px; display: flex; flex-direction: column; gap: 6px; }
+  .plan .svc { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+  .plan .err { color: var(--err); }
+  .plan .warn { color: var(--warn); }
+  #viewport { position: relative; overflow: hidden; background-color: var(--bg);
+    background-image: radial-gradient(circle, #1F2632 1px, transparent 1px); background-size: 24px 24px; cursor: grab; }
+  #viewport.panning { cursor: grabbing; }
+  #viewport.drop { outline: 2px dashed var(--accent); outline-offset: -6px; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  #wires { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  #wires path.hit { pointer-events: stroke; stroke: transparent; stroke-width: 14; fill: none; cursor: pointer; }
+  #wires path.wire { fill: none; stroke: var(--accent); stroke-width: 2; }
+  #wires path.wire.problem { stroke: var(--err); stroke-dasharray: 6 5; }
+  #wires path.wire.pending { stroke: var(--new); stroke-dasharray: 7 5; }
+  #wires path.wire.selected { stroke-width: 4; }
+  #wires path.wire.dim { opacity: .2; }
+  #wires path.rubber { fill: none; stroke: var(--new); stroke-width: 2; stroke-dasharray: 4 4; }
+  .card { position: absolute; width: 250px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.35); cursor: default; }
+  .card.target { border-color: var(--new); box-shadow: 0 0 0 3px rgba(163,230,53,.25); }
+  .card.self { opacity: .55; }
+  .card-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px 14px; border-bottom: 1px solid var(--line); cursor: move; }
+  .card-head b { font-size: 15px; flex: 1; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--text-2); white-space: nowrap; }
+  .badge.live { color: var(--accent); border-color: #115E59; }
+  .sec { padding: 8px 0 8px 14px; }
+  .sec-title { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 2px 14px 4px 0; }
+  .entity { margin: 4px 0 8px; }
+  .entity-name { font-family: ui-monospace, Consolas, monospace; font-size: 13px; margin-bottom: 3px; }
+  .chip { display: flex; align-items: center; justify-content: space-between; margin: 3px 0 3px 12px; padding: 4px 10px; font-size: 12.5px;
+    border: 1px solid var(--line-2); border-right: 0; border-radius: 6px 0 0 6px; background: var(--panel-2); color: var(--text-2); cursor: grab; user-select: none; }
+  .chip.published { color: var(--text); border-color: #115E59; }
+  .chip.possible { color: var(--muted); border-style: dashed; background: transparent; }
+  .chip.added { color: var(--new); border-color: #4D7C0F; border-style: dashed; }
+  .chip.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chip small { color: var(--muted); }
+  .listen { display: flex; align-items: center; gap: 6px; margin: 3px 14px 3px -14px; padding: 4px 6px 4px 12px; font-size: 12.5px;
+    border: 1px solid var(--line-2); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--panel-2); }
+  .listen.problem { border-left-color: var(--err); }
+  .listen.added { border-left-color: var(--new); border-style: dashed; }
+  .listen.selected { outline: 2px solid var(--accent); }
+  .listen span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .empty { margin: 4px 14px 4px 0; font-size: 12.5px; color: var(--muted); }
+  #zoombar { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 6px; align-items: center; background: var(--bar); border: 1px solid var(--line); border-radius: 10px; padding: 6px; }
+  #zoombar label { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--text-2); padding: 0 6px; }
+  #actionbar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: none; gap: 10px; align-items: center;
+    background: var(--bar); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 12px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+  #actionbar.show { display: flex; }
+  #empty-canvas { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: var(--muted); font-size: 15px; }
+  #toast { position: fixed; right: 16px; top: 66px; max-width: 420px; padding: 10px 14px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line-2); display: none; }
+  #toast.show { display: block; }
+  #toast.err { border-color: var(--err); color: var(--err); }
+  a { color: var(--link); }
+
+  .prop { display: flex; align-items: center; gap: 6px; padding: 3px 12px; font-size: 12.5px; border-top: 1px solid transparent; }
+  .prop .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prop .t { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: nowrap; }
+  .prop.rel { cursor: pointer; color: var(--link); }
+  .prop.rel .t { color: var(--link); }
+  .prop.item { cursor: pointer; color: #C4B5FD; }
+  .prop.item .t { color: #C4B5FD; }
+  .prop.added { background: rgba(163,230,53,.08); color: var(--new); }
+  .prop.removed { text-decoration: line-through; opacity: .5; }
+  .prop.selected { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+  .card.type { border-style: dashed; width: 220px; }
+  .card.type .card-head b::before { content: "▤ "; color: #C4B5FD; }
+  .card.new { border-color: #4D7C0F; }
+  .card .props { padding: 6px 0 8px; }
+  .port { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; cursor: crosshair; font-size: 14px; flex: none; }
+  .port:hover { border-color: var(--accent); }
+  #wires path.wire.comp { stroke: #A78BFA; }
+  #wires text { fill: var(--text-2); font: 600 11px ui-monospace, Consolas, monospace; }
+  #wires text.pending { fill: var(--new); }
+  .dlg-back { position: fixed; inset: 0; background: rgba(4,6,10,.6); display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; z-index: 20; }
+  .dlg-back.show { display: flex; }
+  .dlg { width: min(520px, calc(100vw - 32px)); background: var(--bar); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,.55); }
+  .dlg h2 { margin: 0; font-size: 16px; padding: 16px 20px 4px; }
+  .dlg .body { padding: 8px 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .dlg .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+  .dlg label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .dlg input[type=text], .dlg select, aside input[type=text] { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 10px; }
+  .dlg .check { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; color: var(--text); font-size: 13.5px; }
+  .dlg .sig { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--text-2); padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .dlg .err { color: var(--err); font-size: 13px; }
+  .new-entity { display: flex; flex-direction: column; gap: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{Diseñador de entidades::Entity designer}}</h1>
+  <span class="hint mono" id="service"></span>
+  <span id="status"></span>
+  <div class="spacer"></div>
+  <button class="btn" id="discard">{{Descartar::Discard}}</button>
+  <button class="btn primary" id="save">{{Guardar y cerrar::Save and close}}</button>
+</header>
+<div id="app">
+  <aside>
+    <h3>{{Nueva entidad::New entity}}</h3>
+    <div class="new-entity">
+      <input type="text" id="ne-name" placeholder="Address" aria-label="{{Nombre::Name}}" />
+      <input type="text" id="ne-props" placeholder="Street:string, City:string, Zip:string?" aria-label="{{Propiedades::Properties}}" />
+      <button class="btn" id="ne-add">{{+ Añadir al diseño::+ Add to the design}}</button>
+      <div class="hint">{{Las propiedades como en el Studio: Nombre:tipo (string, int, decimal, bool, guid, date, datetime; ? opcional). El detalle, después en Entidades.::Properties as in the Studio: Name:type (string, int, decimal, bool, guid, date, datetime; ? optional). The details, later in Entities.}}</div>
+    </div>
+    <h3>{{Cambios sin guardar::Unsaved changes}} <span id="count"></span></h3>
+    <div id="changes" style="display: flex; flex-direction: column; gap: 6px"></div>
+    <div id="plan" class="plan"></div>
+    <h3>{{Cómo se usa::How to use it}}</h3>
+    <div class="hint">
+      {{<b>Relacionar:</b> arrastra el <b>⊕</b> de una entidad hasta otra: la primera guarda el id de la segunda (Address → Customer: «una dirección es de un cliente»). Eliges 1–N o 1–1 y qué pasa al borrar.<br />
+      <b>Composición:</b> arrastra el ⊕ hasta un tipo de elemento (▤): forma parte de la entidad, uno (columnas en su tabla) o una lista (tabla propia).<br />
+      <b>Cambiar o quitar:</b> pulsa la fila de la relación o su línea.<br />
+      <b>Mover:</b> arrastra la cabecera; el fondo para desplazarte; rueda para el zoom.<br />
+      Nada se escribe hasta <b>Guardar y cerrar</b>; después, crea la migración.::<b>Relate:</b> drag an entity's <b>⊕</b> to another one: the first stores the id of the second (Address → Customer: «an address belongs to a customer»). You choose 1–N or 1–1 and what deleting does.<br />
+      <b>Composition:</b> drag the ⊕ to an item type (▤): it becomes part of the entity, one (columns in its table) or a list (own table).<br />
+      <b>Change or remove:</b> click the relation's row or its line.<br />
+      <b>Move:</b> drag the header; the background to pan; the wheel to zoom.<br />
+      Nothing is written until <b>Save and close</b>; then create the migration.}}
+    </div>
+    <div class="hint" style="margin-top: auto">Stratum {{version}}</div>
+  </aside>
+  <main id="viewport" aria-label="{{Lienzo::Canvas}}">
+    <div id="world"><svg id="wires" width="1" height="1"></svg><div id="cards"></div></div>
+    <div id="empty-canvas">{{El servicio no tiene entidades: crea la primera a la izquierda.::The service has no entities: create the first one on the left.}}</div>
+    <div id="actionbar"></div>
+    <div id="zoombar">
+      <button class="btn" id="zoom-out" title="{{Alejar::Zoom out}}">−</button>
+      <span id="zoom" class="mono" style="min-width: 46px; text-align: center">100%</span>
+      <button class="btn" id="zoom-in" title="{{Acercar::Zoom in}}">+</button>
+      <button class="btn" id="fit" title="{{Ver todo::Show all}}">{{Ajustar::Fit}}</button>
+    </div>
+  </main>
+</div>
+<div class="dlg-back" id="dlg-back"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+  <h2 id="dlg-title"></h2>
+  <div class="body" id="dlg-body"></div>
+  <div class="foot"><button class="btn" id="dlg-cancel">{{Cancelar::Cancel}}</button><button class="btn primary" id="dlg-ok">{{Aplicar::Apply}}</button></div>
+</div></div>
+<div id="toast" role="status"></div>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const service = new URLSearchParams(location.search).get("service") || "";
+  const T = {
+    restrict: "{{impedir::prevent}}", cascade: "{{en cascada::cascade}}", setNull: "{{vaciar::set empty}}",
+    optional: "{{opcional::optional}}", list: "{{lista::list}}",
+  };
+
+  let model = null;
+  let changes = [];
+  let layout = {};
+  let layoutDirty = false;
+  let view = { x: 40, y: 40, z: 1 };
+  let selection = null;          // {entity, property}
+  let planTimer = null;
+  let lastPlan = null;
+
+  // ---------- model with the pending changes applied (for drawing) ----------
+  function parseProps(spec) {
+    return String(spec || "").split(",").map((p) => p.trim()).filter(Boolean).map((p) => {
+      const [n, t = "string"] = p.split(":").map((x) => x.trim());
+      return { name: n, type: t, kind: "plain", added: true };
+    });
+  }
+
+  function effective() {
+    const cards = model.entities.map((e) => ({ ...e, properties: e.properties.map((p) => ({ ...p })) }));
+    const find = (name) => cards.find((c) => c.name.toLowerCase() === String(name).toLowerCase());
+    for (const c of changes) {
+      if (c.kind === "entity") {
+        cards.push({ name: c.entity, plural: "", isType: false, editable: true, isNew: true, properties: parseProps(c.properties) });
+        continue;
+      }
+      const card = find(c.entity);
+      if (!card) continue;
+      const i = card.properties.findIndex((p) => p.name.toLowerCase() === String(c.property).toLowerCase());
+      if (c.kind === "relation") card.properties.push({ name: c.property, type: c.target, kind: "reference", target: c.target, optional: c.optional, oneToOne: c.oneToOne, onDelete: c.onDelete || "restrict", added: true });
+      if (c.kind === "composition") card.properties.push({ name: c.property, type: c.target + (c.list ? "[]" : ""), kind: "item", target: c.target, list: c.list, optional: c.optional, added: true });
+      if (c.kind === "updateRelation" && i >= 0) Object.assign(card.properties[i], { optional: c.optional, oneToOne: c.oneToOne, onDelete: c.onDelete, changed: true });
+      if (c.kind === "remove" && i >= 0) card.properties[i].removed = true;
+    }
+    return { entities: cards, types: model.types };
+  }
+
+  function describe(c) {
+    switch (c.kind) {
+      case "entity": return `{{Nueva entidad::New entity}} ${c.entity}`;
+      case "relation": return `${c.entity}.${c.property} → ${c.target} (${c.oneToOne ? "1–1" : "1–N"}${c.optional ? ", " + T.optional : ""}, ${T[c.onDelete || "restrict"]})`;
+      case "updateRelation": return `${c.entity}.${c.property}: ${c.oneToOne ? "1–1" : "1–N"}${c.optional ? ", " + T.optional : ""}, ${T[c.onDelete || "restrict"]}`;
+      case "composition": return `${c.entity}.${c.property} ◆ ${c.target}${c.list ? "[]" : ""}`;
+      default: return `{{Quitar::Remove}} ${c.entity}.${c.property}`;
+    }
+  }
+
+  function addChange(change) {
+    changes.push(change);
+    selection = null;
+    changed();
+  }
+
+  // ---------- server ----------
+  async function load() {
+    const response = await fetch("/entity-designer/api/model?service=" + encodeURIComponent(service), { cache: "no-store" });
+    if (!response.ok) throw new Error(await response.text());
+    model = await response.json();
+    layout = model.layout || {};
+    const all = [...model.entities.map((e) => e.name), ...model.types.map((t) => t.name)];
+    for (const k of Object.keys(layout)) if (!all.includes(k)) delete layout[k];
+    let col = 0;
+    for (const name of all) {
+      if (!layout[name]) { layout[name] = { x: 40 + (col % 4) * 320, y: 40 + Math.floor(col / 4) * 300 }; layoutDirty = true; }
+      col++;
+    }
+    $("service").textContent = model.service + " · " + (model.architecture === "clean-ddd" ? "Clean + DDD" : "Vertical slice");
+    document.title = model.service + " · " + document.title;
+    changed();
+  }
+
+  function schedulePlan() {
+    clearTimeout(planTimer);
+    if (changes.length === 0) { lastPlan = null; renderPlan(); return; }
+    planTimer = setTimeout(async () => {
+      const response = await fetch("/entity-designer/api/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service, changes, layout: null }) });
+      lastPlan = await response.json();
+      renderPlan();
+    }, 250);
+  }
+
+  async function save() {
+    $("save").disabled = true;
+    try {
+      const response = await fetch("/entity-designer/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service, changes, layout }) });
+      const result = await response.json();
+      if (!result.saved) { lastPlan = result; renderPlan(); toast("{{No se ha guardado: revisa los errores de la izquierda.::Not saved: check the errors on the left.}}", true); return; }
+      changes = []; layoutDirty = false;
+      window.removeEventListener("beforeunload", warnUnsaved);
+      if (window.opener && !window.opener.closed) { try { window.opener.focus(); } catch { /* another origin */ } }
+      window.close();
+      setTimeout(async () => { toast("{{Guardado. Crea la migración en Datos y migraciones.::Saved. Create the migration in Data and migrations.}}"); await load(); }, 300);
+    } catch (e) {
+      toast("{{No se pudo guardar: ::Couldn't save: }}" + e.message, true);
+    } finally {
+      $("save").disabled = false;
+    }
+  }
+
+  // ---------- rendering ----------
+  function changed() { renderCards(); renderChanges(); schedulePlan(); renderStatus(); renderActionBar(); }
+
+  function renderStatus() {
+    const pending = changes.length > 0 || layoutDirty;
+    $("status").textContent = changes.length > 0 ? `● ${changes.length} {{cambio(s) sin guardar::unsaved change(s)}}` : layoutDirty ? "{{● Posiciones sin guardar::● Unsaved positions}}" : "{{Sin cambios::No changes}}";
+    $("status").className = pending ? "dirty" : "";
+    $("save").textContent = pending ? "{{Guardar y cerrar::Save and close}}" : "{{Cerrar::Close}}";
+    $("save").disabled = !!(lastPlan && lastPlan.errors && lastPlan.errors.length && changes.length);
+  }
+
+  function propRow(card, p) {
+    const sel = selection && selection.entity === card.name && selection.property === p.name;
+    let type = esc(p.type);
+    let cls = "";
+    if (p.kind === "reference") {
+      cls = " rel";
+      type = `→ ${esc(p.target)} ${p.oneToOne ? "1–1" : "N–1"}${p.optional ? "?" : ""}`;
+    } else if (p.kind === "item") {
+      cls = " item";
+      type = `◆ ${esc(p.target)}${p.list ? "[]" : ""}${p.optional ? "?" : ""}`;
+    }
+    const state = (p.added ? " added" : "") + (p.removed ? " removed" : "") + (sel ? " selected" : "");
+    return `<div class="prop${cls}${state}" data-entity="${esc(card.name)}" data-property="${esc(p.name)}" data-kind="${p.kind}"><span class="n">${esc(p.name)}</span><span class="t">${type}</span></div>`;
+  }
+
+  function renderCards() {
+    const m = effective();
+    $("empty-canvas").style.display = m.entities.length ? "none" : "flex";
+    const card = (c) => {
+      const pos = layout[c.name] || (layout[c.name] = { x: 60, y: 60 });
+      const rows = (c.isType ? '' : `<div class="prop"><span class="n">Id</span><span class="t">guid</span></div>`) + c.properties.map((p) => propRow(c, p)).join("");
+      return `<div class="card${c.isType ? " type" : ""}${c.isNew ? " new" : ""}" data-name="${esc(c.name)}" data-type="${c.isType ? 1 : 0}" style="left:${pos.x}px; top:${pos.y}px">
+        <div class="card-head" title="{{Arrastra para mover::Drag to move}}"><b>${esc(c.name)}</b>${c.plural ? `<span class="badge">${esc(c.plural)}</span>` : ""}
+          ${c.isType ? `<span class="badge">{{tipo::type}}</span>` : c.editable ? `<span class="port" title="{{Arrastra hasta otra entidad (relación) o un tipo (composición)::Drag to another entity (relation) or a type (composition)}}">⊕</span>` : `<span class="badge" title="{{Anterior a 0.10: conviértela en Entidades::Before 0.10: convert it in Entities}}">0.10</span>`}
+        </div>
+        <div class="props">${rows || '<div class="empty">{{sin propiedades::no properties}}</div>'}</div>
+      </div>`;
+    };
+    $("cards").innerHTML = m.entities.map(card).join("") + m.types.map(card).join("");
+    bindCards();
+    applyView();
+    requestAnimationFrame(drawWires);
+  }
+
+  function renderChanges() {
+    $("count").textContent = changes.length ? `(${changes.length})` : "";
+    $("changes").innerHTML = changes.length === 0 ? '<div class="hint">{{Ninguno.::None.}}</div>'
+      : changes.map((c, i) => `<div class="change${c.kind === "remove" ? " remove" : ""}"><span>${esc(describe(c))}</span><button class="icon" data-undo="${i}" title="{{Deshacer::Undo}}">↶</button></div>`).join("");
+    for (const b of $("changes").querySelectorAll("[data-undo]")) b.addEventListener("click", () => { changes.splice(+b.dataset.undo, 1); changed(); });
+  }
+
+  function renderPlan() {
+    const p = lastPlan;
+    if (!p) { $("plan").innerHTML = ""; renderStatus(); return; }
+    const errors = (p.errors || []).map((e) => `<div class="err">✘ ${esc(e)}</div>`).join("");
+    const warnings = (p.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
+    const files = p.files && p.files.length ? `<div class="svc">${p.files.length} {{archivo(s) se escriben al guardar.::file(s) are written when saving.}}${p.needsMigration ? " {{Después: crea la migración en <b>Datos y migraciones</b> (y revísala).::Then: create the migration in <b>Data and migrations</b> (and review it).}}" : ""}</div>` : "";
+    $("plan").innerHTML = errors + warnings + files;
+    renderStatus();
+  }
+
+  function renderActionBar() {
+    const bar = $("actionbar");
+    if (!selection) { bar.className = ""; bar.innerHTML = ""; return; }
+    const m = effective();
+    const card = m.entities.find((c) => c.name === selection.entity);
+    const p = card && card.properties.find((x) => x.name === selection.property);
+    if (!p) { selection = null; bar.className = ""; return; }
+    const what = p.kind === "reference" ? `<b>${esc(card.name)}.${esc(p.name)}</b> → ${esc(p.target)} · ${p.oneToOne ? "1–1" : "1–N"}${p.optional ? " · " + T.optional : ""} · {{al borrar::on delete}}: ${T[p.onDelete || "restrict"]}`
+      : `<b>${esc(card.name)}.${esc(p.name)}</b> ◆ ${esc(p.target)}${p.list ? "[]" : ""}`;
+    bar.innerHTML = `<span>${what}</span>${p.kind === "reference" && !p.added ? '<button class="btn" id="act-edit">{{Cambiar…::Change…}}</button>' : ""}<button class="btn" id="act-remove" style="color: var(--err)">{{Quitar::Remove}}</button><button class="icon" id="act-close">✕</button>`;
+    if ($("act-edit")) $("act-edit").onclick = () => relationDialog({ entity: card.name, property: p.name, target: p.target, oneToOne: p.oneToOne, optional: p.optional, onDelete: p.onDelete || "restrict" }, true);
+    $("act-remove").onclick = () => {
+      const pending = changes.findIndex((c) => (c.kind === "relation" || c.kind === "composition") && c.entity === card.name && c.property === p.name);
+      if (pending >= 0) { changes.splice(pending, 1); selection = null; changed(); }
+      else addChange({ kind: "remove", entity: card.name, property: p.name });
+    };
+    $("act-close").onclick = () => { selection = null; renderCards(); renderActionBar(); };
+    bar.className = "show";
+  }
+
+  // ---------- wires ----------
+  function worldRect(el) {
+    const r = el.getBoundingClientRect(), w = $("world").getBoundingClientRect();
+    return { x: (r.left - w.left) / view.z, y: (r.top - w.top) / view.z, w: r.width / view.z, h: r.height / view.z };
+  }
+
+  function drawWires() {
+    const svg = $("wires");
+    let html = "";
+    for (const row of document.querySelectorAll(".prop.rel, .prop.item")) {
+      if (row.classList.contains("removed")) continue;
+      const m = effective();
+      const owner = m.entities.find((c) => c.name === row.dataset.entity);
+      const p = owner && owner.properties.find((x) => x.name === row.dataset.property);
+      if (!p) continue;
+      const target = document.querySelector(`.card[data-name="${CSS.escape(p.target)}"] .card-head`);
+      if (!target) continue;
+      const a = worldRect(row), b = worldRect(target);
+      const self = row.closest(".card") === target.closest(".card");
+      const right = b.x + b.w / 2 > a.x + a.w / 2;
+      const x1 = right ? a.x + a.w : a.x, y1 = a.y + a.h / 2;
+      const x2 = self ? a.x + a.w + 40 : right ? b.x : b.x + b.w, y2 = self ? b.y + b.h / 2 : b.y + b.h / 2;
+      const bend = Math.max(50, Math.abs(x2 - x1) / 2);
+      const d = self ? `M ${x1} ${y1} C ${x1 + 60} ${y1}, ${x1 + 60} ${y2}, ${b.x + b.w} ${y2}`
+        : `M ${x1} ${y1} C ${right ? x1 + bend : x1 - bend} ${y1}, ${right ? x2 - bend : x2 + bend} ${y2}, ${x2} ${y2}`;
+      const cls = (p.kind === "item" ? "comp" : "") + (p.added || p.changed ? " pending" : "");
+      const sel = selection && selection.entity === owner.name && selection.property === p.name;
+      html += `<path class="wire ${cls}${sel ? " selected" : ""}" d="${d}" ${p.kind === "item" ? 'marker-start="url(#diamond)"' : ""} />`;
+      html += `<path class="hit" d="${d}" data-entity="${esc(owner.name)}" data-property="${esc(p.name)}" />`;
+      if (p.kind === "reference") {
+        const near = right ? 14 : -22, far = right ? -26 : 14;
+        html += `<text x="${x1 + near}" y="${y1 - 6}" class="${p.added ? "pending" : ""}">${p.oneToOne ? "1" : "N"}</text>`;
+        html += `<text x="${(self ? b.x + b.w : x2) + (self ? 6 : far)}" y="${y2 - 6}" class="${p.added ? "pending" : ""}">${p.optional ? "0..1" : "1"}</text>`;
+      }
+    }
+    svg.innerHTML = `<defs><marker id="diamond" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path d="M1 6 L6 1 L11 6 L6 11 z" fill="#A78BFA" /></marker></defs>${html}`;
+    for (const hit of svg.querySelectorAll("path.hit")) {
+      hit.addEventListener("pointerdown", (e) => e.stopPropagation());
+      hit.addEventListener("click", (e) => { e.stopPropagation(); select(hit.dataset.entity, hit.dataset.property); });
+    }
+  }
+
+  function select(entity, property) { selection = { entity, property }; renderCards(); renderActionBar(); }
+
+  // ---------- dialogs ----------
+  let dialogOk = null;
+  function openDialog(title, body, ok) {
+    $("dlg-title").textContent = title;
+    $("dlg-body").innerHTML = body;
+    dialogOk = ok;
+    $("dlg-back").className = "dlg-back show";
+    setTimeout(() => $("dlg-body").querySelector("input, select")?.focus(), 0);
+  }
+  function closeDialog() { $("dlg-back").className = "dlg-back"; dialogOk = null; }
+  $("dlg-cancel").onclick = closeDialog;
+  $("dlg-ok").onclick = () => { if (dialogOk && dialogOk() !== false) closeDialog(); };
+
+  function relationDialog(r, editing) {
+    const body = `
+      <div class="sig" id="r-sig"></div>
+      <label>{{Propiedad (en ::Property (in }}${esc(r.entity)})<input type="text" id="r-name" value="${esc(r.property)}" ${editing ? "disabled" : ""} /></label>
+      <label>{{Relación::Relation}}<select id="r-kind">
+        <option value="N">{{1–N: un ::1–N: a }}${esc(r.target)} {{tiene varios ::has several }}${esc(r.entity)}</option>
+        <option value="1">{{1–1: un ::1–1: a }}${esc(r.target)} {{tiene un solo ::has a single }}${esc(r.entity)}</option>
+      </select></label>
+      <label class="check"><input type="checkbox" id="r-optional" /> {{Opcional (puede no tener ::Optional (it may have no }}${esc(r.target)})</label>
+      <label>{{Al borrar un ::When a }}${esc(r.target)}{{:: is deleted}}<select id="r-delete">
+        <option value="restrict">{{Impedirlo mientras lo use (409)::Prevent it while in use (409)}}</option>
+        <option value="cascade">{{Borrar también sus ::Delete its }}${esc(r.entity)}{{:: too}}</option>
+        <option value="setNull">{{Vaciar la propiedad (solo si es opcional)::Empty the property (optional only)}}</option>
+      </select></label>
+      ${editing ? "" : `<button class="btn" id="r-swap" type="button" style="align-self: flex-start">{{⇄ Al revés: ::⇄ The other way: }}${esc(r.target)} → ${esc(r.entity)}</button>`}
+      <div class="err" id="r-err"></div>`;
+    openDialog(editing ? "{{Cambiar la relación::Change the relation}}" : "{{Nueva relación::New relation}}", body, () => {
+      const name = $("r-name").value.trim();
+      const optional = $("r-optional").checked, onDelete = $("r-delete").value, oneToOne = $("r-kind").value === "1";
+      if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name)) { $("r-err").textContent = "{{El nombre: solo letras y números, empezando por letra.::The name: only letters and digits, starting with a letter.}}"; return false; }
+      if (onDelete === "setNull" && !optional) { $("r-err").textContent = "{{«Vaciar» solo vale para una relación opcional.::«Set empty» only works for an optional relation.}}"; return false; }
+      if (r.target === r.entity && onDelete !== "restrict") { $("r-err").textContent = "{{Con la propia entidad solo se puede impedir el borrado.::With the same entity the delete can only be prevented.}}"; return false; }
+      if (editing) addChange({ kind: "updateRelation", entity: r.entity, property: r.property, oneToOne, optional, onDelete });
+      else addChange({ kind: "relation", entity: r.entity, property: name, target: r.target, oneToOne, optional, onDelete });
+    });
+    $("r-kind").value = r.oneToOne ? "1" : "N";
+    $("r-optional").checked = !!r.optional || r.target === r.entity;
+    $("r-delete").value = r.onDelete || "restrict";
+    const sig = () => { $("r-sig").textContent = `${r.entity}.${$("r-name").value.trim() || "?"} → ${r.target}`; };
+    $("r-name").addEventListener("input", sig); sig();
+    if ($("r-swap")) $("r-swap").onclick = () => { closeDialog(); relationDialog({ entity: r.target, property: r.entity + "Id", target: r.entity, onDelete: "restrict" }, false); };
+  }
+
+  function compositionDialog(entity, type) {
+    const body = `
+      <div class="sig">${esc(entity)} ◆ ${esc(type)}</div>
+      <label>{{Propiedad::Property}}<input type="text" id="c-name" value="${esc(type)}" /></label>
+      <label>{{Cuántos::How many}}<select id="c-kind">
+        <option value="one">{{Uno: sus columnas en la tabla de ::One: its columns in the table of }}${esc(entity)}</option>
+        <option value="optional">{{Uno, opcional::One, optional}}</option>
+        <option value="list">{{Una lista: tabla propia, parte de ::A list: own table, part of }}${esc(entity)}</option>
+      </select></label>
+      <div class="err" id="c-err"></div>`;
+    openDialog("{{Nueva composición::New composition}}", body, () => {
+      const name = $("c-name").value.trim(), kind = $("c-kind").value;
+      if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name)) { $("c-err").textContent = "{{El nombre: solo letras y números, empezando por letra.::The name: only letters and digits, starting with a letter.}}"; return false; }
+      addChange({ kind: "composition", entity, property: name, target: type, list: kind === "list", optional: kind === "optional" });
+    });
+  }
+
+  // ---------- interaction ----------
+  function applyView() { $("world").style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`; $("zoom").textContent = Math.round(view.z * 100) + "%"; }
+
+  function toWorld(cx, cy) { const r = $("viewport").getBoundingClientRect(); return { x: (cx - r.left - view.x) / view.z, y: (cy - r.top - view.y) / view.z }; }
+
+  function fit() {
+    const cards = [...document.querySelectorAll(".card")];
+    if (!cards.length) return;
+    const boxes = cards.map((c) => ({ x: parseFloat(c.style.left), y: parseFloat(c.style.top), w: c.offsetWidth, h: c.offsetHeight }));
+    const minX = Math.min(...boxes.map((b) => b.x)), minY = Math.min(...boxes.map((b) => b.y));
+    const maxX = Math.max(...boxes.map((b) => b.x + b.w)), maxY = Math.max(...boxes.map((b) => b.y + b.h));
+    const r = $("viewport").getBoundingClientRect();
+    view.z = Math.max(0.3, Math.min(1.2, Math.min((r.width - 80) / (maxX - minX), (r.height - 120) / (maxY - minY))));
+    view.x = 40 - minX * view.z + Math.max(0, (r.width - 80 - (maxX - minX) * view.z) / 2);
+    view.y = 40 - minY * view.z;
+    applyView(); drawWires();
+  }
+
+  function zoomAt(f, cx, cy) {
+    const r = $("viewport").getBoundingClientRect();
+    cx = cx ?? r.left + r.width / 2; cy = cy ?? r.top + r.height / 2;
+    const before = toWorld(cx, cy);
+    view.z = Math.max(0.3, Math.min(2, view.z * f));
+    view.x = cx - r.left - before.x * view.z; view.y = cy - r.top - before.y * view.z;
+    applyView(); drawWires();
+  }
+
+  function bindCards() {
+    for (const card of document.querySelectorAll(".card")) {
+      const name = card.dataset.name;
+      card.addEventListener("pointerdown", (e) => e.stopPropagation());
+      card.querySelector(".card-head").addEventListener("pointerdown", (e) => {
+        if (e.target.closest(".port, button")) return;
+        const start = { x: e.clientX, y: e.clientY, left: layout[name].x, top: layout[name].y };
+        const move = (ev) => {
+          layout[name] = { x: Math.round(start.left + (ev.clientX - start.x) / view.z), y: Math.round(start.top + (ev.clientY - start.y) / view.z) };
+          card.style.left = layout[name].x + "px"; card.style.top = layout[name].y + "px"; drawWires();
+        };
+        const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); layoutDirty = true; renderStatus(); };
+        window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+      });
+      card.querySelector(".port")?.addEventListener("pointerdown", (e) => dragPort(e, card));
+      for (const row of card.querySelectorAll(".prop.rel, .prop.item")) row.addEventListener("click", () => select(row.dataset.entity, row.dataset.property));
+    }
+  }
+
+  function dragPort(e, from) {
+    e.stopPropagation(); e.preventDefault();
+    const a = worldRect(from.querySelector(".port"));
+    const rubber = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    rubber.setAttribute("class", "rubber");
+    $("wires").appendChild(rubber);
+    let target = null;
+    const move = (ev) => {
+      const p = toWorld(ev.clientX, ev.clientY);
+      rubber.setAttribute("d", `M ${a.x + a.w / 2} ${a.y + a.h / 2} L ${p.x} ${p.y}`);
+      const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(".card");
+      if (target && target !== over) target.classList.remove("target");
+      target = over || null;
+      target?.classList.add("target");
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      rubber.remove();
+      document.querySelectorAll(".card.target").forEach((c) => c.classList.remove("target"));
+      if (!target) return;
+      const entity = from.dataset.name, to = target.dataset.name;
+      if (target.dataset.type === "1") compositionDialog(entity, to);
+      else relationDialog({ entity, property: to + "Id", target: to, onDelete: "restrict", optional: to === entity }, false);
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  }
+
+  let toastTimer = null;
+  function toast(text, error = false) {
+    const t = $("toast"); t.textContent = text; t.className = "show" + (error ? " err" : "");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ""), 4500);
+  }
+  function warnUnsaved(e) { if (changes.length || layoutDirty) { e.preventDefault(); e.returnValue = ""; } }
+
+  $("viewport").addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || e.target.closest("#actionbar, #zoombar")) return;
+    const start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+    let moved = false;
+    $("viewport").classList.add("panning");
+    const move = (ev) => { moved = true; view.x = start.vx + ev.clientX - start.x; view.y = start.vy + ev.clientY - start.y; applyView(); };
+    const up = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      $("viewport").classList.remove("panning");
+      if (!moved && selection) { selection = null; renderCards(); renderActionBar(); }
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  });
+  $("viewport").addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY); }, { passive: false });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { if ($("dlg-back").classList.contains("show")) closeDialog(); else if (selection) { selection = null; renderCards(); renderActionBar(); } }
+    if (e.key === "Enter" && $("dlg-back").classList.contains("show")) $("dlg-ok").click();
+  });
+  window.addEventListener("resize", drawWires);
+  window.addEventListener("beforeunload", warnUnsaved);
+  window.addEventListener("focus", () => { if (model && changes.length === 0 && !layoutDirty) load().catch(() => {}); });
+  $("zoom-in").onclick = () => zoomAt(1.2);
+  $("zoom-out").onclick = () => zoomAt(1 / 1.2);
+  $("fit").onclick = fit;
+  $("save").onclick = () => (changes.length || layoutDirty ? save() : window.close());
+  $("discard").onclick = () => {
+    if ((changes.length || layoutDirty) && !confirm("{{¿Descartar los cambios sin guardar?::Discard the unsaved changes?}}")) return;
+    changes = []; layoutDirty = false; window.removeEventListener("beforeunload", warnUnsaved);
+    window.close(); setTimeout(load, 300);
+  };
+  $("ne-add").onclick = () => {
+    const name = $("ne-name").value.trim(), props = $("ne-props").value.trim();
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name) || !props) { toast("{{Pon el nombre (letras y números) y al menos una propiedad.::Give a name (letters and digits) and at least one property.}}", true); return; }
+    // Below everything on the canvas, so it doesn't cover another card.
+    const cards = [...document.querySelectorAll(".card")];
+    const bottom = cards.length ? Math.max(...cards.map((c) => parseFloat(c.style.top) + c.offsetHeight)) : 0;
+    const left = cards.length ? Math.min(...cards.map((c) => parseFloat(c.style.left))) : 40;
+    layout[name] = { x: Math.round(left), y: Math.round(bottom + 48) }; layoutDirty = true;
+    $("ne-name").value = ""; $("ne-props").value = "";
+    addChange({ kind: "entity", entity: name, properties: props });
+  };
+
+  load().then(() => setTimeout(fit, 50)).catch((e) => toast("{{No se pudo cargar el servicio: ::Couldn't load the service: }}" + e.message, true));
+})();
+</script>
+</body>
+</html>

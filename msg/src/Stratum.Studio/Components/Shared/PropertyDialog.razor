@@ -1,0 +1,117 @@
+@* Add or change one property of an entity. Works on a copy (EntityEditors.PropertyEditor) until "Guardar y cerrar". *@
+<Modal Title="@(Editor.Original is null ? $"Nueva propiedad de {Entity.Name}" : $"Propiedad {Editor.Original.Name}")"
+       Subtitle="@(Editor.Original is null ? "Un dato más de la entidad: Stratum genera la columna, el contrato y la validación." : null)"
+       Error="@(attempted ? Error : null)" Note="@(string.IsNullOrWhiteSpace(Editor.Name) ? null : Editor.Spec)" Width="680" OnSave="Save" OnClose="OnClose">
+    <div style="display: grid; grid-template-columns: 1.3fr 1.2fr 1fr; gap: 12px">
+        <label class="field">
+            Nombre
+            <input type="text" @bind="Editor.Name" placeholder="UnitPrice" autocomplete="off" />
+        </label>
+        <label class="field">
+            Tipo
+            <select @bind="Editor.Type">
+                @foreach (var type in EntityEditors.BasicTypes)
+                {
+                    <option value="@type">@type</option>
+                }
+                @if (Enums.Count > 0)
+                {
+                    <optgroup label="Enumerado">
+                        @foreach (var name in Enums)
+                        {
+                            <option value="@(PropertyDraft.EnumPrefix + name)"># @name</option>
+                        }
+                    </optgroup>
+                }
+                @if (Types.Count > 0)
+                {
+                    <optgroup label="Lista de objetos">
+                        @foreach (var name in Types)
+                        {
+                            <option value="@(PropertyDraft.ItemPrefix + name)">▤ @(name)[]</option>
+                        }
+                    </optgroup>
+                }
+                @if (Targets.Count > 0)
+                {
+                    <optgroup label="Referencia a otra entidad">
+                        @foreach (var target in Targets)
+                        {
+                            <option value="@(PropertyDraft.ReferencePrefix + target)">→ @target</option>
+                        }
+                    </optgroup>
+                }
+            </select>
+        </label>
+        <label class="field">
+            Valor
+            <select @bind="Editor.Kind" disabled="@Editor.IsItem">
+                <option value="@EntityEditors.One">Obligatorio</option>
+                <option value="@EntityEditors.Optional">Opcional</option>
+                @if (!Editor.IsReference)
+                {
+                    <option value="@EntityEditors.List">Lista</option>
+                }
+            </select>
+        </label>
+    </div>
+    <div class="row" style="gap: 8px; align-items: center">
+        <span class="hint">¿Falta el tipo?</span>
+        <button type="button" class="btn btn-dashed" style="min-height: 32px; padding: 0 10px" @onclick="OnNewEnum"># Nuevo enumerado…</button>
+        <button type="button" class="btn btn-dashed" style="min-height: 32px; padding: 0 10px" @onclick="OnNewType">▤ Nuevo tipo de elemento…</button>
+    </div>
+    <div class="sig">@EntityEditors.Generates(Preview)</div>
+    @if (Editor.Original is { OriginalName: { } before } && !EntityEditors.Same(before, Editor.Name))
+    {
+        <span class="hint" style="color: var(--warn)">Se renombra: antes <span class="mono">@before</span>. La migración conserva los datos de la columna.</span>
+    }
+    else if (Editor.Original is null && !Entity.IsNew)
+    {
+        <span class="hint">Es una columna nueva: después crea una migración en <b>Datos y migraciones</b>.@(Editor.EffectiveKind == EntityEditors.One && !Editor.IsItem ? " Al ser obligatoria, las filas que ya existan tomarán el valor por defecto del tipo." : string.Empty)</span>
+    }
+</Modal>
+
+@code {
+    private bool attempted;
+
+    [Parameter, EditorRequired] public EntityEditors.PropertyEditor Editor { get; set; } = default!;
+
+    [Parameter, EditorRequired] public EntityDraft Entity { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ServiceDraft Draft { get; set; } = default!;
+
+    /// <summary>Called after the property was written to the draft.</summary>
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    [Parameter] public EventCallback OnNewEnum { get; set; }
+
+    [Parameter] public EventCallback OnNewType { get; set; }
+
+    private IReadOnlyList<string> Enums => [.. Draft.Enums.Where(e => !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name.Trim())];
+
+    private IReadOnlyList<string> Types => [.. Draft.Types.Where(t => !string.IsNullOrWhiteSpace(t.Name)).Select(t => t.Name.Trim())];
+
+    private IReadOnlyList<string> Targets => [.. Draft.Entities.Where(e => !e.Removed && !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name)];
+
+    private string? Error => Editor.Validate(Entity);
+
+    private PropertyDraft Preview => new()
+    {
+        Name = Editor.Name,
+        Type = Editor.Type,
+        List = Editor.EffectiveKind == EntityEditors.List,
+        Nullable = Editor.EffectiveKind == EntityEditors.Optional,
+    };
+
+    private async Task Save()
+    {
+        attempted = true;
+        if (Error is null)
+        {
+            Editor.ApplyTo(Entity);
+            await OnSaved.InvokeAsync();
+        }
+    }
+}

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>{{Service}}.Api.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <!-- @stratum:if persistence -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <!-- @stratum:end -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\{{Service}}.Api\{{Service}}.Api.csproj" />
+  </ItemGroup>
+
+  <!-- @stratum:if hasModelTypes -->
+  <ItemGroup>
+    <!-- Enums and item types of stratum.json, usable everywhere without a using. -->
+    <Using Include="{{EnumNamespace}}" />
+  </ItemGroup>
+  <!-- @stratum:end -->
+
+</Project>

@@ -1,0 +1,45 @@
+@* Services whose Stratum.* packages are of another version than this Stratum: the restore fails (NU1603/NU1102) when
+   the local package folder only has the current one, and new generated code may need the new packages. *@
+@inject StudioState State
+
+@{
+    var behind = State.PackagesBehind().Where(x => Directory is null || x.Service.Directory == Directory).ToList();
+}
+@if (behind.Count > 0)
+{
+    <div class="msg warn stack" role="status" style="gap: 8px; white-space: normal">
+        <span>
+            <b>@L("Paquetes de otra versión.", "Packages of another version.")</b>
+            <span class="mono">@string.Join(" · ", behind.Select(x => $"{x.Service.Definition.Service.Name} {string.Join("/", x.Versions)}"))</span>
+            @L(@<text>→ este Stratum es la <span class="mono">@StratumInfo.Version</span>. Si no los actualizas, la compilación puede fallar
+            (<span class="mono">Stratum.Ddd 0.28.1 was not found</span>) y el código generado nuevo puede necesitar los paquetes nuevos.</text>,
+            @<text>→ this Stratum is <span class="mono">@StratumInfo.Version</span>. If you don't update them, the build may fail
+            (<span class="mono">Stratum.Ddd 0.28.1 was not found</span>) and new generated code may need the new packages.</text>)
+        </span>
+        <span class="row" style="gap: 10px; align-items: center">
+            <button type="button" class="btn btn-primary" @onclick="() => Upgrade(behind.Select(x => x.Service))">
+                @(L("Actualizar paquetes", "Update packages"))@(behind.Count > 1 ? L($" de los {behind.Count}", $" of the {behind.Count}") : string.Empty)
+            </button>
+            <span class="hint">@L(@<text>Solo cambia <span class="mono">Directory.Packages.props</span> y la versión de <span class="mono">stratum.json</span>, como <span class="mono">stratum upgrade</span>. Tu código no se toca.</text>, @<text>Only <span class="mono">Directory.Packages.props</span> and the version in <span class="mono">stratum.json</span> change, like <span class="mono">stratum upgrade</span>. Your code isn't touched.</text>)</span>
+        </span>
+    </div>
+}
+@if (result is not null)
+{
+    <div class="msg ok stack" role="status" style="gap: 4px">
+        @foreach (var line in result)
+        {
+            <span class="@(line.StartsWith('✘') ? "err" : null)" style="white-space: pre-wrap">@line</span>
+        }
+        <span class="hint">@L("Después: compila. La primera vez restaura los paquetes nuevos desde tu carpeta de paquetes (o nuget.org).", "Then build. The first time it restores the new packages from your package folder (or nuget.org).")</span>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<string>? result;
+
+    /// <summary>Only this service (its folder, as in the Studio); null for every service of the system.</summary>
+    [Parameter] public string? Directory { get; set; }
+
+    private void Upgrade(IEnumerable<WorkspaceService> services) => result = State.UpgradePackages([.. services]);
+}

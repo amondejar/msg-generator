@@ -1,0 +1,64 @@
+@* Add or change an enumeration of the service. *@
+<Modal Title="@(Editor.Original is null ? "Nuevo enumerado" : $"Enumerado {Editor.Original.Name}")"
+       Subtitle="Una lista de valores fijos, como el estado de un pedido. Se guarda como texto: añadir o reordenar valores no rompe datos."
+       Error="@(attempted ? Error : null)" Width="520" OnSave="Save" OnClose="OnClose">
+    <label class="field">
+        Nombre
+        <input type="text" @bind="Editor.Name" placeholder="OrderStatus" disabled="@(Usages.Count > 0)" autocomplete="off" />
+    </label>
+    @if (Usages.Count > 0)
+    {
+        <span class="hint">Lo usan <span class="mono">@string.Join(", ", Usages)</span>: para renombrarlo, cambia antes el tipo de esas propiedades.</span>
+    }
+    <div class="stack" style="gap: 6px">
+        <span class="hint" style="font-weight: 600">Valores <span style="font-weight: 400">(el primero es el valor por defecto)</span></span>
+        <div class="rows">
+            @for (var i = 0; i < Editor.Values.Count; i++)
+            {
+                var index = i;
+                <div class="r" style="grid-template-columns: 22px 1fr 32px 32px">
+                    <span class="hint mono" style="text-align: right">@(index + 1)</span>
+                    <input type="text" value="@Editor.Values[index]" placeholder="@(index == 0 ? "Draft" : index == 1 ? "Confirmed" : "Shipped")" aria-label="@($"Valor {index + 1}")" autocomplete="off"
+                           @onchange="e => Editor.Values[index] = e.Value?.ToString() ?? string.Empty" />
+                    <button type="button" class="icon-btn edit" aria-label="Subir" title="Subir" disabled="@(index == 0)" @onclick="() => Up(index)">↑</button>
+                    <button type="button" class="icon-btn" aria-label="@($"Quitar {Editor.Values[index]}")" @onclick="() => Editor.Values.RemoveAt(index)">×</button>
+                </div>
+            }
+            <button type="button" class="btn btn-dashed" style="align-self: flex-start; min-height: 34px" @onclick="() => Editor.Values.Add(string.Empty)">+ Añadir valor</button>
+        </div>
+    </div>
+    @if (Editor.RemovedValues is { Count: > 0 } removed)
+    {
+        <span class="hint" style="color: var(--warn)">⚠ Quitas <span class="mono">@string.Join(", ", removed)</span>: las filas que ya tengan ese valor dejarán de leerse. Cámbialas antes en la base de datos.</span>
+    }
+</Modal>
+
+@code {
+    private bool attempted;
+
+    [Parameter, EditorRequired] public EntityEditors.EnumEditor Editor { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ServiceDraft Draft { get; set; } = default!;
+
+    /// <summary>Called with the saved enumeration (its name), after it was written to the draft.</summary>
+    [Parameter] public EventCallback<string> OnSaved { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private IReadOnlyList<string> Usages => Editor.Original is null ? [] :
+        [.. Draft.Entities.Where(e => !e.Removed).SelectMany(e => e.Properties.Where(p => p.Enum is { } n && (n == Editor.Original.Name.Trim() || n == Editor.Original.OriginalName)).Select(p => $"{e.Name}.{p.Name}"))];
+
+    private string? Error => Editor.Validate(Draft);
+
+    private void Up(int index) => (Editor.Values[index - 1], Editor.Values[index]) = (Editor.Values[index], Editor.Values[index - 1]);
+
+    private async Task Save()
+    {
+        attempted = true;
+        if (Error is null)
+        {
+            var saved = Editor.ApplyTo(Draft);
+            await OnSaved.InvokeAsync(saved.Name);
+        }
+    }
+}

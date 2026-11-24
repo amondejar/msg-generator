@@ -1,42 +1,44 @@
-@inherits LayoutComponentBase
+@inherits StudioLayoutComponent
 @implements IDisposable
 @inject StudioState State
 @inject ProcessRunner Runner
 @inject NavigationManager Nav
+@inject EditorLauncher Editors
 
 <div class="app">
-    <aside class="sidebar" aria-label="Menú">
+    <aside class="sidebar" aria-label="@L("Menú", "Menu")">
         <a class="brand" href="/"><Logo /> <b>Stratum</b> <small>Studio</small></a>
-        <a class="ws" href="services" title="Sistema: @State.Workspace" style="text-decoration: none"><Icon Name="folder" Size="15" /><span><b>@(Path.GetFileName(State.Workspace.TrimEnd('/', '\\')))</b></span></a>
+        <a class="ws" href="services" title="@L("Sistema", "System"): @State.Workspace" style="text-decoration: none"><Icon Name="folder" Size="15" /><span><b>@(Path.GetFileName(State.Workspace.TrimEnd('/', '\\')))</b></span></a>
 
         <nav class="stack" style="gap: 2px">
-            <div class="nav-group">Sistema</div>
-            <NavLink class="nav" href="/" Match="NavLinkMatch.All" ActiveClass="active"><Icon Name="home" /> Resumen</NavLink>
-            <NavLink class="nav" href="services" ActiveClass="active"><Icon Name="services" /> Servicios <span class="badge">@State.Services.Count</span></NavLink>
-            <NavLink class="nav" href="events" ActiveClass="active"><Icon Name="events" /> Mapa de eventos</NavLink>
+            <div class="nav-group">@L("Sistema", "System")</div>
+            <NavLink class="nav" href="/" Match="NavLinkMatch.All" ActiveClass="active"><Icon Name="home" /> @L("Resumen", "Overview")</NavLink>
+            <NavLink class="nav" href="services" ActiveClass="active"><Icon Name="services" /> @L("Servicios", "Services") <span class="badge">@State.Services.Count</span></NavLink>
+            <NavLink class="nav" href="events" ActiveClass="active"><Icon Name="events" /> @L("Mapa de eventos", "Event map")</NavLink>
+            <NavLink class="nav" href="spec" ActiveClass="active" Match="NavLinkMatch.All"><Icon Name="spec" /> @L("Especificación", "Specification")</NavLink>
             <NavLink class="nav" href="run" ActiveClass="active">
-                <Icon Name="run" /> Ejecutar
+                <Icon Name="run" /> @L("Ejecutar", "Run")
                 @if (Runner.IsRunning(ServiceCommands.DashboardJob))
                 {
-                    <span class="badge live">● en marcha</span>
+                    <span class="badge live">● @L("en marcha", "running")</span>
                 }
             </NavLink>
             <NavLink class="nav" href="templates" ActiveClass="active">
-                <Icon Name="templates" /> Plantillas
+                <Icon Name="templates" /> @L("Plantillas", "Templates")
                 @if (State.Team is not null)
                 {
-                    <span class="badge">equipo</span>
+                    <span class="badge">@L("equipo", "team")</span>
                 }
             </NavLink>
 
             @if (State.Current is { } current)
             {
-                <div class="nav-group">Servicio</div>
+                <div class="nav-group">@L("Servicio", "Service")</div>
                 <div class="switcher">
-                    <select aria-label="Servicio abierto" value="@SelectedKey" @onchange="Switch">
+                    <select aria-label="@L("Servicio abierto", "Open service")" value="@SelectedKey" @onchange="Switch">
                         @if (current.IsNew)
                         {
-                            <option value="@NewKey">@(string.IsNullOrWhiteSpace(current.Name) ? "Servicio nuevo" : current.Name) (nuevo)</option>
+                            <option value="@NewKey">@(string.IsNullOrWhiteSpace(current.Name) ? L("Servicio nuevo", "New service") : current.Name) (@L("nuevo", "new"))</option>
                         }
                         @foreach (var service in State.Services)
                         {
@@ -45,18 +47,20 @@
                     </select>
                 </div>
                 <NavLink class="nav" href="service" Match="NavLinkMatch.All" ActiveClass="active"><Icon Name="general" /> General</NavLink>
-                <NavLink class="nav" href="entities" ActiveClass="active"><Icon Name="entities" /> Entidades <span class="badge">@current.Entities.Count</span></NavLink>
-                <NavLink class="nav" href="service/data" ActiveClass="active"><Icon Name="data" /> Datos y migraciones</NavLink>
+                <NavLink class="nav" href="entities" ActiveClass="active"><Icon Name="entities" /> @L("Entidades", "Entities") <span class="badge">@current.Entities.Count</span></NavLink>
+                <NavLink class="nav" href="service/data" ActiveClass="active"><Icon Name="data" /> @L("Datos y migraciones", "Data and migrations")</NavLink>
                 <NavLink class="nav" href="service/messaging" ActiveClass="active">
-                    <Icon Name="messaging" /> Mensajería
+                    <Icon Name="messaging" /> @L("Mensajería", "Messaging")
                     @if (current.Broker is not null)
                     {
-                        <span class="badge">@(current.Broker switch { MessagingSettings.Kafka => "kafka", MessagingSettings.AzureServiceBus => "service bus", _ => "memoria" })</span>
+                        <span class="badge">@(current.Broker switch { MessagingSettings.Kafka => "kafka", MessagingSettings.AzureServiceBus => "service bus", _ => L("memoria", "memory") })</span>
                     }
                 </NavLink>
-                <NavLink class="nav" href="service/code" ActiveClass="active"><Icon Name="code" /> Código generado</NavLink>
+                <NavLink class="nav" href="service/code" ActiveClass="active"><Icon Name="code" /> @L("Código generado", "Generated code")</NavLink>
+                <NavLink class="nav" href="service/build" ActiveClass="active"><Icon Name="build" /> @L("Compilar y probar", "Build and test")</NavLink>
+                <NavLink class="nav" href="service/spec" ActiveClass="active"><Icon Name="spec" /> @L("Especificación", "Specification")</NavLink>
                 <NavLink class="nav" href="apply" ActiveClass="active">
-                    <Icon Name="review" /> Revisar y aplicar
+                    <Icon Name="review" /> @L("Revisar y aplicar", "Review and apply")
                     @if (State.Plan is { Changes.Count: > 0 } plan)
                     {
                         <span class="badge warn">@plan.Changes.Count</span>
@@ -66,23 +70,39 @@
         </nav>
 
         <div class="sidebar-foot">
+            <label class="stack" style="gap: 4px; margin-bottom: 8px">
+                <span>@L("Idioma", "Language")</span>
+                <select aria-label="@L("Idioma del Studio", "Studio language")" value="@I18n.Current" @onchange="e => I18n.Set(e.Value?.ToString() ?? I18n.Spanish)">
+                    <option value="@I18n.Spanish">Español</option>
+                    <option value="@I18n.English">English</option>
+                </select>
+            </label>
+            <label class="stack" style="gap: 4px; margin-bottom: 8px">
+                <span>@L("Abrir el código con", "Open the code with")</span>
+                <select aria-label="@L("Editor para abrir el código", "Editor to open the code")" value="@Editors.Current.Id" @onchange="e => Editors.Choose(e.Value?.ToString() ?? EditorLauncher.SystemDefault)">
+                    @foreach (var editor in Editors.Available)
+                    {
+                        <option value="@editor.Id">@editor.Name</option>
+                    }
+                </select>
+            </label>
             <span>Stratum @StratumInfo.Version</span>
-            <span class="mono">Fuente: stratum.json de cada servicio</span>
+            <span class="mono">@L("Fuente: stratum.json de cada servicio", "Source: each service's stratum.json")</span>
         </div>
     </aside>
 
     <div class="main">
         <header class="topbar">
             <div class="crumbs">
-                <span>Sistema</span>
+                <span>@L("Sistema", "System")</span>
                 @if (State.Current is { } c)
                 {
                     <span>›</span>
-                    <b>@(string.IsNullOrWhiteSpace(c.Name) ? "Servicio nuevo" : c.Name)</b>
+                    <b>@(string.IsNullOrWhiteSpace(c.Name) ? L("Servicio nuevo", "New service") : c.Name)</b>
                     <span class="layer-tag">@(c.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")</span>
                     @if (c.IsNew)
                     {
-                        <span class="layer-tag" style="color: var(--warn); border-color: #5C4410">sin crear</span>
+                        <span class="layer-tag" style="color: var(--warn); border-color: #5C4410">@L("sin crear", "not created")</span>
                     }
                 }
             </div>
@@ -91,26 +111,38 @@
             {
                 @if (State.Errors.Count > 0)
                 {
-                    <span class="pending" style="color: var(--err)">● @State.Errors.Count problema(s)</span>
+                    <span class="pending" style="color: var(--err)">● @State.Errors.Count @L("problema(s)", "problem(s)")</span>
                 }
                 else if (State.Plan is { Changes.Count: > 0 } pending)
                 {
-                    <span class="pending">● @(State.Current.IsNew ? "Servicio nuevo sin crear" : $"{pending.Changes.Count} cambio(s) sin aplicar")</span>
+                    <span class="pending">● @(State.Current.IsNew ? L("Servicio nuevo sin crear", "New service, not created yet") : L($"{pending.Changes.Count} cambio(s) sin aplicar", $"{pending.Changes.Count} change(s) not applied"))</span>
                 }
                 else
                 {
-                    <span class="hint">Sin cambios pendientes</span>
+                    <span class="hint">@L("Sin cambios pendientes", "No pending changes")</span>
                 }
-                <a class="btn btn-primary" href="apply">Revisar y aplicar</a>
+                @if (!State.Current.IsNew)
+                {
+                    <OpenInEditor Path="@(EditorLauncher.SolutionFor(State.Workspace, State.FullPath(State.Current.Directory)) ?? State.FullPath(State.Current.Directory))" />
+                }
+                <a class="btn @(State.Plan is { Changes.Count: > 0 } ? "btn-primary" : null)" href="apply">@L("Revisar y aplicar", "Review and apply")</a>
             }
             else
             {
-                <a class="btn" href="services"><Icon Name="plus" Size="16" /> Nuevo servicio</a>
+                <a class="btn" href="services"><Icon Name="plus" Size="16" /> @L("Nuevo servicio", "New service")</a>
             }
         </header>
 
         <div class="page">
-            @Body
+            @if (State.ExternalChangePending && State.Current is { } changed)
+            {
+                <div class="card row" role="alert" style="margin: 16px 24px 0; border-color: var(--warn); justify-content: space-between; gap: 12px">
+                    <span>@L(@<text>El stratum.json de <b>@changed.Name</b> ha cambiado fuera del Studio (consola, asistente o editor) y aquí tienes cambios sin aplicar.</text>, @<text>The stratum.json of <b>@changed.Name</b> changed outside the Studio (console, assistant or editor) and you have changes not applied here.</text>)</span>
+                    <button type="button" class="btn" @onclick="State.ReloadCurrent">@L("Recargar (descarta mis cambios)", "Reload (discards my changes)")</button>
+                </div>
+            }
+            @* Keyed by language: changing it renders the page again in the new one (the open service and its draft stay). *@
+            <div style="display: contents" @key="I18n.Current">@Body</div>
         </div>
     </div>
 </div>
@@ -123,8 +155,23 @@
     protected override void OnInitialized()
     {
         State.Initialize();
+        OpenFromQuery();
         State.Changed += OnChanged;
+        State.ExternalChange += OnExternalChange;
         Runner.Changed += OnChanged;
+        I18n.Changed += OnChanged;
+    }
+
+    /// <summary>"?open=folder" (links from the events designer): opens that service, unless it's already open.</summary>
+    private void OpenFromQuery()
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        if (query.TryGetValue("open", out var open) && open.ToString() is { Length: > 0 } dir
+            && State.Current?.Directory != dir
+            && State.Services.FirstOrDefault(s => s.Directory == dir) is { } service)
+        {
+            State.Open(service);
+        }
     }
 
     private void Switch(ChangeEventArgs e)
@@ -142,9 +189,17 @@
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
 
+    private void OnExternalChange() => InvokeAsync(() =>
+    {
+        State.HandleExternalChange();
+        StateHasChanged();
+    });
+
     public void Dispose()
     {
+        State.ExternalChange -= OnExternalChange;
         State.Changed -= OnChanged;
         Runner.Changed -= OnChanged;
+        I18n.Changed -= OnChanged;
     }
 }

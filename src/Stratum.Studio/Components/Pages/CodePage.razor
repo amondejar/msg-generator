@@ -2,21 +2,21 @@
 @implements IDisposable
 @inject StudioState State
 
-<PageTitle>Código generado · Stratum Studio</PageTitle>
+<PageTitle>@L("Código generado", "Generated code") · Stratum Studio</PageTitle>
 
 @if (State.Current is not { } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
 }
 else
 {
     <main class="content" style="flex-basis: 100%; gap: 16px">
         <div>
-            <h1>Código generado</h1>
-            <p class="lead">Lo que Stratum generaría ahora mismo para este servicio, con los cambios sin aplicar incluidos. Los cambios archivo por archivo, con su diff, están en <a href="apply">Revisar y aplicar</a>.</p>
+            <h1>@L("Código generado", "Generated code")</h1>
+            <p class="lead">@L(@<text>Lo que Stratum generaría ahora mismo para este servicio, con los cambios sin aplicar incluidos. Los cambios archivo por archivo, con su diff, están en <a href="apply">Revisar y aplicar</a>.</text>, @<text>What Stratum would generate right now for this service, including the changes not applied yet. The changes file by file, with their diff, are in <a href="apply">Review and apply</a>.</text>)</p>
         </div>
         <div style="border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex">
-            <CodePanel Tabs="Tabs" Wide="true" />
+            <CodePanel Tabs="Tabs" Wide="true" Root="@(State.Current is { IsNew: false } open ? State.FullPath(open.Directory) : null)" />
         </div>
     </main>
 }
@@ -43,7 +43,7 @@ else
             var tabs = new List<CodePanel.Tab>();
             if (program is not null) { tabs.Add(new("Program.cs", program.Path, program.Content)); }
             if (files.FirstOrDefault(f => f.Path.EndsWith("Api/StratumWiring.g.cs", StringComparison.Ordinal)) is { } wiring) { tabs.Add(new("StratumWiring.g.cs", wiring.Path, wiring.Content)); }
-            tabs.Add(new($"Archivos ({files.Count})", "(árbol de archivos)", tree));
+            tabs.Add(new(L($"Archivos ({files.Count})", $"Files ({files.Count})"), L("(árbol de archivos)", "(file tree)"), tree));
             if (json is not null) { tabs.Add(new("stratum.json", json.Path, json.Content)); }
             return tabs;
         }

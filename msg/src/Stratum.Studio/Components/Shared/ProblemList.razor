@@ -1,0 +1,23 @@
+@implements IDisposable
+@inject StudioState State
+
+@if (State.Errors.Count > 0)
+{
+    <div class="msg err" role="alert">
+        <b>Hay que corregir esto antes de aplicar:</b>
+        <ul>
+            @foreach (var error in State.Errors)
+            {
+                <li>@error</li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    protected override void OnInitialized() => State.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

@@ -1,0 +1,50 @@
+@page "/templates"
+@inject StudioState State
+
+<PageTitle>Plantillas · Stratum Studio</PageTitle>
+
+<main class="content">
+    <div>
+        <h1>Plantillas del equipo</h1>
+        <p class="lead">Las convenciones de tu equipo (carpeta <span class="mono">.msg</span>): plantillas propias que sustituyen, añaden o quitan archivos en cada servicio, y tokens como <span class="mono">{{Company}}</span>.</p>
+    </div>
+    <section class="stack" aria-labelledby="h-team">
+        <h2 class="section" id="h-team">Estado</h2>
+        <div class="card stack">
+            @if (State.Team is { } team)
+            {
+                var custom = team.CustomizedFiles();
+                <p style="margin: 0">
+                    Stratum está usando las convenciones de tu equipo de <span class="mono">@team.Root</span>:
+                    @custom.Count plantilla(s) personalizada(s)@(team.Tokens.Count > 0 ? $" y {team.Tokens.Count} token(s)" : "").
+                </p>
+                @if (team.Tokens.Count > 0)
+                {
+                    <small class="mono">@string.Join("  ", team.Tokens.Select(t => "{{" + t.Key + "}} = " + t.Value))</small>
+                }
+                @if (custom.Count > 0)
+                {
+                    <div class="files">
+                        @foreach (var file in custom)
+                        {
+                            <div class="mono" style="padding: 8px 16px; border-bottom: 1px solid #1F2330; font-size: 12.5px">@file</div>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <p style="margin: 0">
+                    Sin plantillas del equipo: Stratum usa las suyas. Para imponer tus convenciones (logging, nombres, pipeline…),
+                    copia una plantilla y edítala; el Studio la usará en la vista previa y al aplicar:
+                </p>
+                <span class="mono hint">stratum templates eject service/src/__Service__.Api/Program.cs --path "@State.Workspace"</span>
+            }
+        </div>
+    </section>
+
+</main>
+
+@code {
+    protected override void OnInitialized() => State.Initialize();
+}

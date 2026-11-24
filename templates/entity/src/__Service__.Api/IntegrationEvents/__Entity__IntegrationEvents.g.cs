@@ -10,12 +10,18 @@ namespace {{Service}}.IntegrationEvents;
 // Public contract for other services: add properties, never rename or remove them (consumers may break).
 // Published through the outbox in the same transaction as the change.
 
+// @stratum:if publishCreated
 [IntegrationEvent("{{service-kebab}}.{{entity-kebab}}-created")]
-public sealed record {{Entity}}Created(Guid Id, {{IntegrationEventParameters}}) : IntegrationEvent;
+public sealed record {{Entity}}Created(Guid Id, {{CreatedEventParameters}}) : IntegrationEvent{{IntegrationEventBody}}
+// @stratum:end
 
+// @stratum:if publishUpdated
 [IntegrationEvent("{{service-kebab}}.{{entity-kebab}}-updated")]
-public sealed record {{Entity}}Updated(Guid Id, {{IntegrationEventParameters}}) : IntegrationEvent;
+public sealed record {{Entity}}Updated(Guid Id, {{UpdatedEventParameters}}) : IntegrationEvent{{IntegrationEventBody}}
+// @stratum:end
 
+// @stratum:if publishDeleted
 [IntegrationEvent("{{service-kebab}}.{{entity-kebab}}-deleted")]
 public sealed record {{Entity}}Deleted(Guid Id) : IntegrationEvent;
+// @stratum:end
 // @stratum:end

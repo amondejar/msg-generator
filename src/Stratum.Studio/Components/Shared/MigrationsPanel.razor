@@ -6,7 +6,7 @@
 @inject MigrationAssistant Assistant
 
 <section class="stack" id="migrations" aria-labelledby="h-migrations">
-    <h2 class="section" id="h-migrations">Migraciones</h2>
+    <h2 class="section" id="h-migrations">@L("Migraciones", "Migrations")</h2>
     <div class="card stack">
         @{
             var definition = ServicePlanner.Load(ServiceDirectory);
@@ -23,22 +23,22 @@
         <p style="margin: 0">
             @if (latest is null)
             {
-                <span>Aún no hay migraciones. Crea la primera para que la base de datos tenga el esquema de tus entidades.</span>
+                <span>@L("Aún no hay migraciones. Crea la primera para que la base de datos tenga el esquema de tus entidades.", "No migrations yet. Create the first one so the database gets the schema of your entities.")</span>
             }
             else
             {
-                <span>@migrations.Count migración(es) en <span class="mono">@ServiceCommands.MigrationsProject(definition)/Migrations</span>. Última: <b class="mono">@latest</b>.</span>
+                <span>@L(@<text>@migrations.Count migración(es) en <span class="mono">@ServiceCommands.MigrationsProject(definition)/Migrations</span>. Última: <b class="mono">@latest</b>.</text>, @<text>@migrations.Count migration(s) in <span class="mono">@ServiceCommands.MigrationsProject(definition)/Migrations</span>. Latest: <b class="mono">@latest</b>.</text>)</span>
             }
-            <span class="hint"> Al ejecutar con Aspire se aplican solas al arrancar: revisa los avisos antes.</span>
+            <span class="hint"> @L("Al ejecutar con Aspire se aplican solas al arrancar: revisa los avisos antes.", "When running with Aspire they are applied on startup: check the warnings first.")</span>
         </p>
 
         @if (efAvailable == false)
         {
             <div class="msg warn">
-                Para trabajar con migraciones hace falta la herramienta <span class="mono">dotnet-ef</span>.
+                @L(@<text>Para trabajar con migraciones hace falta la herramienta <span class="mono">dotnet-ef</span>.</text>, @<text>Working with migrations needs the <span class="mono">dotnet-ef</span> tool.</text>)
                 <div class="row" style="margin-top: 8px">
-                    <button type="button" class="btn" disabled="@Runner.IsRunning(ServiceCommands.InstallEfJob)" @onclick="InstallEf">Instalar dotnet-ef</button>
-                    <button type="button" class="btn" @onclick="Recheck">Volver a comprobar</button>
+                    <button type="button" class="btn" disabled="@Runner.IsRunning(ServiceCommands.InstallEfJob)" @onclick="InstallEf">@L("Instalar dotnet-ef", "Install dotnet-ef")</button>
+                    <button type="button" class="btn" @onclick="Recheck">@L("Volver a comprobar", "Check again")</button>
                 </div>
             </div>
             <JobOutput Key="@ServiceCommands.InstallEfJob" Lines="6" />
@@ -50,22 +50,22 @@
                 @switch (status.Check)
                 {
                     case ModelCheck.Checking:
-                        <span class="hint">Compilando y comparando el modelo con la última migración…</span>
+                        <span class="hint">@L("Compilando y comparando el modelo con la última migración…", "Building and comparing the model with the latest migration…")</span>
                         break;
                     case ModelCheck.UpToDate:
-                        <span style="color: var(--ok)">✔ La base de datos está al día con tus entidades.</span>
+                        <span style="color: var(--ok)">@L("✔ La base de datos está al día con tus entidades.", "✔ The database is up to date with your entities.")</span>
                         break;
                     case ModelCheck.Pending:
-                        <span style="color: var(--warn)"><b>Hay cambios en las entidades sin migración.</b> Crea una para llevarlos a la base de datos.</span>
+                        <span style="color: var(--warn)">@L(@<text><b>Hay cambios en las entidades sin migración.</b> Crea una para llevarlos a la base de datos.</text>, @<text><b>There are entity changes without a migration.</b> Create one to take them to the database.</text>)</span>
                         break;
                     case ModelCheck.Failed:
-                        <span style="color: var(--err)">No se pudo comprobar: el servicio no compila o falla al arrancar el diseño de EF.</span>
+                        <span style="color: var(--err)">@L("No se pudo comprobar: el servicio no compila o falla al arrancar el diseño de EF.", "Couldn't check: the service doesn't build or EF's design time fails to start.")</span>
                         break;
                     default:
-                        <span class="hint">¿Tienen tus entidades cambios sin migración?</span>
+                        <span class="hint">@L("¿Tienen tus entidades cambios sin migración?", "Do your entities have changes without a migration?")</span>
                         break;
                 }
-                <button type="button" class="btn" disabled="@(status.Check == ModelCheck.Checking || busy)" @onclick="Check">Comprobar</button>
+                <button type="button" class="btn" disabled="@(status.Check == ModelCheck.Checking || busy)" @onclick="Check">@L("Comprobar", "Check")</button>
             </div>
             @if (status.Check == ModelCheck.Failed && status.CheckOutput is { } checkOutput)
             {
@@ -75,28 +75,29 @@
             @if (definition.PendingRenames is { Count: > 0 } renames)
             {
                 <div class="msg" role="status">
-                    <b>@renames.Count renombrado(s) pendiente(s):</b>
+                    <b>@renames.Count @L("renombrado(s) pendiente(s):", "pending rename(s):")</b>
                     <span class="mono">@string.Join(", ", renames.Select(r => $"{r.Entity}.{r.From} → {r.To}"))</span>.
-                    La migración que crees aquí los convertirá en <span class="mono">RenameColumn</span> para conservar los datos.
-                    <span class="hint">Si ya la creaste con <span class="mono">dotnet ef</span>, corrígela:</span>
-                    <button type="button" class="btn" style="margin-left: 6px" disabled="@(busy || latest is null)" @onclick="ReviewLatest">Corregir la última migración</button>
+                    @L(@<text>La migración que crees aquí los convertirá en <span class="mono">RenameColumn</span> para conservar los datos.
+                    <span class="hint">Si ya la creaste con <span class="mono">dotnet ef</span>, corrígela:</span></text>, @<text>The migration you create here turns them into <span class="mono">RenameColumn</span> to keep the data.
+                    <span class="hint">If you already created it with <span class="mono">dotnet ef</span>, fix it:</span></text>)
+                    <button type="button" class="btn" style="margin-left: 6px" disabled="@(busy || latest is null)" @onclick="ReviewLatest">@L("Corregir la última migración", "Fix the latest migration")</button>
                 </div>
             }
 
             @* 2. Create *@
             <div class="row" style="align-items: flex-end">
                 <label class="field" style="flex: 0 1 280px">
-                    Nombre de la migración
+                    @L("Nombre de la migración", "Migration name")
                     <input type="text" @bind="name" @bind:event="oninput" placeholder="@ServiceCommands.SuggestMigrationName(migrations, definition)" />
                 </label>
                 <button type="button" class="btn btn-primary" disabled="@(busy || efAvailable is null || !ServiceCommands.IsValidMigrationName(EffectiveName(migrations, definition)))"
                         @onclick="() => Create(EffectiveName(migrations, definition))">
-                    @(creating ? "Creando…" : "Crear y revisar migración")
+                    @(creating ? L("Creando…", "Creating…") : L("Crear y revisar migración", "Create and review migration"))
                 </button>
             </div>
             @if (!string.IsNullOrEmpty(name) && !ServiceCommands.IsValidMigrationName(name))
             {
-                <span class="hint" style="color: var(--err)">Solo letras, números y _, empezando por letra.</span>
+                <span class="hint" style="color: var(--err)">@L("Solo letras, números y _, empezando por letra.", "Only letters, digits and _, starting with a letter.")</span>
             }
             <JobOutput Key="@MigrationAssistant.CreateJob(ServiceDirectory)" Lines="8" />
 
@@ -109,10 +110,10 @@
             @if (review is not null)
             {
                 <div class="stack" style="gap: 8px; border-top: 1px solid var(--line); padding-top: 12px">
-                    <b>Revisión de <span class="mono">@review.Name</span></b>
+                    <b>@L("Revisión de", "Review of") <span class="mono">@review.Name</span></b>
                     @if (review.Findings.Count == 0)
                     {
-                        <span style="color: var(--ok)">✔ No borra datos ni cambia columnas existentes.</span>
+                        <span style="color: var(--ok)">@L("✔ No borra datos ni cambia columnas existentes.", "✔ It doesn't delete data or change existing columns.")</span>
                     }
                     <ul style="margin: 0; padding-left: 0; list-style: none" class="stack">
                         @foreach (var finding in review.Findings.OrderByDescending(f => f.Level))
@@ -125,23 +126,24 @@
                     @if (review.DeletesData)
                     {
                         <div class="msg err" role="alert">
-                            <b>Esta migración borra datos.</b> Si no es lo que quieres, deshazla antes de ejecutar el sistema
-                            (con Aspire se aplicaría al arrancar). Para un renombrado, vuelve a Entidades y cambia el nombre en su fila en lugar de borrar y crear.
+                            @L(@<text><b>Esta migración borra datos.</b> Si no es lo que quieres, deshazla antes de ejecutar el sistema
+                            (con Aspire se aplicaría al arrancar). Para un renombrado, vuelve a Entidades y cambia el nombre de la propiedad en lugar de borrar y crear.</text>, @<text><b>This migration deletes data.</b> If that's not what you want, undo it before running the system
+                            (Aspire would apply it on startup). For a rename, go back to Entities and rename the property instead of deleting and creating.</text>)
                         </div>
                     }
                     <div class="row" style="gap: 8px">
                         <button type="button" class="btn" disabled="@(busy || status.SqlLoading)" @onclick="LoadSql">
-                            @(status.SqlLoading ? "Generando SQL…" : status.SqlFor == review.Name && status.Sql is not null ? "Actualizar SQL" : "Ver SQL")
+                            @(status.SqlLoading ? L("Generando SQL…", "Generating SQL…") : status.SqlFor == review.Name && status.Sql is not null ? L("Actualizar SQL", "Refresh SQL") : L("Ver SQL", "Show SQL"))
                         </button>
                         @if (!confirmRemove)
                         {
-                            <button type="button" class="btn" style="color: var(--err)" disabled="@busy" @onclick="() => confirmRemove = true">Deshacer esta migración</button>
+                            <button type="button" class="btn" style="color: var(--err)" disabled="@busy" @onclick="() => confirmRemove = true">@L("Deshacer esta migración", "Undo this migration")</button>
                         }
                         else
                         {
-                            <span class="hint">Solo si no se ha aplicado aún a ninguna base de datos.</span>
-                            <button type="button" class="btn" style="color: var(--err)" disabled="@busy" @onclick="Remove">@(removing ? "Deshaciendo…" : "Sí, deshacer " + review.Name)</button>
-                            <button type="button" class="btn" @onclick="() => confirmRemove = false">Cancelar</button>
+                            <span class="hint">@L("Solo si no se ha aplicado aún a ninguna base de datos.", "Only if it hasn't been applied to any database yet.")</span>
+                            <button type="button" class="btn" style="color: var(--err)" disabled="@busy" @onclick="Remove">@(removing ? L("Deshaciendo…", "Undoing…") : L("Sí, deshacer ", "Yes, undo ") + review.Name)</button>
+                            <button type="button" class="btn" @onclick="() => confirmRemove = false">@L("Cancelar", "Cancel")</button>
                         }
                     </div>
                     @if (status.SqlFor == review.Name && status.Sql is { } sql)
@@ -206,7 +208,7 @@
 
     private static string Label(FindingLevel level) => level switch
     {
-        FindingLevel.Danger => "✖ Borra datos:",
+        FindingLevel.Danger => L("✖ Borra datos:", "✖ Deletes data:"),
         FindingLevel.Warning => "⚠",
         _ => "✔",
     };
@@ -234,7 +236,7 @@
     }
 
     private void InstallEf() =>
-        Runner.Start(ServiceCommands.InstallEfJob, "Instalar dotnet-ef", State.Workspace, "dotnet", ["tool", "install", "--global", "dotnet-ef"]);
+        Runner.Start(ServiceCommands.InstallEfJob, L("Instalar dotnet-ef", "Install dotnet-ef"), State.Workspace, "dotnet", ["tool", "install", "--global", "dotnet-ef"]);
 
     private async Task Recheck()
     {

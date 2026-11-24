@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using {{Service}}.Api;
 using {{Service}}.Api.Endpoints;
 using {{Service}}.Api.Features;
@@ -11,6 +12,14 @@ builder.AddStratumWiring();
 
 // What is specific to this service.
 builder.Services.AddValidatedOptions<ServiceOptions>(ServiceOptions.SectionName);
+
+// Strict JSON in requests: numbers as numbers ("2", not "\"2\""), property names as documented, no repeated properties.
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict;
+    options.SerializerOptions.PropertyNameCaseInsensitive = false;
+    options.SerializerOptions.AllowDuplicateProperties = false;
+});
 
 var app = builder.Build();
 

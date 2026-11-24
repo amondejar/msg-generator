@@ -1,15 +1,16 @@
 @page "/run"
 @implements IDisposable
 @inject StudioState State
+@inject BuildRunner Builds
 @inject ProcessRunner Runner
 @inject Toolchain Tools
 
-<PageTitle>Ejecutar · Stratum Studio</PageTitle>
+<PageTitle>@L("Ejecutar", "Run") · Stratum Studio</PageTitle>
 
 <main class="content">
     <div>
-        <h1>Ejecutar el sistema</h1>
-        <p class="lead">Todos los servicios a la vez con .NET Aspire: sus bases de datos, Kafka o el emulador de Service Bus si los usan, el dashboard de telemetría y el service discovery.</p>
+        <h1>@L("Ejecutar el sistema", "Run the system")</h1>
+        <p class="lead">@L("Todos los servicios a la vez con .NET Aspire: sus bases de datos, Kafka o el emulador de Service Bus si los usan, el dashboard de telemetría y el service discovery.", "All the services at once with .NET Aspire: their databases, Kafka or the Service Bus emulator if they use them, the telemetry dashboard and service discovery.")</p>
     </div>
     <section class="stack" aria-labelledby="h-aspire">
         <h2 class="section" id="h-aspire">Aspire</h2>
@@ -18,25 +19,25 @@
             <div class="row">
                 @if (running)
                 {
-                    <button type="button" class="btn" style="color: var(--err)" @onclick="StopSystem">■ Detener sistema</button>
+                    <button type="button" class="btn" style="color: var(--err)" @onclick="StopSystem">@L("■ Detener sistema", "■ Stop system")</button>
                     @if (job!.DetectedUrl is { } dashboard)
                     {
-                        <a class="btn btn-primary" href="@dashboard" target="_blank" rel="noopener">Abrir dashboard de Aspire ↗</a>
+                        <a class="btn btn-primary" href="@dashboard" target="_blank" rel="noopener">@L("Abrir dashboard de Aspire ↗", "Open the Aspire dashboard ↗")</a>
                     }
                     else
                     {
-                        <span class="hint">Arrancando… la primera vez compila y descarga las imágenes de las bases de datos, puede tardar unos minutos.</span>
+                        <span class="hint">@L("Arrancando… la primera vez compila y descarga las imágenes de las bases de datos, puede tardar unos minutos.", "Starting… the first time it builds and pulls the database images, it can take a few minutes.")</span>
                     }
                 }
                 else
                 {
-                    <button type="button" class="btn btn-primary" disabled="@(State.Services.Count == 0 || dockerMissing)" @onclick="RunSystem">▶ Ejecutar sistema</button>
-                    <span class="hint">Genera o actualiza el AppHost y arranca todos los servicios con sus bases de datos.</span>
+                    <button type="button" class="btn btn-primary" disabled="@(State.Services.Count == 0 || dockerMissing)" @onclick="RunSystem">@L("▶ Ejecutar sistema", "▶ Run system")</button>
+                    <span class="hint">@L("Genera o actualiza el AppHost y arranca todos los servicios con sus bases de datos.", "Generates or updates the AppHost and starts every service with its databases.")</span>
                 }
             </div>
             @if (dockerMissing)
             {
-                <div class="msg warn" role="alert">Hay servicios con base de datos o broker (Kafka, emulador de Service Bus) y no se encuentra Docker. Arranca Docker Desktop (o Podman) y <button type="button" class="btn" style="min-height: 30px; padding: 0 10px" @onclick="RecheckDocker">vuelve a comprobar</button>.</div>
+                <div class="msg warn" role="alert">@L("Hay servicios con base de datos o broker (Kafka, emulador de Service Bus) y no se encuentra Docker. Arranca Docker Desktop (o Podman) y", "There are services with a database or broker (Kafka, Service Bus emulator) and Docker isn't found. Start Docker Desktop (or Podman) and") <button type="button" class="btn" style="min-height: 30px; padding: 0 10px" @onclick="RecheckDocker">@L("vuelve a comprobar", "check again")</button>.</div>
             }
             @if (running)
             {
@@ -62,30 +63,91 @@
         </div>
         <div class="card stack">
             <p style="margin: 0">
-                Un AppHost que arranca todos los servicios con sus bases de datos, el dashboard de telemetría y el service discovery.
+                @L("Un AppHost que arranca todos los servicios con sus bases de datos, el dashboard de telemetría y el service discovery.", "An AppHost that starts every service with its databases, the telemetry dashboard and service discovery.")
                 @if (State.ExistingAppHost is { } appHost)
                 {
-                    <span> Ya existe <b class="mono">@appHost</b>: al regenerarlo se incorporan los servicios nuevos sin tocar tu <span class="mono">AppHost.cs</span>.</span>
+                    <span> @L(@<text>Ya existe <b class="mono">@appHost</b>: al regenerarlo se incorporan los servicios nuevos sin tocar tu <span class="mono">AppHost.cs</span>.</text>, @<text><b class="mono">@appHost</b> already exists: regenerating it adds the new services without touching your <span class="mono">AppHost.cs</span>.</text>)</span>
                 }
             </p>
             <div class="row">
                 <label class="field" style="flex: 0 1 260px">
-                    Nombre del sistema
+                    @L("Nombre del sistema", "System name")
                     <input type="text" @bind="systemName" />
                 </label>
                 <button type="button" class="btn" style="align-self: flex-end" disabled="@(State.Services.Count == 0)" @onclick="GenerateAppHost">
-                    @(State.ExistingAppHost is null ? "Generar AppHost" : "Actualizar AppHost")
+                    @(State.ExistingAppHost is null ? L("Generar AppHost", "Generate AppHost") : L("Actualizar AppHost", "Update AppHost"))
                 </button>
             </div>
             @if (aspire is not null)
             {
                 <div class="msg ok" role="status">
-                    ✔ @aspire.AppHostName con @aspire.Services.Count servicio(s).
-                    @(aspire.Created.Count + aspire.Updated.Count == 0 ? "Ya estaba al día." : $"{aspire.Created.Count} archivo(s) nuevos, {aspire.Updated.Count} actualizados.")
-                    Arráncalo con <span class="mono">aspire run</span> (necesita Docker o Podman).
+                    ✔ @aspire.AppHostName @L($"con {aspire.Services.Count} servicio(s).", $"with {aspire.Services.Count} service(s).")
+                    @(aspire.Created.Count + aspire.Updated.Count == 0 ? L("Ya estaba al día.", "It was already up to date.") : L($"{aspire.Created.Count} archivo(s) nuevos, {aspire.Updated.Count} actualizados.", $"{aspire.Created.Count} new file(s), {aspire.Updated.Count} updated."))
+                    @L(@<text>Arráncalo con <span class="mono">aspire run</span> (necesita Docker o Podman).</text>, @<text>Start it with <span class="mono">aspire run</span> (needs Docker or Podman).</text>)
                 </div>
             }
         </div>
+    </section>
+
+    <section class="stack" aria-labelledby="h-starts">
+        <h2 class="section" id="h-starts">@L("Qué arranca", "What starts")</h2>
+        @if (State.Services.Count == 0)
+        {
+            <span class="hint">@L("Todavía no hay servicios.", "No services yet.")</span>
+        }
+        else
+        {
+            var defs = State.Services.Select(x => x.Definition).ToList();
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 1.2fr 1fr 1.2fr 1.6fr"><span>@L("Servicio", "Service")</span><span>@L("Base de datos", "Database")</span><span>@L("Mensajería", "Messaging")</span><span>@L("En local", "Locally")</span></div>
+                @foreach (var d in defs.OrderBy(d => d.Service.Name, StringComparer.Ordinal))
+                {
+                    <div class="tr" style="grid-template-columns: 1.2fr 1fr 1.2fr 1.6fr">
+                        <b>@d.Service.Name</b>
+                        <span class="hint">@(d.Persistence?.Provider is { } provider ? L($"{provider} (contenedor)", $"{provider} (container)") : "—")</span>
+                        <span class="hint">@(d.Messaging?.Broker switch { MessagingSettings.AzureServiceBus => "Service Bus", null => "—", var b => b })</span>
+                        <span class="hint mono">http://localhost:@ServiceName.DevPort(d.Service.Name)@(d.Features.IsEnabled("openApi") ? "/scalar" : "/api/v1/ping")</span>
+                    </div>
+                }
+            </div>
+            <span class="hint">
+                @L("Además: el dashboard de Aspire (logs, trazas y métricas de todo)", "Also: the Aspire dashboard (logs, traces and metrics of everything)")@(defs.Any(d => d.Messaging?.Broker == MessagingSettings.Kafka) ? L(", Kafka con Kafka UI", ", Kafka with Kafka UI") : string.Empty)@(defs.Any(d => d.Messaging?.Broker == MessagingSettings.AzureServiceBus) ? L(", el emulador de Service Bus con sus topics y suscripciones", ", the Service Bus emulator with its topics and subscriptions") : string.Empty).
+                @L("Las migraciones de cada servicio se aplican al arrancar.", "Each service's migrations are applied on startup.")
+            </span>
+            @if (defs.Any(d => d.Messaging is not null))
+            {
+                <div class="row" style="gap: 10px; align-items: center">
+                    <a class="btn" href="/traces" target="stratum-traces" style="text-decoration: none"
+                       onclick="window.open(this.href, 'stratum-traces', 'popup,width=1440,height=900'); return false;">@L("Trazas de eventos", "Event traces")</a>
+                    <span class="hint">@L("Con los servicios arrancados, sigue cada evento del outbox al broker y a cada servicio que lo escucha.", "With the services running, follow each event from the outbox to the broker and to every service that listens to it.")</span>
+                </div>
+            }
+        }
+    </section>
+
+    <section class="stack" aria-labelledby="h-system-code">
+        <h2 class="section" id="h-system-code">@L("Código de todo el sistema", "Code of the whole system")</h2>
+        <PackagesBehind />
+        @if (EditorLauncher.SystemSolution(State.Workspace) is { } systemSolution)
+        {
+            <div class="row" style="gap: 10px; flex-wrap: wrap; align-items: center">
+                <OpenInEditor Path="@systemSolution" Label="@L($"Abrir {Path.GetFileName(systemSolution)}", $"Open {Path.GetFileName(systemSolution)}")" />
+                <button type="button" class="btn" disabled="@Builds.IsBusy(State.Workspace)" @onclick="() => BuildSystem(BuildRunner.Build, systemSolution)"><Icon Name="build" Size="15" /> @L("Compilar todo", "Build all")</button>
+                <button type="button" class="btn" disabled="@Builds.IsBusy(State.Workspace)" @onclick="() => BuildSystem(BuildRunner.Test, systemSolution)">@L("▶ Tests de todos", "▶ Test all")</button>
+            </div>
+            <span class="hint">@L("Una solución con el AppHost y todos los servicios: ábrela en tu editor para trabajar con todo a la vez.", "A solution with the AppHost and every service: open it in your editor to work with everything at once.")</span>
+            <BuildResults Directory="@State.Workspace" />
+        }
+        else
+        {
+            <span class="hint">@L(@<text>Genera el AppHost (arriba): crea una solución con todos los servicios para abrirlos juntos en tu editor y compilarlos o probarlos de una vez. Mientras, cada servicio tiene su <b>Compilar y probar</b>.</text>, @<text>Generate the AppHost (above): it creates a solution with every service to open them together in your editor and build or test them at once. Meanwhile, each service has its own <b>Build and test</b>.</text>)</span>
+        }
+    </section>
+
+    <section class="stack" aria-labelledby="h-ai">
+        <h2 class="section" id="h-ai">@L("Asistentes de IA", "AI assistants")</h2>
+        <span class="hint">@L(@<text>Conecta Claude, Copilot o Cursor con Stratum (<span class="mono">stratum mcp</span>): podrán ver el sistema y proponer cambios (entidades, eventos, migraciones…) que tú apruebas antes de aplicarlos. Cada servicio trae además un <span class="mono">AGENTS.md</span> con sus convenciones.</text>, @<text>Connect Claude, Copilot or Cursor with Stratum (<span class="mono">stratum mcp</span>): they can see the system and propose changes (entities, events, migrations…) that you approve before they are applied. Each service also has an <span class="mono">AGENTS.md</span> with its conventions.</text>)</span>
+        <pre class="code" style="margin: 0; white-space: pre-wrap">@McpClientConfig.Text(State.Workspace)</pre>
     </section>
     @if (error is not null)
     {
@@ -94,6 +156,9 @@
 </main>
 
 @code {
+    private void BuildSystem(string kind, string solution) =>
+        Builds.Start(kind, State.Workspace, kind == BuildRunner.Test ? L("Tests del sistema", "System tests") : L("Compilar el sistema", "Build the system"), solution);
+
     private string? error;
     private string systemName = string.Empty;
     private AspireResult? aspire;
@@ -141,7 +206,7 @@
             error = null;
             aspire = State.GenerateAppHost(systemName);   // always up to date with the services on disk
             var project = Path.Combine(State.Workspace, aspire.AppHostName, $"{aspire.AppHostName}.csproj");
-            Runner.Start(ServiceCommands.DashboardJob, "Sistema (Aspire)", State.Workspace, "dotnet",
+            Runner.Start(ServiceCommands.DashboardJob, L("Sistema (Aspire)", "System (Aspire)"), State.Workspace, "dotnet",
                 ["run", "--project", project], ServiceCommands.DashboardUrl());
         }
         catch (Exception ex) when (ex is StratumException or InvalidOperationException)

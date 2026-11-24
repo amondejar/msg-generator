@@ -83,12 +83,15 @@ try {
     Invoke-Dotnet pack  $sln -c Release --no-build -o $Pkgs -v q -nologo
     Pass ("packed: " + ((Get-ChildItem $Pkgs -Filter *.nupkg | ForEach-Object Name) -join ' '))
     $Version = (& dotnet $StratumDll --version | Out-String).Trim()
+    $helpMain = (& dotnet $StratumDll --help 2>&1 | Out-String)
+    $helpNew = (& dotnet $StratumDll new --help 2>&1 | Out-String)
+    if ($helpMain -like '*stratum new*' -and $helpNew -like '*stratum new*' -and $helpMain -notlike '*Exception*') { Pass 'stratum --help and stratum new --help' } else { Fail "--help: $helpMain" }
 
     # The global NuGet cache keeps packages by id+version: drop old Stratum.* builds so we test the ones just packed.
     $globalLine = (& dotnet nuget locals global-packages --list | Out-String).Trim()
     $global = $globalLine.Substring($globalLine.IndexOf(':') + 1).Trim()
     Get-ChildItem $global -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'msg.servicedefaults*' -or $_.Name -eq 'msg.ddd' -or $_.Name -like 'msg.messaging*' } |
+        Where-Object { $_.Name -like 'stratum.servicedefaults*' -or $_.Name -eq 'stratum.ddd' -or $_.Name -like 'stratum.messaging*' -or $_.Name -like 'msg.servicedefaults*' -or $_.Name -eq 'msg.ddd' -or $_.Name -like 'msg.messaging*' } |
         Remove-Item -Recurse -Force
 
     Step "Generate every feature combination worth checking (Stratum $Version)"
@@ -181,6 +184,11 @@ try {
     if ($upProps -like '*Include="Stratum.ServiceDefaults" Version="9.9.9"*' -and $upJson -like '*"stratumVersion": "9.9.9"*') {
         Pass 'upgrade bumps Stratum.* packages and stratum.json'
     } else { Fail 'upgrade' }
+    Invoke-Dotnet $StratumDll enum add Tier --values "Basic, Gold" --path $upgraded
+    $alignedProps = Get-Content (Join-Path $upgraded 'Directory.Packages.props') -Raw
+    if ($alignedProps -like "*Include=""Stratum.ServiceDefaults"" Version=""$Version""*" -and $alignedProps -notlike '*Version="9.9.9"*') {
+        Pass "a change made with this Stratum puts every Stratum.* package at $Version"
+    } else { Fail 'packages not aligned' }
 
     Step 'stratum add entity'
     $full = Join-Path $Work 'full'
@@ -275,6 +283,25 @@ public sealed partial class Product
         -and (Get-Content (Join-Path $cr 'Catalog.Domain\Products\ProductOperations.g.cs') -Raw) -like '*record ProductRestocked(Guid ProductId)*'
     $null = Get-DotnetOutput $StratumDll entity remove Product --path $clean   # expected to fail: checked through $LASTEXITCODE
     if ($refOk -and $LASTEXITCODE -ne 0) { Pass 'clean-ddd: references (foreign keys, checks) and aggregate operations' } else { Fail 'clean-ddd references/operations' }
+    # Specification and user stories (on a copy: docs/ doesn't change how the service builds).
+    $cleanDocs = Join-Path $Work 'clean-docs'
+    Copy-Item $clean $cleanDocs -Recurse
+    $docs = Join-Path $cleanDocs 'docs'
+    Invoke-Dotnet $StratumDll spec --path $cleanDocs
+    $story = Get-ChildItem (Join-Path $docs 'historias') -Filter 'CAT-*-product-discontinue.md' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $again = Get-DotnetOutput $StratumDll spec --path $cleanDocs
+    if ((Test-Path (Join-Path $docs 'especificacion.g.md')) -and (Test-Path (Join-Path $docs 'contexto.md')) -and $story `
+        -and (Get-Content (Join-Path $docs 'especificacion.g.md') -Raw) -like '*/api/v1/products/{id}/discontinue*' `
+        -and (Get-Content $story.FullName -Raw) -like '*Discontinue de Product*' -and ($again -join "`n") -like '*al d*a*') {
+        Pass 'spec: especificacion, contexto e historias con criterios en Gherkin'
+    } else { Fail 'spec' }
+    Add-Content $story.FullName 'mine'
+    Invoke-Dotnet $StratumDll entity operation add Product Archive --path $cleanDocs
+    $archived = Get-ChildItem (Join-Path $docs 'historias') -Filter 'CAT-*-product-archive.md' -ErrorAction SilentlyContinue
+    if ((Get-Content (Join-Path $docs 'especificacion.g.md') -Raw) -like '*/api/v1/products/{id}/archive*' -and $archived `
+        -and (Get-Content $story.FullName -Raw) -like '*mine*') {
+        Pass 'spec: a model change updates the specification and adds the new story (the user''s stay)'
+    } else { Fail 'spec not kept up to date' }
     Invoke-Dotnet $StratumDll feature on mcp --path $clean
     if ((Get-Content (Join-Path $cr 'Catalog.Api\StratumWiring.g.cs') -Raw) -like '*app.MapMcp("/mcp")*' `
         -and (Get-Content (Join-Path $cr 'Catalog.Api\Features\Products\ProductMcpTools.g.cs') -Raw) -like '*Name = "discontinue_product"*' `
@@ -292,6 +319,74 @@ public sealed partial class Product
     $opRejected = $LASTEXITCODE -ne 0
     $null = Get-DotnetOutput $StratumDll add entity Bad --path $full --props 'X:Nope'   # expected to fail: checked through $LASTEXITCODE
     if ($vOk -and $opRejected -and $LASTEXITCODE -ne 0) { Pass 'vertical slice: references with 400/409 checks and test data' } else { Fail 'vertical references' }
+    Invoke-Dotnet $StratumDll enum add ShipmentState --values 'pending, Sent, Delivered' --path $full
+    Invoke-Dotnet $StratumDll entity update Shipment --path $full --props 'Code:string, SupplierId:Supplier, ProductId:Product?, State:ShipmentState, Previous:ShipmentState?'
+    Invoke-Dotnet $StratumDll enum add ProductLine --values 'Basic, Premium' --path $clean
+    Invoke-Dotnet $StratumDll entity operation add Product Reclassify --params 'Line:ProductLine' --path $clean
+    $enumOk = (Get-Content (Join-Path $full 'src\Orders.Api\Features\Enums.g.cs') -Raw) -like '*public enum ShipmentState*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Features\Shipments\ShipmentConfiguration.g.cs') -Raw) -like '*HasConversion<string>()*' `
+        -and (Get-Content (Join-Path $full 'tests\Orders.Api.Tests\Orders.Api.Tests.csproj') -Raw) -like '*<Using Include="Orders.Api.Features" />*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Enums.g.cs') -Raw) -like '*public enum ProductLine*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Products\Product.Reclassify.cs') -Raw) -like '*ProductLine line*'
+    $null = Get-DotnetOutput $StratumDll enum remove ShipmentState --path $full   # expected to fail: in use
+    if ($enumOk -and $LASTEXITCODE -ne 0) { Pass 'enums: C# enum, stored as text, usable in properties and operations' } else { Fail 'enums' }
+    # Lists: of basic types, of enums and of objects (item types, own table, replaced on update). The tests of "full"
+    # and "clean" (run at the end) create, read and update them against a real database.
+    Invoke-Dotnet $StratumDll type add ShipmentLine --props 'Sku:string, Quantity:int, State:ShipmentState, Note:string?' --path $full
+    Invoke-Dotnet $StratumDll entity update Shipment --path $full --props 'Code:string, SupplierId:Supplier, ProductId:Product?, State:ShipmentState, Previous:ShipmentState?, Tags:string[], States:ShipmentState[], Lines:ShipmentLine[]'
+    Invoke-Dotnet $StratumDll type add BundleLine --props 'Sku:string, Price:decimal, Line:ProductLine' --path $clean
+    Invoke-Dotnet $StratumDll add entity Bundle --path $clean --props 'Name:string, Codes:int[], Lines:BundleLine[]'
+    $shipConfig = Get-Content (Join-Path $full 'src\Orders.Api\Features\Shipments\ShipmentConfiguration.g.cs') -Raw
+    $listsOk = (Get-Content (Join-Path $full 'src\Orders.Api\Features\Types.g.cs') -Raw) -like '*public sealed class ShipmentLine*' `
+        -and $shipConfig -like '*OwnsMany(e => e.Lines*' -and $shipConfig -like '*ToTable("shipment_lines")*' -and $shipConfig -like '*PrimitiveCollection(e => e.States)*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Features\Shipments\ShipmentContracts.g.cs') -Raw) -like '*IReadOnlyList<ShipmentLineContract> Lines*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Types.g.cs') -Raw) -like '*public sealed class BundleLine*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Bundles\Bundle.g.cs') -Raw) -like '*Lines = `[.. lines`];*'
+    $null = Get-DotnetOutput $StratumDll type remove ShipmentLine --path $full   # expected to fail: in use
+    $removeFailed = $LASTEXITCODE -ne 0
+    $null = Get-DotnetOutput $StratumDll add entity Bad --path $full --props 'Tags:string[]?'   # expected to fail: optional list
+    if ($listsOk -and $removeFailed -and $LASTEXITCODE -ne 0) { Pass 'lists: string[], enum[] and item types (own table, replaced on update)' } else { Fail 'lists' }
+    # Relations between entities (1-N, 1-1, what deleting does) and compositions (one item inside the entity).
+    Invoke-Dotnet $StratumDll type add PostalAddress --props 'Street:string, City:string, Zip:string?' --path $full
+    Invoke-Dotnet $StratumDll add entity Profile --path $full --props 'Bio:string?'
+    Invoke-Dotnet $StratumDll relation add Profile Supplier --one-to-one --on-delete cascade --path $full
+    Invoke-Dotnet $StratumDll relation add Shipment.CarrierId Supplier --optional --on-delete set-null --path $full
+    Invoke-Dotnet $StratumDll relation compose Supplier.Address PostalAddress --path $full
+    Invoke-Dotnet $StratumDll relation compose Supplier.Billing PostalAddress --optional --path $full
+    Invoke-Dotnet $StratumDll type add Dimensions --props 'Width:decimal, Height:decimal' --path $clean
+    Invoke-Dotnet $StratumDll add entity Manual --path $clean --props 'Title:string'
+    Invoke-Dotnet $StratumDll relation add Manual Product --one-to-one --on-delete cascade --path $clean
+    Invoke-Dotnet $StratumDll relation compose Product.Size Dimensions --optional --path $clean
+    $rf = Join-Path $full 'src\Orders.Api\Features'
+    $supplierConfig = Get-Content (Join-Path $rf 'Suppliers\SupplierConfiguration.g.cs') -Raw
+    $relOk = (Get-Content (Join-Path $rf 'Profiles\ProfileConfiguration.g.cs') -Raw) -like '*WithOne().HasForeignKey<global::Orders.Api.Features.Profiles.Profile>(e => e.SupplierId).OnDelete(DeleteBehavior.Cascade)*' `
+        -and (Get-Content (Join-Path $rf 'Shipments\ShipmentConfiguration.g.cs') -Raw) -like '*HasForeignKey(e => e.CarrierId).OnDelete(DeleteBehavior.SetNull)*' `
+        -and $supplierConfig -like '*OwnsOne(e => e.Address*' -and $supplierConfig -like '*Navigation(e => e.Address).IsRequired()*' `
+        -and (Get-Content (Join-Path $rf 'Profiles\ProfileEndpoints.g.cs') -Raw) -like '*DuplicateReferencesAsync*' `
+        -and (Get-Content (Join-Path $rf 'Shipments\ShipmentEndpoints.g.cs') -Raw) -like '*Guid? carrierId*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Manuals\ManualIntegrity.g.cs') -Raw) -like '*DuplicateReferenceAsync*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Products\ProductConfiguration.g.cs') -Raw) -like '*OwnsOne(e => e.Size*' `
+        -and ((Get-DotnetOutput $StratumDll relation list --path $full) -join "`n") -like '*Profile.SupplierId*Supplier*1*1*'
+    $null = Get-DotnetOutput $StratumDll relation add Shipment.OtherId Supplier --on-delete set-null --path $full   # expected to fail: set-null needs optional
+    if ($relOk -and $LASTEXITCODE -ne 0) { Pass 'relations: 1-1 (unique), on delete cascade / set null, ?supplierId= filter, compositions (OwnsOne)' } else { Fail 'relations' }
+    # Operations on lists (clean-ddd): one item or a list of items as parameters, with a head start for the rule.
+    Invoke-Dotnet $StratumDll entity operation add Bundle AddLine --params 'Line:BundleLine' --path $clean
+    Invoke-Dotnet $StratumDll entity operation add Bundle ReplaceLines --params 'Lines:BundleLine[]' --path $clean
+    $opsOk = (Get-Content (Join-Path $clean 'src\Catalog.Domain\Bundles\Bundle.AddLine.cs') -Raw) -like '*Lines.Add(line);*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Bundles\Bundle.ReplaceLines.cs') -Raw) -like '*Lines = `[.. lines`];*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Bundles\BundleOperations.g.cs') -Raw) -like '*record BundleLineAdded(Guid BundleId, BundleLine Line)*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Api\Features\Bundles\BundleOperationEndpoints.g.cs') -Raw) -like '*`[property: Required`] BundleLineContract Line*'
+    if ($opsOk) { Pass 'operations on lists: AddLine(Line:BundleLine) -> BundleLineAdded, with the rule started' } else { Fail 'operations on lists' }
+    # Best practices of dotnet/skills (dotnet-webapi, test-anti-patterns) and instructions for coding agents.
+    $bpOk = (Get-Content (Join-Path $full 'src\Orders.Api\Features\Shipments\ShipmentEndpoints.g.cs') -Raw) -like '*.WithSummary("Create a Shipment")*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Orders.Api.csproj') -Raw) -like '*<GenerateDocumentationFile>true</GenerateDocumentationFile>*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Program.cs') -Raw) -like '*JsonNumberHandling.Strict*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Features\Types.g.cs') -Raw) -like '*public sealed record ShipmentLineContract(*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Api\Features\Bundles\BundleContracts.g.cs') -Raw) -like '*IReadOnlyList<BundleLineContract> Lines*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Orders.Api.http') -Raw) -like '*# @name createShipment*' `
+        -and (Get-Content (Join-Path $full 'tests\Orders.Api.Tests\Features\ShipmentEndpointsTests.g.cs') -Raw) -like '*UpdateReplacesTheData*' `
+        -and (Get-Content (Join-Path $clean 'AGENTS.md') -Raw) -like '*Never edit them*' -and (Get-Content (Join-Path $clean 'CLAUDE.md') -Raw) -like '*@AGENTS.md*'
+    if ($bpOk) { Pass 'best practices: OpenAPI metadata, strict JSON, item contracts, .http, focused tests, AGENTS.md' } else { Fail 'best practices' }
     if ((Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\CatalogDbContext.g.cs') -Raw) -like '*Tag*') { Fail 'Tag still in DbContext' }
     Pass 'entity remove deletes its files and registrations'
     # An entity from Stratum < 0.10 (no "layout" in stratum.json) is read-only until converted.
@@ -356,27 +451,47 @@ await app.RunAsync().ConfigureAwait(false);
     Pass 'Program.cs from before 0.12: blocked, converted, then editable'
 
     Step 'Messaging (stratum messaging / stratum events)'
+    # Messaging follows usage: publishing turns it on (no order to remember).
     $out = Get-DotnetOutput $StratumDll events on Product --path $fs
-    if ($LASTEXITCODE -eq 0) { Fail 'events published without messaging' }
+    if ($LASTEXITCODE -eq 0 -and $out -like '*Shop con kafka*') { Pass 'events on without messaging turns messaging on' } else { Fail "events on: $out" }
     Invoke-Dotnet $StratumDll messaging on --broker kafka --path $fs
-    Invoke-Dotnet $StratumDll events on Product --path $fs
     $wiringCode = Get-Content $wiring -Raw
     $devSettings = Join-Path $fs 'src\Shop.Api\appsettings.Development.json'
     if ($wiringCode -like '*UseKafka(builder.Configuration)*' -and $wiringCode -like '*UseEntityFramework<ShopDbContext>*' -and (Get-Content $apiProj -Raw) -like '*Include="Stratum.Messaging.Kafka"*' -and (Get-Content $devSettings -Raw) -like '*"kafka": "localhost:9092"*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Data\MessagingConfiguration.g.cs') -Raw) -like '*MessagingModel.ConfigureOutbox*') {
         Pass 'messaging on: Kafka, outbox/inbox tables, packages and connection string'
+        if ((Get-Content (Join-Path $fs 'src\Shop.Api\Data\MessagingConfiguration.g.cs') -Raw) -like '*MessagingModel.ConfigureReceived*' -and (Get-Content $wiring -Raw) -like '*app.MapStratumMessagingDiagnostics()*') {
+            Pass 'event traces: msg_received journal and GET /_stratum/messaging (Development)'
+        } else { Fail 'event traces wiring' }
     } else { Fail 'messaging on' }
     Get-Content $devSettings -Raw | ConvertFrom-Json | Out-Null
     if ((Get-Content (Join-Path $fs 'src\Shop.Api\IntegrationEvents\ProductIntegrationEvents.g.cs') -Raw) -like '*IntegrationEvent("shop.product-created")*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Features\Products\ProductEndpoints.g.cs') -Raw) -like '*PublishAsync(new ProductCreated*') {
         Pass 'vertical slice: Product events published from the endpoints (outbox)'
     } else { Fail 'events on (vertical)' }
     Invoke-Dotnet $StratumDll messaging on --broker kafka --path $clean
-    Invoke-Dotnet $StratumDll events on Product --path $clean
+    Invoke-Dotnet $StratumDll events on Product Bundle --path $clean
     if ((Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Products\ProductIntegrationEventsMapper.g.cs') -Raw) -like '*ProductIntegrationEventsMapper : IIntegrationEventMapper*' -and (Get-Content (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\ProductIntegrationEvents.g.cs') -Raw) -like '*IntegrationEvent("catalog.product-created")*') {
         Pass 'clean + DDD: domain events mapped to integration events'
     } else { Fail 'events on (clean)' }
 
     Invoke-Dotnet $StratumDll subscribe $fs Product --path $clean
     Invoke-Dotnet $StratumDll subscribe $clean Product.Created --path $fs
+    Invoke-Dotnet $StratumDll subscribe $clean Bundle.Updated --path $fs
+    # A published operation: its own integration event (ProductReclassified) besides ProductUpdated.
+    Invoke-Dotnet $StratumDll entity operation publish Product Reclassify --path $clean
+    Invoke-Dotnet $StratumDll subscribe $clean Product.Reclassified --path $fs
+    $mapper = Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Products\ProductIntegrationEventsMapper.g.cs') -Raw
+    $mapOut = Get-DotnetOutput $StratumDll events map --path $Work
+    if ((Get-Content (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\ProductIntegrationEvents.g.cs') -Raw) -like '*IntegrationEvent("catalog.product-reclassified")*' `
+        -and $mapper -like '*(ProductReclassified operation, Product entity) => `[new Integration.ProductUpdated(*' -and $mapper -like '*new Integration.ProductReclassified(entity.Id*' `
+        -and (Get-Content (Join-Path $fs 'src\Shop.Api\IntegrationEvents\Catalog\ProductReclassified.g.cs') -Raw) -like '*string Line) : IntegrationEvent*' `
+        -and $mapOut -match 'catalog\.product-reclassified .*Shop') {
+        Pass 'published operation: ProductReclassified with its own topic, subscribable'
+    } else { $mapOut | Out-Host; Fail 'published operation' }
+    $bundleContract = Get-Content (Join-Path $fs 'src\Shop.Api\IntegrationEvents\Catalog\BundleUpdated.g.cs') -Raw
+    if ($bundleContract -like '*IReadOnlyList<BundleUpdated.BundleLine> Lines*' -and $bundleContract -like '*public sealed record BundleLine(string Sku, decimal Price, string Line);*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Bundles\BundleIntegrationEventsMapper.g.cs') -Raw) -like '*new Integration.BundleUpdated.BundleLine(i.Sku, i.Price, i.Line.ToString())*') {
+        Pass 'events with lists: the item records travel inside the contract'
+    } else { Fail 'events with lists' }
     if ((Get-Content (Join-Path $clean 'src\Catalog.Application\IntegrationEvents\Shop\ProductDeleted.g.cs') -Raw) -like '*IntegrationEvent("shop.product-deleted")*' -and (Get-Content (Join-Path $clean 'src\Catalog.Application\Events\Shop\ProductCreatedHandler.cs') -Raw) -like '*IIntegrationEventHandler<ProductCreated>*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\IntegrationEvents\Catalog\ProductCreated.g.cs') -Raw) -like '*IntegrationEvent("catalog.product-created")*' -and (Get-Content (Join-Path $fs 'src\Shop.Api\Events\Catalog\ProductCreatedHandler.cs') -Raw) -like '*IIntegrationEventHandler<ProductCreated>*') {
         Pass 'subscribe: contract copied and handler created (both architectures)'
     } else { Fail 'subscribe' }
@@ -530,7 +645,8 @@ namespace Catalog.Infrastructure.Migrations
         '{"jsonrpc":"2.0","method":"notifications/initialized"}',
         '{"jsonrpc":"2.0","id":2,"method":"tools/list"}',
         '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_entity","arguments":{"service":"Orders","name":"Coupon","properties":"Code:string"}}}',
-        '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_services","arguments":{}}}'
+        '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_services","arguments":{}}}',
+        '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"add_relation","arguments":{"service":"Orders","entity":"Order","property":"ParentId","target":"Order","optional":true}}}'
     )
     # 'stratum mcp' logs to stderr (stdout is the protocol): Windows PowerShell turns that into an error under 'Stop'.
     $eap = $ErrorActionPreference
@@ -538,7 +654,7 @@ namespace Catalog.Infrastructure.Migrations
     try { $mcpOut = @($mcpIn | & dotnet $StratumDll mcp --path $sys 2>$null | ForEach-Object { "$_" }) }
     finally { $ErrorActionPreference = $eap }
     $mcpText = $mcpOut -join "`n"
-    if ($mcpOut.Count -eq 4 -and $mcpText -like '*"protocolVersion":"2025-11-25"*' -and $mcpText -like '*"name":"subscribe"*' -and $mcpText -like '*"structuredContent":{"root"*' -and -not (Test-Path (Join-Path $sys 'orders\src\Orders.Api\Features\Coupons'))) {
+    if ($mcpOut.Count -eq 5 -and $mcpText -like '*"protocolVersion":"2025-11-25"*' -and $mcpText -like '*"name":"subscribe"*' -and $mcpText -like '*"name":"add_relation"*' -and (Get-Content (Join-Path $sys 'orders\stratum.json') -Raw) -notlike '*ParentId*' -and $mcpText -like '*"structuredContent":{"root"*' -and -not (Test-Path (Join-Path $sys 'orders\src\Orders.Api\Features\Coupons'))) {
         Pass 'MCP server: handshake, tools, plan without writing'
     } else { $mcpText | Out-Host; Fail 'MCP server' }
     $legacy = Join-Path $sys 'legacy'
@@ -555,6 +671,7 @@ namespace Catalog.Infrastructure.Migrations
 
     Step 'stratum studio'
     $studioPort = 5988
+    $env:STRATUM_STUDIO_LANGUAGE = 'es'   # the checks below look for Spanish texts
     $studio = Start-Process dotnet -ArgumentList $StratumDll, 'studio', '--path', $sys, '--port', $studioPort, '--no-browser' -PassThru -NoNewWindow `
         -RedirectStandardOutput (Join-Path $Work 'studio.out.log') -RedirectStandardError (Join-Path $Work 'studio.err.log')
     $studioBase = "http://127.0.0.1:$studioPort"
@@ -571,16 +688,103 @@ namespace Catalog.Infrastructure.Migrations
     # Own client: the first render of a page (Razor compilation, file scans) can be slow on CI runners.
     $studioHttp = New-Object System.Net.Http.HttpClient
     $studioHttp.Timeout = [TimeSpan]::FromSeconds(60)
-    foreach ($p in 'services', 'events', 'run', 'templates', 'service', 'entities', 'service/data', 'service/messaging', 'service/code', 'service/remove', 'apply', '_framework/blazor.web.js') {
+    foreach ($p in 'services', 'events', 'spec', 'run', 'templates', 'service', 'entities', 'service/data', 'service/messaging', 'service/code', 'service/build', 'service/spec', 'service/remove', 'apply', '_framework/blazor.web.js') {
         $watch = [Diagnostics.Stopwatch]::StartNew()
         try { $code = [int]$studioHttp.GetAsync("$studioBase/$p").GetAwaiter().GetResult().StatusCode }
         catch { $code = "no response after $([int]$watch.Elapsed.TotalSeconds) s ($($_.Exception.InnerException.Message))" }
         if ($code -ne 200) { $studioHttp.Dispose(); Stop-Process -Id $studio.Id -Force; Fail "studio: /$p returned $code" }
         if ($watch.Elapsed.TotalSeconds -gt 10) { Write-Host "  (studio /$p took $([int]$watch.Elapsed.TotalSeconds) s)" -ForegroundColor Yellow }
     }
+    $eventsHtml = $studioHttp.GetStringAsync("$studioBase/events").GetAwaiter().GetResult()
     $studioHttp.Dispose()
     Pass 'studio pages render and blazor.web.js is served (interactive UI)'
+    if (([regex]::Matches($eventsHtml, 'class="ev-mini')).Count -ge 3 -and $eventsHtml -like '*orders.order-created*' -and $eventsHtml -like '*href="/designer"*') { Pass 'studio event map: compact summary of services and events, link to the designer' }
+    else { Stop-Process -Id $studio.Id -Force; Fail 'studio: event map' }
+
+    $entHttp = New-Object System.Net.Http.HttpClient
+    $entHttp.Timeout = [TimeSpan]::FromSeconds(60)
+    $ent = $entHttp.GetStringAsync("$studioBase/entities?open=orders&dialog=property:Total").GetAwaiter().GetResult()
+    $enumDialog = $entHttp.GetStringAsync("$studioBase/entities?open=orders&dialog=enum").GetAwaiter().GetResult()
+    $entHttp.Dispose()
+    if ($ent -like '*class="modal-backdrop"*' -and $ent -like '*Propiedad Total*' -and $ent -like '*Guardar y cerrar*' -and $enumDialog -like '*Nuevo enumerado*') { Pass 'studio entity dialogs: property and enumeration open in floating windows' }
+    else { Stop-Process -Id $studio.Id -Force; Fail 'studio: entity dialogs' }
+
+    # Events designer: its page, its model, and the batch API (preview writes nothing; save is all or nothing).
+    $designer = "$studioBase/designer"
+    $designerHttp = New-Object System.Net.Http.HttpClient
+    $designerHttp.Timeout = [TimeSpan]::FromSeconds(60)
+    function Invoke-Designer([string]$action, [string]$json) {
+        $content = New-Object System.Net.Http.StringContent($json, [Text.Encoding]::UTF8, 'application/json')
+        $designerHttp.PostAsync("$designer/api/$action", $content).GetAwaiter().GetResult().Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    }
+    $page = $designerHttp.GetStringAsync($designer).GetAwaiter().GetResult()
+    $model = $designerHttp.GetStringAsync("$designer/api/model").GetAwaiter().GetResult()
+    if ($page -like '*ador de eventos*' -and $model -like '*"name":"Billing"*') { Pass 'events designer: page and model' }
+    else { Stop-Process -Id $studio.Id -Force; Fail 'designer page/model' }
+    $billingJson = Join-Path $sys 'billing\stratum.json'
+    $ordersJson = Join-Path $sys 'orders\stratum.json'
+    $connect = '{"changes":[{"kind":"connect","publisher":"Billing","entity":"Invoice","event":"Created","consumer":"Orders"}],"layout":{"orders":{"x":40,"y":40},"billing":{"x":480,"y":40}}}'
+    $before = Get-Content $billingJson -Raw
+    $preview = Invoke-Designer 'preview' $connect
+    if ($preview -like '*"saved":false*' -and $preview -like '*activada en Billing*' -and (Get-Content $billingJson -Raw) -eq $before) { Pass 'designer preview: plan for both services, nothing written' }
+    else { Stop-Process -Id $studio.Id -Force; Fail "designer preview: $preview" }
+    $saved = Invoke-Designer 'save' $connect
+    $billingEvents = Get-Content (Join-Path $sys 'billing\src\Billing.Application\IntegrationEvents\InvoiceIntegrationEvents.g.cs') -Raw
+    if ($saved -like '*"saved":true*' -and (Get-Content $billingJson -Raw) -like '*"publishedEvents"*' -and $billingEvents -like '*record InvoiceCreated*' -and $billingEvents -notlike '*record InvoiceUpdated*' -and (Get-Content $ordersJson -Raw) -like '*"service": "Billing"*' -and (Test-Path (Join-Path $sys 'stratum.designer.json'))) {
+        Pass 'designer save: publishes only Invoice.Created, Orders subscribes, layout kept'
+    } else { Stop-Process -Id $studio.Id -Force; Fail "designer save: $saved" }
+    $bad = Invoke-Designer 'save' '{"changes":[{"kind":"disconnect","publisher":"Billing","entity":"Invoice","event":"Created","consumer":"Orders"},{"kind":"connect","publisher":"Orders","entity":"Order","event":"Created","consumer":"Orders"}]}'
+    if ($bad -like '*"saved":false*' -and (Get-Content $ordersJson -Raw) -like '*"service": "Billing"*') { Pass 'designer: a batch with an error writes nothing' }
+    else { Stop-Process -Id $studio.Id -Force; Fail "designer error batch: $bad" }
+    Invoke-Designer 'save' '{"changes":[{"kind":"disconnect","publisher":"Billing","entity":"Invoice","event":"Created","consumer":"Orders"}]}' | Out-Null
+    if ((Get-Content $ordersJson -Raw) -notlike '*"service": "Billing"*') { Pass 'designer: disconnect removes the subscription' }
+    else { Stop-Process -Id $studio.Id -Force; Fail 'designer disconnect' }
+    Invoke-Designer 'save' '{"changes":[],"layout":{}}' | Out-Null
+    if ($designerHttp.GetStringAsync("$designer/api/model").GetAwaiter().GetResult() -like '*"layout":{}*') { Pass 'designer: a canvas left empty stays empty' }
+    else { Stop-Process -Id $studio.Id -Force; Fail 'designer empty canvas' }
+    # Entity designer of a service: a new entity and an optional relation to it (set null), saved in one batch.
+    $entityDesigner = "$studioBase/entity-designer"
+    $relate = '{"service":"orders","changes":[{"kind":"entity","entity":"Customer","properties":"Name:string"},{"kind":"relation","entity":"Order","property":"CustomerId","target":"Customer","optional":true,"onDelete":"setNull"}],"layout":{"Customer":{"x":40,"y":300}}}'
+    function Invoke-EntityDesigner([string]$action, [string]$json) {
+        $content = New-Object System.Net.Http.StringContent($json, [Text.Encoding]::UTF8, 'application/json')
+        $designerHttp.PostAsync("$entityDesigner/api/$action", $content).GetAwaiter().GetResult().Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    }
+    $edPage = $designerHttp.GetStringAsync("$entityDesigner`?service=orders").GetAwaiter().GetResult()
+    $edModel = $designerHttp.GetStringAsync("$entityDesigner/api/model?service=orders").GetAwaiter().GetResult()
+    $edPreview = Invoke-EntityDesigner 'preview' $relate
+    $edSaved = Invoke-EntityDesigner 'save' $relate
+    $orderConfig = Get-Content (Join-Path $sys 'orders\src\Orders.Api\Features\Orders\OrderConfiguration.g.cs') -Raw
+    if ($edPage -like '*ador de entidades*' -and $edModel -like '*"name":"Order"*' -and $edPreview -like '*"saved":false*' -and $edSaved -like '*"saved":true*' `
+        -and $edSaved -like '*"needsMigration":true*' -and $orderConfig -like '*OnDelete(DeleteBehavior.SetNull)*') {
+        Pass 'entity designer: page, model, preview and save (new entity + optional relation, set null)'
+    } else { Stop-Process -Id $studio.Id -Force; Fail "entity designer: $edSaved" }
+    # Event traces: the window and its report (the services aren't running here, so they show as offline).
+    $tracesPage = $designerHttp.GetStringAsync("$studioBase/traces").GetAwaiter().GetResult()
+    $traces = $designerHttp.GetStringAsync("$studioBase/traces/api/report?minutes=15").GetAwaiter().GetResult()
+    if ($tracesPage -like '*Trazas de eventos*' -and $traces -like '*"name":"Orders"*' -and $traces -like '*"state":"offline"*' -and $traces -like '*"events":`[`]*') {
+        Pass 'event traces: window and report (services not running: offline, no events)'
+    } else { Stop-Process -Id $studio.Id -Force; Fail "event traces: $traces" }
+    $designerHttp.Dispose()
     Stop-Process -Id $studio.Id -Force
+
+    # The same Studio in English.
+    $env:STRATUM_STUDIO_LANGUAGE = 'en'
+    $studio = Start-Process dotnet -ArgumentList $StratumDll, 'studio', '--path', $sys, '--port', $studioPort, '--no-browser' -PassThru -NoNewWindow `
+        -RedirectStandardOutput (Join-Path $Work 'studio-en.out.log') -RedirectStandardError (Join-Path $Work 'studio-en.err.log')
+    $enHttp = New-Object System.Net.Http.HttpClient
+    $enHttp.Timeout = [TimeSpan]::FromSeconds(60)
+    $enHome = $null
+    for ($i = 0; $i -lt 100 -and -not $enHome; $i++) {
+        try { $enHome = $enHttp.GetStringAsync("$studioBase/").GetAwaiter().GetResult() } catch { Start-Sleep -Milliseconds 300 }
+    }
+    $enDialog = $enHttp.GetStringAsync("$studioBase/entities?open=orders&dialog=enum").GetAwaiter().GetResult()
+    $enDesigner = $enHttp.GetStringAsync("$studioBase/designer").GetAwaiter().GetResult()
+    $enHttp.Dispose()
+    Stop-Process -Id $studio.Id -Force
+    Remove-Item Env:STRATUM_STUDIO_LANGUAGE
+    if ($enHome -like '*System overview*' -and $enHome -like '*lang="en"*' -and $enDialog -like '*New enumeration*' -and $enDialog -like '*Add value*' -and $enDesigner -like '*Event designer*') {
+        Pass 'studio in English (pages, dialogs and the events designer)'
+    } else { Fail 'studio: English' }
 
     Step 'stratum import openapi'
     $librarySpec = @'
@@ -679,7 +883,7 @@ components:
 '@
     Set-Content -Path (Join-Path $Work 'library.yaml') -Value $librarySpec -Encoding UTF8
     $out = Get-DotnetOutput $StratumDll import openapi (Join-Path $Work 'library.yaml') -a clean-ddd -o (Join-Path $Work 'imported') --package-source $Pkgs
-    if ($out -like '*Author (/api/v1/authors): FullName:string, Born:date?*' -and $out -like '*Book (/api/v1/books): Title:string, AuthorId:Author, Pages:int?*' -and $out -like '*Lend(Member:string)*BookLent*' -and $out -like '*Book.Tags: lista*' -and $out -like '*GET /stats*' -and (Test-Path (Join-Path $Work 'imported\src\LibraryAPI.Domain\Books\Book.Lend.cs'))) {
+    if ($out -like '*Author (/api/v1/authors): FullName:string, Born:date?*' -and $out -like '*Book (/api/v1/books): Title:string, AuthorId:Author, Pages:int?*' -and $out -like '*Lend(Member:string)*BookLent*' -and $out -like '*Pages:int?, Tags:string`[`]*' -and $out -like '*GET /stats*' -and (Test-Path (Join-Path $Work 'imported\src\LibraryAPI.Domain\Books\Book.Lend.cs'))) {
         Pass 'import openapi: entities, references, operations and a report of the rest'
     } else { $out | Out-Host; Fail 'import openapi' }
 

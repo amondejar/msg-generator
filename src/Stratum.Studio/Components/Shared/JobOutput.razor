@@ -26,10 +26,10 @@
 
     private static string StatusText(ProcessJob job) => job.Status switch
     {
-        JobStatus.Running => "● En marcha",
-        JobStatus.Succeeded => "✔ Terminado",
-        JobStatus.Stopped => "■ Detenido",
-        _ => $"✘ Error (código {job.ExitCode})",
+        JobStatus.Running => L("● En marcha", "● Running"),
+        JobStatus.Succeeded => L("✔ Terminado", "✔ Finished"),
+        JobStatus.Stopped => L("■ Detenido", "■ Stopped"),
+        _ => L($"✘ Error (código {job.ExitCode})", $"✘ Error (code {job.ExitCode})"),
     };
 
     private static string StatusStyle(JobStatus status) => status switch

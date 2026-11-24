@@ -12,6 +12,15 @@ public sealed class PropertyDraft
 
     public bool Nullable { get; set; }
 
+    /// <summary>A list ("Tags:string[]", "Lines:OrderLine[]"); an item type without it is one item inside the entity.</summary>
+    public bool List { get; set; }
+
+    /// <summary>Only for a reference: 1–1 (one row per target) instead of 1–N.</summary>
+    public bool OneToOne { get; set; }
+
+    /// <summary>Only for a reference: what deleting the target does (<see cref="DeleteBehaviors"/>).</summary>
+    public string OnDelete { get; set; } = DeleteBehaviors.Restrict;
+
     /// <summary>Name in stratum.json. Null for a property added in this session. If it differs from <see cref="Name"/>, it's a rename.</summary>
     public string? OriginalName { get; init; }
 
@@ -20,14 +29,79 @@ public sealed class PropertyDraft
     /// <summary>Prefix of <see cref="Type"/> for a reference: "@Customer" is a foreign key to Customer.</summary>
     public const string ReferencePrefix = "@";
 
+    /// <summary>Prefix of <see cref="Type"/> for an enumeration: "#OrderStatus".</summary>
+    public const string EnumPrefix = "#";
+
     public string? References => Type.StartsWith(ReferencePrefix, StringComparison.Ordinal) ? Type[ReferencePrefix.Length..] : null;
 
-    public PropertyDefinition ToDefinition() => References is { } target
-        ? new PropertyDefinition { Name = Name.Trim(), Type = "guid", Nullable = Nullable, References = target }
-        : new PropertyDefinition { Name = Name.Trim(), Type = Type, Nullable = Nullable };
+    public string? Enum => Type.StartsWith(EnumPrefix, StringComparison.Ordinal) ? Type[EnumPrefix.Length..] : null;
 
-    public static PropertyDraft From(PropertyDefinition p) =>
-        new() { Name = p.Name, Type = p.References is null ? p.Type : ReferencePrefix + p.References, Nullable = p.Nullable, OriginalName = p.Name };
+    /// <summary>Prefix of <see cref="Type"/> for a list of an item type: "*OrderItem" is "Items:OrderItem[]".</summary>
+    public const string ItemPrefix = "*";
+
+    public string? Item => Type.StartsWith(ItemPrefix, StringComparison.Ordinal) ? Type[ItemPrefix.Length..] : null;
+
+    /// <summary>Never references.</summary>
+    public bool IsList => List && References is null;
+
+    public PropertyDefinition ToDefinition()
+    {
+        var name = Name.Trim();
+        var list = IsList ? true : (bool?)null;
+        var nullable = Nullable && !IsList;
+        return References is { } target
+            ? new PropertyDefinition
+            {
+                Name = name, Type = "guid", Nullable = nullable, References = target,
+                Unique = OneToOne, OnDelete = OnDelete == DeleteBehaviors.SetNull && !nullable ? DeleteBehaviors.Restrict : OnDelete,
+            }
+            : Item is { } item
+                ? new PropertyDefinition { Name = name, Type = PropertyTypes.ObjectType, List = list, Nullable = nullable, Of = item }
+                : Enum is { } enumName
+                    ? new PropertyDefinition { Name = name, Type = PropertyTypes.EnumType, Nullable = nullable, Enum = enumName, List = list }
+                    : new PropertyDefinition { Name = name, Type = Type, Nullable = nullable, List = list };
+    }
+
+    public static PropertyDraft From(PropertyDefinition p) => new()
+    {
+        Name = p.Name,
+        Type = p.References is not null ? ReferencePrefix + p.References
+            : p.Of is not null ? ItemPrefix + p.Of
+            : p.Enum is not null ? EnumPrefix + p.Enum : p.Type,
+        Nullable = p.Nullable,
+        List = p.IsList,
+        OneToOne = p.IsOneToOne,
+        OnDelete = p.DeleteBehavior,
+        OriginalName = p.Name,
+    };
+}
+
+/// <summary>An enumeration being edited.</summary>
+public sealed class EnumDraft
+{
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>"Draft, Confirmed, Shipped".</summary>
+    public string Values { get; set; } = string.Empty;
+
+    /// <summary>Name in stratum.json (null when new): renaming an enumeration in use is not supported.</summary>
+    public string? OriginalName { get; init; }
+
+    public static EnumDraft From(EnumDefinition e) => new() { Name = e.Name, Values = string.Join(", ", e.Values), OriginalName = e.Name };
+}
+
+/// <summary>An item type (of the lists of objects) being edited.</summary>
+public sealed class TypeDraft
+{
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>"ProductId:guid, Quantity:int" (same format as --props).</summary>
+    public string Properties { get; set; } = string.Empty;
+
+    /// <summary>Name in stratum.json (null when new): renaming a type in use is not supported.</summary>
+    public string? OriginalName { get; init; }
+
+    public static TypeDraft From(ItemTypeDefinition t) => new() { Name = t.Name, Properties = PropertyTypes.Spec(t.Properties), OriginalName = t.Name };
 }
 
 /// <summary>A business operation of an aggregate being edited (clean-ddd).</summary>
@@ -41,8 +115,11 @@ public sealed class OperationDraft
     /// <summary>Domain event; empty → entity + past tense of the name.</summary>
     public string Event { get; set; } = string.Empty;
 
+    /// <summary>Also an integration event for other services (OrderShipped).</summary>
+    public bool Publish { get; set; }
+
     public static OperationDraft From(EntityOperation o) =>
-        new() { Name = o.Name, Parameters = PropertyTypes.Spec(o.Parameters), Event = o.Event };
+        new() { Name = o.Name, Parameters = PropertyTypes.Spec(o.Parameters), Event = o.Event, Publish = o.Publishes };
 }
 
 /// <summary>
@@ -76,10 +153,10 @@ public sealed class EntityDraft
     public List<OperationDraft> Operations { get; } = [];
 
     /// <summary>Operations as stratum.json defines them (throws <see cref="StratumException"/> on invalid parameters).</summary>
-    public IReadOnlyList<EntityOperation>? ToOperations() => Operations.Count == 0 ? null :
+    public IReadOnlyList<EntityOperation>? ToOperations(IReadOnlyCollection<string>? enums = null, IReadOnlyCollection<string>? types = null) => Operations.Count == 0 ? null :
         [.. Operations
             .Where(o => !string.IsNullOrWhiteSpace(o.Name))
-            .Select(o => ModelRules.ParseOperation(Name, o.Name, o.Parameters, o.Event))];
+            .Select(o => ModelRules.ParseOperation(Name, o.Name, o.Parameters, o.Event, enums, types) with { Publish = o.Publish ? true : null })];
 
     public string EffectivePlural =>
         !string.IsNullOrWhiteSpace(Plural) ? Plural
@@ -126,6 +203,26 @@ public sealed class ServiceDraft
 
     public List<EntityDraft> Entities { get; } = [];
 
+    public List<EnumDraft> Enums { get; } = [];
+
+    /// <summary>Enumerations as stratum.json defines them (throws <see cref="StratumException"/> on invalid values).</summary>
+    public IReadOnlyList<EnumDefinition>? ToEnums() => Enums.Count == 0 ? null :
+        [.. Enums.Where(e => !string.IsNullOrWhiteSpace(e.Name)).Select(e => new EnumDefinition
+        {
+            Name = ServiceName.Normalize(e.Name),
+            Values = string.IsNullOrWhiteSpace(e.Values) ? [] : ModelRules.ParseEnumValues(e.Values),
+        })];
+
+    public List<TypeDraft> Types { get; } = [];
+
+    /// <summary>Item types as stratum.json defines them (throws <see cref="StratumException"/> on invalid properties).</summary>
+    public IReadOnlyList<ItemTypeDefinition>? ToTypes(IReadOnlyCollection<string> enums) => Types.Count == 0 ? null :
+        [.. Types.Where(t => !string.IsNullOrWhiteSpace(t.Name)).Select(t => new ItemTypeDefinition
+        {
+            Name = ServiceName.Normalize(t.Name),
+            Properties = string.IsNullOrWhiteSpace(t.Properties) ? [] : PropertyTypes.Parse(t.Properties, enums),
+        })];
+
     /// <summary>When removing entities, also delete the user's files (handlers, repositories...).</summary>
     public bool DeleteOwnFiles { get; set; }
 
@@ -141,6 +238,11 @@ public sealed class ServiceDraft
 
     /// <summary>Broker for integration events (MessagingSettings.Kafka / InMemory), or null: no messaging.</summary>
     public string? Broker { get; set; }
+
+    /// <summary>
+    /// Set when the Studio turned messaging on by itself (to publish or listen to an event), so the pages can say so.
+    /// </summary>
+    public string? BrokerNote { get; set; }
 
     /// <summary>Events of other services this one listens to.</summary>
     public List<Subscription> Subscriptions { get; } = [];
@@ -160,6 +262,8 @@ public sealed class ServiceDraft
             StratumVersion = definition.StratumVersion,
         };
         draft.Entities.AddRange(definition.Entities.Select(e => EntityDraft.From(e)));
+        draft.Enums.AddRange((definition.Enums ?? []).Select(EnumDraft.From));
+        draft.Types.AddRange((definition.Types ?? []).Select(TypeDraft.From));
         draft.Subscriptions.AddRange(definition.Subscriptions ?? []);
         return draft;
     }

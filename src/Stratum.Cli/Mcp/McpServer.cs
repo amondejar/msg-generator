@@ -42,6 +42,9 @@ public sealed class McpServer(string root, string? packageSource)
         After adding or changing entities, the user creates an EF Core migration (the tool result says how) and can
         run review_migration. Services that exchange events must use the same broker; event_map shows problems.
         Property types: string, int, long, decimal, bool, guid, date, datetime; add ? for optional ("Notes:string?").
+        An enumeration of the service (set_enum) is used by its name as type ("Status:OrderStatus"), stored as text.
+        Lists use []: "Tags:string[]", "Statuses:OrderStatus[]", or of objects with an item type (set_type) such as
+        "Items:OrderItem[]" (lines of an order: own table, replaced as a whole on update, part of the entity).
         A reference to another entity of the same service uses its name as type ("CustomerId:Customer"): a foreign
         key that is checked on create/update and blocks deletes while in use. Across services, keep a guid and
         subscribe to the other service's events instead. Business actions of an aggregate (clean-ddd) are

@@ -1,0 +1,67 @@
+@page "/service/build"
+@implements IDisposable
+@inject StudioState State
+@inject BuildRunner Builds
+@inject ProcessRunner Runner
+@inject EditorLauncher Editors
+
+<PageTitle>@L("Compilar y probar", "Build and test") · Stratum Studio</PageTitle>
+
+@if (State.Current is not { } draft)
+{
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
+}
+else if (draft.IsNew)
+{
+    <main class="content">
+        <h1>@L("Compilar y probar", "Build and test")</h1>
+        <p class="lead">@L(@<text>@draft.Name todavía no existe en el disco. <a href="apply">Aplícalo</a> y vuelve aquí.</text>, @<text>@draft.Name doesn't exist on disk yet. <a href="apply">Apply it</a> and come back here.</text>)</p>
+    </main>
+}
+else
+{
+    var directory = State.FullPath(draft.Directory);
+    var solution = EditorLauncher.SolutionFor(State.Workspace, directory);
+    <main class="content">
+        <div>
+            <h1>@L("Compilar y probar", "Build and test")</h1>
+            <p class="lead">@L($"Compila {draft.Name} y lanza sus tests (SQLite en memoria: no hace falta Docker). Los errores y los tests que fallan salen resumidos, con un enlace para abrirlos en tu editor.", $"Builds {draft.Name} and runs its tests (in-memory SQLite: no Docker needed). Errors and failing tests are summarized, with a link to open them in your editor.")</p>
+        </div>
+        <PackagesBehind Directory="@draft.Directory" />
+
+        <section class="card stack" style="gap: 12px">
+            <div class="row" style="gap: 10px; flex-wrap: wrap; align-items: center">
+                <button type="button" class="btn btn-primary" disabled="@Builds.IsBusy(directory)" @onclick="() => Start(BuildRunner.Build, directory, draft.Name)"><Icon Name="build" Size="15" /> @L("Compilar", "Build")</button>
+                <button type="button" class="btn btn-primary" disabled="@Builds.IsBusy(directory)" @onclick="() => Start(BuildRunner.Test, directory, draft.Name)">@L("▶ Ejecutar tests", "▶ Run tests")</button>
+                <span class="spacer" style="flex: 1"></span>
+                <OpenInEditor Path="@(solution ?? directory)" />
+            </div>
+            @if (State.Plan is { Changes.Count: > 0 })
+            {
+                <span class="hint" style="color: var(--warn)">@L(@<text>⚠ Hay cambios sin aplicar: se compila lo que hay en el disco. <a href="apply">Aplícalos</a> antes si quieres probarlos.</text>, @<text>⚠ There are changes not applied: what's on disk is built. <a href="apply">Apply them</a> first if you want to test them.</text>)</span>
+            }
+            <span class="hint">Editor: @Editors.Current.Name · @L("se cambia abajo a la izquierda.", "change it at the bottom left.")@(solution is not null ? L($" Solución: {Path.GetFileName(solution)}", $" Solution: {Path.GetFileName(solution)}") : string.Empty)</span>
+        </section>
+
+        <BuildResults Directory="@directory" />
+    </main>
+}
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.Changed += OnChanged;
+        Runner.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        State.Changed -= OnChanged;
+        Runner.Changed -= OnChanged;
+    }
+
+    private void Start(string kind, string directory, string name) =>
+        Builds.Start(kind, directory, kind == BuildRunner.Test ? L($"Tests de {name}", $"Tests of {name}") : L($"Compilar {name}", $"Build {name}"));
+}

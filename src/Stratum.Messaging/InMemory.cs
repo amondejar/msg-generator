@@ -124,6 +124,14 @@ public sealed class InMemoryOutbox : IOutboxWriter, IOutboxStore
     }
 
     public Task SaveAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    internal int RemoveSentBefore(DateTime beforeUtc)
+    {
+        lock (_lock)
+        {
+            return _messages.RemoveAll(m => m.SentAt is { } sent && sent < beforeUtc);
+        }
+    }
 }
 
 /// <summary>Inbox kept in memory: deduplicates within the process' lifetime.</summary>
@@ -141,5 +149,62 @@ public sealed class InMemoryInbox : IInbox
 
         await action(cancellationToken).ConfigureAwait(false);
         return _processed.TryAdd((messageId, consumer), 0);
+    }
+}
+
+/// <summary>Journal kept in memory, next to <see cref="InMemoryOutbox"/>: lost on restart.</summary>
+public sealed class InMemoryJournal(InMemoryOutbox outbox) : IMessageJournal
+{
+    private readonly ConcurrentDictionary<(string, string), ReceivedMessage> _received = new();
+
+    public IReadOnlyCollection<ReceivedMessage> Received => [.. _received.Values];
+
+    public Task RecordAsync(ReceivedMessage entry, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        _received.AddOrUpdate((entry.MessageId, entry.Consumer), entry, (_, existing) => JournalRows.Merge(existing, entry));
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<OutboxMessage>> SentSinceAsync(DateTime sinceUtc, int max, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<OutboxMessage> sent = [.. outbox.Messages.Where(m => m.OccurredAt >= sinceUtc).OrderByDescending(m => m.OccurredAt).Take(max)];
+        return Task.FromResult(sent);
+    }
+
+    public Task<IReadOnlyList<ReceivedMessage>> ReceivedSinceAsync(DateTime sinceUtc, int max, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ReceivedMessage> received = [.. _received.Values.Where(m => m.UpdatedAt >= sinceUtc).OrderByDescending(m => m.UpdatedAt).Take(max)];
+        return Task.FromResult(received);
+    }
+
+    public Task<int> PurgeAsync(DateTime beforeUtc, CancellationToken cancellationToken)
+    {
+        var removed = 0;
+        foreach (var (key, row) in _received)
+        {
+            if (row.UpdatedAt < beforeUtc && _received.TryRemove(key, out _))
+            {
+                removed++;
+            }
+        }
+
+        return Task.FromResult(removed + outbox.RemoveSentBefore(beforeUtc));
+    }
+}
+
+internal static class JournalRows
+{
+    /// <summary>A later attempt updates the row; the first arrival time stays.</summary>
+    public static ReceivedMessage Merge(ReceivedMessage existing, ReceivedMessage update)
+    {
+        existing.Status = update.Status;
+        existing.Attempts = update.Attempts;
+        existing.DurationMs = update.DurationMs;
+        existing.LastError = update.LastError;
+        existing.UpdatedAt = update.UpdatedAt;
+        existing.CorrelationId ??= update.CorrelationId;
+        existing.TraceId ??= update.TraceId;
+        return existing;
     }
 }

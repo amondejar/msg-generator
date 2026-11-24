@@ -1,0 +1,203 @@
+@* Where to put a new service: folders of the system (relative to it), with "New folder"; outside it only on request. *@
+
+<div class="stack" style="gap: 8px">
+    @if (outside)
+    {
+        <FolderPicker Value="@Value" ValueChanged="Set" Label="@L("Carpeta fuera del sistema", "Folder outside the system")" />
+        <button type="button" class="link-btn" @onclick="BackInside">@L("← Volver a las carpetas del sistema", "← Back to the system's folders")</button>
+    }
+    else
+    {
+        <nav class="row" style="gap: 4px; flex-wrap: wrap; align-items: center" aria-label="@L("Carpeta elegida", "Chosen folder")">
+            @foreach (var (label, path) in Crumbs())
+            {
+                @if (path == Full(Value))
+                {
+                    <b class="mono">@label</b>
+                }
+                else
+                {
+                    <button type="button" class="link-btn mono" @onclick="() => Set(path)">@label</button>
+                    <span class="hint">/</span>
+                }
+            }
+        </nav>
+        <div class="row" style="gap: 6px; flex-wrap: wrap">
+            @foreach (var (name, path, service) in Children())
+            {
+                @if (service is not null)
+                {
+                    <span class="badge" title="@L("Ya es un servicio: no se crean servicios dentro de otro", "Already a service: services aren't created inside another")">⚙ @name · @service</span>
+                }
+                else
+                {
+                    <button type="button" class="btn" style="font-weight: 400" @onclick="() => Set(path)">📁 @name</button>
+                }
+            }
+            @if (creating)
+            {
+                <span class="row" style="gap: 6px">
+                    <input type="text" style="width: 180px" placeholder="backend" aria-label="@L("Nombre de la carpeta nueva", "Name of the new folder")" @bind="newFolder" @bind:event="oninput" @onkeydown="OnKey" />
+                    <button type="button" class="btn btn-primary" disabled="@string.IsNullOrWhiteSpace(newFolder)" @onclick="CreateFolder">@L("Crear", "Create")</button>
+                    <button type="button" class="btn" @onclick="() => { creating = false; error = null; }">@L("Cancelar", "Cancel")</button>
+                </span>
+            }
+            else
+            {
+                <button type="button" class="btn btn-dashed" @onclick="() => { creating = true; newFolder = string.Empty; }">@L("+ Nueva carpeta", "+ New folder")</button>
+            }
+        </div>
+        @if (error is not null)
+        {
+            <span class="hint" role="alert" style="color: var(--err)">@error</span>
+        }
+        <button type="button" class="link-btn" style="align-self: flex-start" @onclick="() => outside = true">@L("Usar una carpeta fuera del sistema…", "Use a folder outside the system…")</button>
+    }
+</div>
+
+@code {
+    /// <summary>Absolute path of the chosen folder.</summary>
+    [Parameter, EditorRequired] public string Value { get; set; } = string.Empty;
+
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+
+    /// <summary>Folder of the system (the workspace).</summary>
+    [Parameter, EditorRequired] public string Root { get; set; } = string.Empty;
+
+    private static readonly HashSet<string> Noise = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", "node_modules", "src", "tests", "artifacts", "TestResults" };
+
+    private bool outside;
+    private bool creating;
+    private string newFolder = string.Empty;
+    private string? error;
+
+    protected override void OnParametersSet()
+    {
+        if (!outside && !IsInside(Value))
+        {
+            outside = !string.IsNullOrEmpty(Value);
+        }
+    }
+
+    private string Full(string path) => Path.GetFullPath(string.IsNullOrWhiteSpace(path) ? Root : Path.Combine(Root, path)).TrimEnd(Path.DirectorySeparatorChar);
+
+    private bool IsInside(string path)
+    {
+        var full = Full(path);
+        var root = Full(Root);
+        return full == root || full.StartsWith(root + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    private IEnumerable<(string Label, string Path)> Crumbs()
+    {
+        var root = Full(Root);
+        var full = Full(Value);
+        yield return (System.IO.Path.GetFileName(root) + L(" (sistema)", " (system)"), root);
+        var current = root;
+        foreach (var part in System.IO.Path.GetRelativePath(root, full).Split(System.IO.Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part == ".")
+            {
+                continue;
+            }
+
+            current = System.IO.Path.Combine(current, part);
+            yield return (part, current);
+        }
+    }
+
+    private IEnumerable<(string Name, string Path, string? Service)> Children()
+    {
+        var full = Full(Value);
+        if (!Directory.Exists(full))
+        {
+            return [];
+        }
+
+        try
+        {
+            return [.. Directory.EnumerateDirectories(full)
+                .Where(d => !System.IO.Path.GetFileName(d).StartsWith('.') && !Noise.Contains(System.IO.Path.GetFileName(d))
+                            && !d.EndsWith(".AppHost", StringComparison.OrdinalIgnoreCase) && (File.GetAttributes(d) & FileAttributes.Hidden) == 0)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .Take(200)
+                .Select(d => (System.IO.Path.GetFileName(d), d, ServiceIn(d)))];
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            return [];
+        }
+    }
+
+    private static string? ServiceIn(string directory)
+    {
+        if (ServiceGenerator.FindDefinition(directory) is not { } file)
+        {
+            return null;
+        }
+
+        try
+        {
+            return ServiceGenerator.Deserialize(File.ReadAllText(file)).Service.Name;
+        }
+        catch (Exception ex) when (ex is StratumException or IOException or System.Text.Json.JsonException)
+        {
+            return L("servicio", "service");
+        }
+    }
+
+    private async Task Set(string path)
+    {
+        error = null;
+        Value = Full(path);
+        await ValueChanged.InvokeAsync(Value);
+    }
+
+    private async Task BackInside()
+    {
+        outside = false;
+        await Set(Root);
+    }
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await CreateFolder();
+        }
+        else if (e.Key == "Escape")
+        {
+            creating = false;
+        }
+    }
+
+    private async Task CreateFolder()
+    {
+        var name = newFolder.Trim();
+        if (name.Length == 0)
+        {
+            return;
+        }
+
+        var parts = name.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0 || parts.Any(p => p is "." or ".." || p.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0))
+        {
+            error = L($"'{name}' no vale como nombre de carpeta.", $"'{name}' isn't a valid folder name.");
+            return;
+        }
+
+        var target = System.IO.Path.Combine([Full(Value), .. parts]);
+        try
+        {
+            Directory.CreateDirectory(target);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            error = L($"No se pudo crear la carpeta: {ex.Message}", $"Couldn't create the folder: {ex.Message}");
+            return;
+        }
+
+        creating = false;
+        await Set(target);
+    }
+}

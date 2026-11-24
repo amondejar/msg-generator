@@ -23,14 +23,19 @@ public static partial class AsyncApiDocument
         var routes = EventMap.Build(all);
 
         var payloads = new Dictionary<string, (string EventClass, IReadOnlyList<PropertyDefinition> Properties, bool Deleted)>(StringComparer.Ordinal);
+        var enumValues = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
         foreach (var service in all.Where(s => s.Messaging is not null))
         {
-            foreach (var entity in service.Entities.Where(e => e.IsEditable && e.Publishes))
+            foreach (var published in IntegrationEvents.Of(service))
             {
-                foreach (var name in Subscription.Events)
+                var entity = published.Entity;
+                payloads[published.Topic] = (published.EventClass, IntegrationEvents.Payload(service, published), published.IsDeleted);
+                foreach (var p in entity.Properties.Concat(published.Operation?.Parameters ?? []).Where(p => p.Enum is not null))
                 {
-                    payloads[Subscription.TopicFor(service.Service.Name, entity.Name, name)] =
-                        (entity.Name + name, entity.Properties, name == Subscription.Deleted);
+                    if ((service.Enums ?? []).FirstOrDefault(e => e.Name == p.Enum) is { } e)
+                    {
+                        enumValues[$"{published.Topic}.{p.Name}"] = e.Values;
+                    }
                 }
             }
         }
@@ -63,7 +68,8 @@ public static partial class AsyncApiDocument
             var messageId = channelId;
             var (eventClass, properties, deleted) = payloads.TryGetValue(route.Topic, out var p) ? p : (route.EventClass, [], false);
 
-            schemas[messageId] = Schema(eventClass, properties, deleted);
+            schemas[messageId] = Schema(eventClass, properties, deleted, property =>
+                enumValues.TryGetValue($"{route.Topic}.{property.Name}", out var values) ? values : null);
             messages[messageId] = new JsonObject
             {
                 ["name"] = eventClass,
@@ -186,7 +192,7 @@ public static partial class AsyncApiDocument
         _ => null,
     };
 
-    private static JsonObject Schema(string eventClass, IReadOnlyList<PropertyDefinition> properties, bool deleted)
+    private static JsonObject Schema(string eventClass, IReadOnlyList<PropertyDefinition> properties, bool deleted, Func<PropertyDefinition, IReadOnlyList<string>?> enumValues)
     {
         var props = new JsonObject
         {
@@ -201,6 +207,11 @@ public static partial class AsyncApiDocument
             {
                 var name = JsonNamingPolicy.CamelCase.ConvertName(property.Name);
                 props[name] = Type(property);
+                if (enumValues(property) is { } values)
+                {
+                    var target = property.IsList ? props[name]!["items"]! : props[name]!;
+                    target["enum"] = new JsonArray([.. values.Select(v => (JsonNode)v), .. property.Nullable ? new JsonNode?[] { null } : []]);
+                }
                 if (!property.Nullable)
                 {
                     required.Add(name);
@@ -219,6 +230,33 @@ public static partial class AsyncApiDocument
 
     private static JsonObject Type(PropertyDefinition property)
     {
+        if (property.IsList)
+        {
+            JsonObject items;
+            if (property.IsObjectList)
+            {
+                var fields = new JsonObject();
+                foreach (var field in property.Fields ?? [])
+                {
+                    fields[JsonNamingPolicy.CamelCase.ConvertName(field.Name)] = Type(field);
+                }
+
+                items = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["title"] = property.Of,
+                    ["properties"] = fields,
+                    ["required"] = new JsonArray([.. (property.Fields ?? []).Where(f => !f.Nullable).Select(f => (JsonNode)JsonNamingPolicy.CamelCase.ConvertName(f.Name))]),
+                };
+            }
+            else
+            {
+                items = Type(property with { List = null });
+            }
+
+            return new JsonObject { ["type"] = "array", ["items"] = items };
+        }
+
         var (type, format) = property.Type.ToLowerInvariant() switch
         {
             "int" => ("integer", "int32"),

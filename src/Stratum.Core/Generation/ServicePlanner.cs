@@ -69,8 +69,13 @@ public static class ServicePlanner
         }
 
         // Re-parse through the same rules as --props (names, types, reserved, duplicates).
+        // The options of a relation (1–1, on delete) aren't part of --props: they come from the entity as given.
         var spec = PropertyTypes.Spec(entity.Properties);
-        return new EntityDefinition { Name = name, Plural = plural, Properties = PropertyTypes.Parse(spec), Layout = EntityDefinition.CurrentLayout };
+        var properties = PropertyTypes.Parse(spec, definition.EnumNames, definition.TypeNames).Select(p =>
+            p.References is not null && entity.Properties.FirstOrDefault(x => x.Name == p.Name) is { } given
+                ? p with { Unique = given.Unique == true ? true : null, OnDelete = DeleteBehaviors.Normalize(given.OnDelete) is DeleteBehaviors.Restrict or null ? null : DeleteBehaviors.Normalize(given.OnDelete) }
+                : p).ToList();
+        return new EntityDefinition { Name = name, Plural = plural, Properties = properties, Layout = EntityDefinition.CurrentLayout };
     }
 
     public static string ResolveProvider(string? requested, PersistenceSettings? current)
@@ -116,7 +121,8 @@ public static class ServicePlanner
         ServiceDefinition current,
         string entityName,
         IReadOnlyList<PropertyDefinition> properties,
-        IReadOnlyList<PropertyRename>? renames = null)
+        IReadOnlyList<PropertyRename>? renames = null,
+        bool keepRelationOptions = true)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(properties);
@@ -130,7 +136,7 @@ public static class ServicePlanner
         }
 
         var spec = PropertyTypes.Spec(properties);
-        var parsed = PropertyTypes.Parse(spec);
+        var parsed = PropertyTypes.Parse(spec, current.EnumNames, current.TypeNames);
 
         var pending = (current.PendingRenames ?? []).ToList();
         foreach (var rename in renames ?? [])
@@ -167,11 +173,100 @@ public static class ServicePlanner
         // A renamed property that is now removed: the column is dropped anyway.
         pending.RemoveAll(r => r.Entity == entity.Name && !parsed.Any(p => p.Name == r.To));
 
+        // --props doesn't carry the options of a relation (1–1, on delete): the ones given win (Studio, designer:
+        // false / "restrict" to turn them off); otherwise a reference that stays keeps its own.
+        parsed = [.. parsed.Select(p =>
+        {
+            if (p.References is null)
+            {
+                return p;
+            }
+
+            var given = properties.FirstOrDefault(x => x.Name.Equals(p.Name, StringComparison.OrdinalIgnoreCase) && x.References == p.References);
+            var before = renames?.FirstOrDefault(r => r.To.Equals(p.Name, StringComparison.OrdinalIgnoreCase))?.From ?? p.Name;
+            var old = entity.Properties.FirstOrDefault(o => o.Name.Equals(before, StringComparison.OrdinalIgnoreCase) && o.References == p.References);
+            var unique = keepRelationOptions ? given?.Unique ?? old?.Unique : given?.Unique;
+            var onDelete = DeleteBehaviors.Normalize(keepRelationOptions ? given?.OnDelete ?? old?.OnDelete : given?.OnDelete);
+            if (onDelete == DeleteBehaviors.SetNull && !p.Nullable)
+            {
+                onDelete = null;   // no longer optional: back to the default
+            }
+
+            return p with { Unique = unique == true ? true : null, OnDelete = onDelete is null or DeleteBehaviors.Restrict ? null : onDelete };
+        })];
+
         return current with
         {
             Entities = [.. current.Entities.Select(e => e == entity ? entity with { Properties = parsed } : e)],
             PendingRenames = pending.Count == 0 ? null : pending,
         };
+    }
+
+    /// <summary>Creates or replaces an enumeration. Removed values are returned so the caller can warn about stored data.</summary>
+    public static ServiceDefinition SetEnum(ServiceDefinition current, string name, IReadOnlyList<string> values, out IReadOnlyList<string> removedValues)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(values);
+        var normalized = ServiceName.Normalize(name);
+        var existing = (current.Enums ?? []).FirstOrDefault(e => e.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        removedValues = existing is null ? [] : [.. existing.Values.Where(v => !values.Contains(v, StringComparer.Ordinal))];
+        var updated = current with
+        {
+            Enums = [.. (current.Enums ?? []).Where(e => e != existing), new EnumDefinition { Name = existing?.Name ?? normalized, Values = values }],
+        };
+        ModelRules.Validate(updated);
+        return updated;
+    }
+
+    public static ServiceDefinition RemoveEnum(ServiceDefinition current, string name)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var existing = (current.Enums ?? []).FirstOrDefault(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new StratumException($"No existe el enumerado '{name}'. Enumerados: {string.Join(", ", current.EnumNames.DefaultIfEmpty("ninguno"))}.");
+        if (ModelRules.EnumUsages(current, existing.Name) is { Count: > 0 } usages)
+        {
+            throw new StratumException($"No se puede eliminar {existing.Name}: lo usan {string.Join(", ", usages)}. Cambia antes esas propiedades.");
+        }
+
+        var remaining = current.Enums!.Where(e => e != existing).ToList();
+        return current with { Enums = remaining.Count == 0 ? null : remaining };
+    }
+
+    /// <summary>Adds an item type, or replaces the properties of an existing one ("stratum type add|update").</summary>
+    public static ServiceDefinition SetType(ServiceDefinition current, string name, IReadOnlyList<PropertyDefinition> properties)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(properties);
+        var normalized = ServiceName.Normalize(name);
+        var existing = (current.Types ?? []).FirstOrDefault(t => t.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        var type = new ItemTypeDefinition { Name = existing?.Name ?? normalized, Properties = properties };
+        var updated = current with
+        {
+            Types = existing is null ? [.. current.Types ?? [], type] : [.. current.Types!.Select(t => t == existing ? type : t)],
+        };
+        ModelRules.Validate(updated);
+        return updated;
+    }
+
+    /// <summary>"ProductId:guid, Quantity:int" → properties of an item type (basic types and enumerations).</summary>
+    public static IReadOnlyList<PropertyDefinition> ParseTypeProperties(ServiceDefinition current, string spec)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        return PropertyTypes.Parse(spec, current.EnumNames);
+    }
+
+    public static ServiceDefinition RemoveType(ServiceDefinition current, string name)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var existing = (current.Types ?? []).FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new StratumException($"No existe el tipo '{name}'. Tipos: {string.Join(", ", current.TypeNames.DefaultIfEmpty("ninguno"))}.");
+        if (ModelRules.TypeUsages(current, existing.Name) is { Count: > 0 } usages)
+        {
+            throw new StratumException($"No se puede eliminar {existing.Name}: lo usan {string.Join(", ", usages)}. Cambia antes esas propiedades.");
+        }
+
+        var remaining = current.Types!.Where(t => t != existing).ToList();
+        return current with { Types = remaining.Count == 0 ? null : remaining };
     }
 
     public static ServiceDefinition AddOperation(ServiceDefinition current, string entityName, EntityOperation operation)
@@ -197,6 +292,24 @@ public static class ServicePlanner
         {
             Entities = [.. current.Entities.Select(e => e == entity ? e with { Operations = operations is { Count: > 0 } ? operations : null } : e)],
         };
+    }
+
+    /// <summary>Publishes (or stops publishing) an operation as an integration event of its own (OrderShipped).</summary>
+    public static ServiceDefinition PublishOperation(ServiceDefinition current, string entityName, string operationName, bool publish)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var entity = FindEntity(current, entityName);
+        var operation = (entity.Operations ?? []).FirstOrDefault(o => o.Name.Equals(operationName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new StratumException($"{entity.Name} no tiene la operación '{operationName}'. Operaciones: {string.Join(", ", (entity.Operations ?? []).Select(o => o.Name).DefaultIfEmpty("ninguna"))}.");
+        var updated = current with
+        {
+            Entities = [.. current.Entities.Select(e => e != entity ? e : e with
+            {
+                Operations = [.. e.Operations!.Select(o => o == operation ? o with { Publish = publish ? true : null } : o)],
+            })],
+        };
+        ModelRules.Validate(updated);
+        return updated;
     }
 
     public static ServiceDefinition RemoveOperation(ServiceDefinition current, string entityName, string operationName)
@@ -292,6 +405,84 @@ public static class ServicePlanner
         return current with { Messaging = messaging };
     }
 
+    /// <summary>
+    /// Turns messaging on when something needs it (publishing or listening to events), instead of failing: with
+    /// <paramref name="broker"/>, else the one most services of the system use, else Kafka. Null note when it was on.
+    /// </summary>
+    public static ServiceDefinition EnsureMessaging(string directory, ServiceDefinition current, string? broker, out string? note)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        note = null;
+        if (current.Messaging is not null)
+        {
+            return current;
+        }
+
+        var chosen = broker ?? SystemBroker(directory) ?? MessagingSettings.Kafka;
+        note = $"Mensajería activada en {current.Service.Name} con {chosen} (outbox e inbox): hace falta para publicar o escuchar eventos. Necesita una migración nueva.";
+        return SetMessaging(directory, current, chosen);
+    }
+
+    /// <summary>The broker most services next to this one use (its system), if any.</summary>
+    public static string? SystemBroker(string serviceDirectory)
+    {
+        var parent = Path.GetDirectoryName(Path.GetFullPath(serviceDirectory));
+        if (parent is null || !Directory.Exists(parent))
+        {
+            return null;
+        }
+
+        try
+        {
+            return EventMapEditor.SystemBroker(AspireGenerator.Discover(parent, maxDepth: 2).Select(s => s.Definition));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or StratumException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Publishes (or stops publishing) one event of an entity: Created / Updated / Deleted, or the event of an
+    /// operation (Shipped). The other events of the entity stay as they were. Messaging must be on to publish.
+    /// </summary>
+    public static ServiceDefinition SetPublishedEvent(ServiceDefinition current, string entityName, string eventName, bool publish)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var entity = FindEntity(current, entityName);
+        if (IntegrationEvents.Possible(current, entity).FirstOrDefault(e => e.Name.Equals(eventName, StringComparison.OrdinalIgnoreCase)) is not { } possible)
+        {
+            throw new StratumException($"{entity.Name} no tiene un evento '{eventName}'. Puede publicar: {string.Join(", ", IntegrationEvents.Possible(current, entity).Select(e => e.Name))}.");
+        }
+
+        if (possible.Operation is { } operation)
+        {
+            return PublishOperation(current, entity.Name, operation.Name, publish);
+        }
+
+        if (publish && current.Messaging is null)
+        {
+            throw new StratumException($"{current.Service.Name} no tiene mensajería: actívala antes de publicar {entity.Name}{possible.Name}.");
+        }
+
+        var set = Subscription.Events.Where(entity.PublishesEvent).ToHashSet(StringComparer.Ordinal);
+        if (publish)
+        {
+            set.Add(possible.Name);
+        }
+        else
+        {
+            set.Remove(possible.Name);
+        }
+
+        var updated = entity with
+        {
+            PublishEvents = set.Count == 0 ? null : true,
+            PublishedEvents = set.Count is 0 or 3 ? null : [.. Subscription.Events.Where(set.Contains)],
+        };
+        return current with { Entities = [.. current.Entities.Select(e => e == entity ? updated : e)] };
+    }
+
     /// <summary>Publish (or stop publishing) the Created/Updated/Deleted integration events of an entity.</summary>
     public static ServiceDefinition SetPublishEvents(ServiceDefinition current, string entityName, bool publish)
     {
@@ -307,7 +498,7 @@ public static class ServicePlanner
 
         return current with
         {
-            Entities = [.. current.Entities.Select(e => e == entity ? e with { PublishEvents = publish ? true : null } : e)],
+            Entities = [.. current.Entities.Select(e => e == entity ? e with { PublishEvents = publish ? true : null, PublishedEvents = null } : e)],
         };
     }
 
@@ -316,22 +507,26 @@ public static class ServicePlanner
     {
         ArgumentNullException.ThrowIfNull(publisher);
         var entity = FindEntity(publisher, entityName);
-        var name = Subscription.Events.FirstOrDefault(e => e.Equals(eventName?.Trim(), StringComparison.OrdinalIgnoreCase))
-            ?? throw new StratumException($"Evento desconocido '{eventName}'. Válidos: {string.Join(", ", Subscription.Events)}.");
-
-        if (publisher.Messaging is null || !entity.Publishes)
+        var events = IntegrationEvents.Of(publisher, entity);
+        var published = events.FirstOrDefault(e => e.Name.Equals(eventName?.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (published is null)
         {
-            throw new StratumException(
-                $"{publisher.Service.Name} no publica los eventos de {entity.Name}. Actívalo en ese servicio: " +
-                $"stratum events on {entity.Name} (y stratum messaging on si no tiene mensajería).");
+            if (events.Count == 0)
+            {
+                throw new StratumException(
+                    $"{publisher.Service.Name} no publica eventos de {entity.Name}. Actívalo en ese servicio: " +
+                    $"stratum events on {entity.Name} (y stratum messaging on si no tiene mensajería), o publica una operación (--publish).");
+            }
+
+            throw new StratumException($"{publisher.Service.Name} no publica {entity.Name}{eventName}. Publica: {string.Join(", ", events.Select(e => e.Name))}.");
         }
 
         return new Subscription
         {
             Service = publisher.Service.Name,
             Entity = entity.Name,
-            Event = name,
-            Properties = name == Subscription.Deleted ? [] : entity.Properties,
+            Event = published.Name,
+            Properties = IntegrationEvents.Payload(publisher, published),
         };
     }
 
@@ -423,8 +618,9 @@ public static class ServicePlanner
         return consumer with { Subscriptions = remaining.Count == 0 ? null : remaining };
     }
 
-    private static bool SameProperties(IReadOnlyList<PropertyDefinition> a, IReadOnlyList<PropertyDefinition> b) =>
-        a.Count == b.Count && a.Zip(b).All(p => p.First == p.Second);
+    private static bool SameProperties(IReadOnlyList<PropertyDefinition>? a, IReadOnlyList<PropertyDefinition>? b) =>
+        a is null || b is null ? a is null && b is null
+            : a.Count == b.Count && a.Zip(b).All(p => p.First with { Fields = null } == p.Second with { Fields = null } && SameProperties(p.First.Fields, p.Second.Fields));
 
     /// <summary>
     /// Rewrites a Program.cs from before Stratum 0.12 so it delegates to StratumWiring.g.cs. The user's own lines must be
@@ -468,7 +664,7 @@ public static class ServicePlanner
                 $"No existe la entidad '{name}'. Entidades: {(definition.Entities.Count == 0 ? "(ninguna)" : string.Join(", ", definition.Entities.Select(e => e.Name)))}.");
     }
 
-    private static void RequireEditable(EntityDefinition entity)
+    internal static void RequireEditable(EntityDefinition entity)
     {
         if (!entity.IsEditable)
         {
@@ -644,6 +840,7 @@ public static class ServicePlanner
         }
 
         // 4. Project files: missing items added, items of what was turned off removed. appsettings: connection strings.
+        var packagesUpgraded = false;
         foreach (var projectFile in projectFiles)
         {
             if (Read(projectFile) is not { } previous)
@@ -662,6 +859,13 @@ public static class ServicePlanner
                 ? ProjectFileMerger.RemoveItems(previous, oldRender, rendered) ?? previous
                 : previous;
             text = ProjectFileMerger.MergeItems(text, rendered) ?? text;
+            if (Path.GetFileName(projectFile) == ServiceUpgrader.PackagesFileName
+                && ProjectFileMerger.AlignStratumVersions(text, StratumInfo.Version) is { } aligned)
+            {
+                text = aligned;
+                packagesUpgraded = true;
+            }
+
             if (text != previous)
             {
                 changes.Add(new FileChange(projectFile, ChangeKind.Merge, text, previous));
@@ -675,12 +879,20 @@ public static class ServicePlanner
             changes.Add(new FileChange(appSettingsDevelopment, ChangeKind.Merge, settingsMerged, settingsPrevious));
         }
 
-        // 5. stratum.json. stratumVersion stays as it was: editing must not silently upgrade the Stratum.* packages.
-        var definition = ServiceGenerator.Serialize(updated with { StratumVersion = current.StratumVersion });
+        // 5. stratum.json. stratumVersion follows the Stratum.* packages: it only changes when they were brought to this
+        //    version above (the generated code goes with its packages; the plan shows Directory.Packages.props).
+        var definition = ServiceGenerator.Serialize(updated with { StratumVersion = packagesUpgraded ? StratumInfo.Version : current.StratumVersion });
         var definitionPrevious = Read(ServiceGenerator.DefinitionFileName);
         if (definitionPrevious is null || !Same(definition, definitionPrevious) || changes.Count > 0)
         {
             changes.Add(new FileChange(ServiceGenerator.DefinitionFileName, ChangeKind.Regenerate, definition, definitionPrevious));
+        }
+
+        // 6. The documentation (docs/), once the service has it: the specification follows the model, and the new
+        //    operations and subscriptions get their user story.
+        if (SpecGenerator.HasDocs(directory))
+        {
+            changes.AddRange(SpecGenerator.Changes(directory, SpecGenerator.ForService(directory, updated)));
         }
 
         var handEdited = changes.Where(c => c.HandEdited).Select(c => c.Path).ToList();
@@ -693,6 +905,7 @@ public static class ServicePlanner
         }
 
         warnings.AddRange(CheckReferences(directory, current, updated));
+        warnings.AddRange(Relations.Warnings(current, updated));
         warnings.AddRange(CheckWiring(directory, service, current.Features));
 
         return new ChangePlan(directory, changes, warnings);

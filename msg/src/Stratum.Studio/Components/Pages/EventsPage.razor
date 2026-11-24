@@ -1,0 +1,123 @@
+@page "/events"
+@implements IDisposable
+@inject StudioState State
+
+<PageTitle>Mapa de eventos · Stratum Studio</PageTitle>
+
+@* A compact, read-only overview of the system's events. Editing happens in the events designer (/designer). *@
+<main class="content wide">
+    <div class="row" style="justify-content: space-between; align-items: flex-start; gap: 16px">
+        <div>
+            <h1>Mapa de eventos</h1>
+            <p class="lead">Qué publica cada servicio y quién lo escucha. Para conectar, desconectar o publicar eventos abre el <b>diseñador</b>: una ventana aparte con los servicios en un lienzo, que lo guarda todo de una vez.</p>
+        </div>
+        <a class="btn btn-primary" href="/designer" target="stratum-designer" style="white-space: nowrap; text-decoration: none"
+           onclick="window.open(this.href, 'stratum-designer', 'popup,width=1440,height=900'); return false;"><Icon Name="events" /> Abrir diseñador</a>
+    </div>
+    @{
+        var routes = State.EventRoutes();
+    }
+    @if (State.Services.Count == 0)
+    {
+        <div class="card stack"><b>No hay servicios en el sistema.</b><span class="hint">Crea uno en <a href="services">Servicios</a>.</span></div>
+    }
+    else
+    {
+        <section class="stack" aria-labelledby="h-services">
+            <h2 class="section" id="h-services">Servicios</h2>
+            <div class="ev-grid">
+                @foreach (var service in State.Services.OrderBy(s => s.Definition.Service.Name, StringComparer.Ordinal))
+                {
+                    var d = service.Definition;
+                    var name = d.Service.Name;
+                    var publishes = IntegrationEvents.Of(d).Count;
+                    var listens = (d.Subscriptions ?? []).Count;
+                    var problems = routes.Count(r => r.Problem is not null && (r.Consumers.Contains(name) || r.Publisher == name));
+                    <div class="ev-mini @(problems > 0 ? "problem" : null)" title="@service.Directory">
+                        <div class="row" style="justify-content: space-between; gap: 6px">
+                            <b>@name</b>
+                            <span class="badge @(d.Messaging is null ? null : "live")">@(d.Messaging?.Broker switch { MessagingSettings.AzureServiceBus => "service bus", null => "sin mensajería", var b => b })</span>
+                        </div>
+                        <span class="hint">publica @publishes · escucha @listens@(problems > 0 ? $" · ⚠ {problems}" : string.Empty)</span>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <section class="stack" aria-labelledby="h-routes">
+            <h2 class="section" id="h-routes">Eventos <small class="hint">(@routes.Count)</small></h2>
+            @if (routes.Count == 0)
+            {
+                <div class="card hint">Ningún servicio publica ni escucha eventos todavía. Ábrelo en el diseñador y arrastra un evento de un servicio a otro.</div>
+            }
+            else
+            {
+                <div class="table">
+                    <div class="tr head" style="@Columns"><span>Evento</span><span>Publica</span><span>Lo escuchan</span><span>Estado</span></div>
+                    @foreach (var route in routes.OrderBy(r => r.Problem is null).ThenBy(r => r.Consumers.Count == 0).ThenBy(r => r.Publisher).ThenBy(r => r.EventClass, StringComparer.Ordinal))
+                    {
+                        <div class="tr" style="@Columns">
+                            <span><span class="mono">@route.EventClass</span><br /><small class="hint mono">@route.Topic</small></span>
+                            <span>@(route.Publisher ?? "—")</span>
+                            <span class="row" style="gap: 4px; flex-wrap: wrap">
+                                @if (route.Consumers.Count == 0)
+                                {
+                                    <span class="hint">nadie todavía</span>
+                                }
+                                @foreach (var consumer in route.Consumers)
+                                {
+                                    <span class="badge">@consumer</span>
+                                }
+                            </span>
+                            @if (route.Problem is { } problem)
+                            {
+                                <span style="color: var(--err)">⚠ @problem</span>
+                            }
+                            else
+                            {
+                                <span class="hint">@(route.Consumers.Count == 0 ? "se publica, sin oyentes" : "✔ llega")</span>
+                            }
+                        </div>
+                    }
+                </div>
+                <span class="hint">Las suscripciones nuevas necesitan regenerar el AppHost en <a href="run">Ejecutar</a>.</span>
+            }
+        </section>
+
+        <section class="stack" aria-labelledby="h-asyncapi">
+            <h2 class="section" id="h-asyncapi">Especificación AsyncAPI</h2>
+            <p class="hint">La documentación de los eventos en el estándar AsyncAPI 3.1: topics, quién publica y quién escucha, y los datos de cada evento. Sirve para AsyncAPI Studio, generadores de clientes o para otros equipos.</p>
+            <div class="row" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+                <button type="button" class="btn btn-primary" @onclick="Export">Guardar asyncapi.yaml</button>
+                <button type="button" class="btn" @onclick="() => showSpec = !showSpec">@(showSpec ? "Ocultar" : "Ver") especificación</button>
+                @if (exported is not null)
+                {
+                    <small class="hint mono">✔ @exported</small>
+                }
+            </div>
+            @if (showSpec)
+            {
+                <CodePanel Tabs="@([new CodePanel.Tab("asyncapi.yaml", "asyncapi.yaml", State.AsyncApiYaml())])" Wide="true" Label="AsyncAPI" />
+            }
+        </section>
+    }
+</main>
+
+@code {
+    private const string Columns = "grid-template-columns: 1.6fr 1fr 1.4fr 1.6fr";
+
+    private bool showSpec;
+    private string? exported;
+
+    private void Export() => exported = State.ExportAsyncApi();
+
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

@@ -1,6 +1,8 @@
 using Stratum.Core;
 using Stratum.Core.Generation;
 
+using static Stratum.Studio.Localization.I18n;
+
 namespace Stratum.Studio.State;
 
 public enum ModelCheck
@@ -59,6 +61,24 @@ public sealed class MigrationAssistant(ProcessRunner runner)
 
     public static string CreateJob(string serviceDirectory) => ServiceCommands.MigrationsJob(serviceDirectory);
 
+    /// <summary>
+    /// "dotnet ef" needs the projects restored (obj/project.assets.json) before it can even read them: a service that
+    /// was never built (just created, just cloned) is restored first. Null when everything is ready.
+    /// </summary>
+    private static async Task<string?> RestoreIfNeededAsync(string serviceDirectory)
+    {
+        var src = Path.Combine(serviceDirectory, "src");
+        var missing = Directory.Exists(src) && Directory.EnumerateFiles(src, "*.csproj", SearchOption.AllDirectories)
+            .Any(project => !File.Exists(Path.Combine(Path.GetDirectoryName(project)!, "obj", "project.assets.json")));
+        if (!missing)
+        {
+            return null;
+        }
+
+        var (exitCode, output) = await ProcessRunner.RunAsync("dotnet", ["restore"], serviceDirectory, TimeSpan.FromMinutes(10)).ConfigureAwait(false);
+        return exitCode == 0 ? null : L("No se pudieron restaurar los paquetes (dotnet restore):", "The packages couldn't be restored (dotnet restore):") + "\n" + Tail(output);
+    }
+
     public static string RemoveJob(string serviceDirectory) => $"ef-remove:{serviceDirectory}";
 
     /// <summary>"dotnet ef migrations has-pending-model-changes" (builds the service, so it takes a while).</summary>
@@ -74,6 +94,13 @@ public sealed class MigrationAssistant(ProcessRunner runner)
         Notify();
 
         var definition = ServicePlanner.Load(serviceDirectory);
+        if (await RestoreIfNeededAsync(serviceDirectory).ConfigureAwait(false) is { } restoreError)
+        {
+            (status.Check, status.CheckOutput) = (ModelCheck.Failed, restoreError);
+            Notify();
+            return;
+        }
+
         var (exitCode, output) = await ProcessRunner.RunAsync(
             "dotnet", ServiceCommands.HasPendingModelChanges(definition), serviceDirectory, TimeSpan.FromMinutes(5)).ConfigureAwait(false);
 
@@ -93,8 +120,14 @@ public sealed class MigrationAssistant(ProcessRunner runner)
         var definition = ServicePlanner.Load(serviceDirectory);
         status.Error = null;
         status.Sql = null;
+        if (await RestoreIfNeededAsync(serviceDirectory).ConfigureAwait(false) is { } restoreError)
+        {
+            status.Error = restoreError;
+            Notify();
+            return;
+        }
 
-        var job = runner.Start(CreateJob(serviceDirectory), $"Migración {name}", serviceDirectory, "dotnet", ServiceCommands.AddMigration(definition, name));
+        var job = runner.Start(CreateJob(serviceDirectory), L($"Migración {name}", $"Migration {name}"), serviceDirectory, "dotnet", ServiceCommands.AddMigration(definition, name));
         await job.Completion.ConfigureAwait(false);
         if (job.Status != JobStatus.Succeeded)
         {
@@ -145,6 +178,14 @@ public sealed class MigrationAssistant(ProcessRunner runner)
         status.SqlLoading = true;
         Notify();
 
+        if (await RestoreIfNeededAsync(serviceDirectory).ConfigureAwait(false) is { } restoreError)
+        {
+            status.SqlLoading = false;
+            status.Error = restoreError;
+            Notify();
+            return;
+        }
+
         var from = migrations.Count > 1 ? migrations[^2] : "0";
         var file = Path.Combine(Path.GetTempPath(), $"msg-{Guid.NewGuid():N}.sql");
         var (exitCode, output) = await ProcessRunner.RunAsync(
@@ -158,7 +199,7 @@ public sealed class MigrationAssistant(ProcessRunner runner)
             File.Delete(file);
         }
 
-        status.Error = exitCode == 0 ? null : "No se pudo generar el SQL:\n" + Tail(output);
+        status.Error = exitCode == 0 ? null : L("No se pudo generar el SQL:", "The SQL couldn't be generated:") + "\n" + Tail(output);
         Notify();
     }
 
@@ -174,7 +215,14 @@ public sealed class MigrationAssistant(ProcessRunner runner)
         }
 
         var removed = migrations[^1];
-        var job = runner.Start(RemoveJob(serviceDirectory), $"Deshacer {removed}", serviceDirectory, "dotnet", ServiceCommands.RemoveMigration(definition));
+        if (await RestoreIfNeededAsync(serviceDirectory).ConfigureAwait(false) is { } restoreError)
+        {
+            status.Error = restoreError;
+            Notify();
+            return;
+        }
+
+        var job = runner.Start(RemoveJob(serviceDirectory), L($"Deshacer {removed}", $"Undo {removed}"), serviceDirectory, "dotnet", ServiceCommands.RemoveMigration(definition));
         await job.Completion.ConfigureAwait(false);
 
         if (job.Status == JobStatus.Succeeded && !MigrationReviewer.List(serviceDirectory, definition).Contains(removed))

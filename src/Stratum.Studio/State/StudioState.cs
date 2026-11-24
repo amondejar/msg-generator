@@ -3,6 +3,8 @@ using Stratum.Core.Generation;
 using Stratum.Core.Model;
 using Stratum.Core.Templating;
 
+using static Stratum.Studio.Localization.I18n;
+
 namespace Stratum.Studio.State;
 
 public sealed class StudioOptions
@@ -23,9 +25,23 @@ public sealed record WorkspaceService(string Directory, ServiceDefinition Defini
 /// State of one Studio session (one browser tab). Everything is computed with Stratum.Core:
 /// the preview and the review screen show exactly what the CLI would generate.
 /// </summary>
-public sealed class StudioState(StudioOptions options)
+public sealed class StudioState(StudioOptions options) : IDisposable
 {
     public event Action? Changed;
+
+    /// <summary>A stratum.json changed outside the Studio (CLI, MCP, editor): raised off the UI thread, debounced.</summary>
+    public event Action? ExternalChange;
+
+    private FileSystemWatcher? watcher;
+    private Timer? debounce;
+    private DateTimeOffset lastOwnWrite = DateTimeOffset.MinValue;
+    private bool opening;
+
+    /// <summary>The open draft has edits not applied yet (an external change then asks before reloading).</summary>
+    public bool Dirty { get; private set; }
+
+    /// <summary>The open service changed on disk while it had edits: the layout offers to reload it.</summary>
+    public bool ExternalChangePending { get; private set; }
 
     public string Workspace { get; } = Path.GetFullPath(options.Workspace);
 
@@ -49,6 +65,27 @@ public sealed class StudioState(StudioOptions options)
 
     public void Initialize()
     {
+        if (watcher is null && Directory.Exists(Workspace))
+        {
+            try
+            {
+                watcher = new FileSystemWatcher(Workspace, ServiceGenerator.DefinitionFileName)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                };
+                watcher.Changed += OnDiskChange;
+                watcher.Created += OnDiskChange;
+                watcher.Deleted += OnDiskChange;
+                watcher.Renamed += OnDiskChange;
+                watcher.EnableRaisingEvents = true;
+            }
+            catch (Exception e) when (e is IOException or ArgumentException or PlatformNotSupportedException)
+            {
+                watcher = null;   // no live reload; the rest works
+            }
+        }
+
         if (Services.Count == 0)
         {
             Reload();
@@ -59,18 +96,152 @@ public sealed class StudioState(StudioOptions options)
         }
     }
 
+    /// <summary>The broker most services of the system use, else Kafka.</summary>
+    public string SystemBroker() =>
+        EventMapEditor.SystemBroker(Services.Select(s => s.Definition)) ?? MessagingSettings.Kafka;
+
+    /// <summary>
+    /// Messaging follows usage: publishing or listening to an event turns it on (with the system's broker) instead of
+    /// asking the user to go to another page first.
+    /// </summary>
+    public void EnsureBroker(ServiceDraft draft, string reason)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        if (draft.Broker is null)
+        {
+            draft.Broker = SystemBroker();
+            draft.BrokerNote = L($"Mensajería activada con {draft.Broker} para {reason}. Puedes cambiar el broker en Mensajería.", $"Messaging turned on with {draft.Broker} to {reason}. You can change the broker in Messaging.");
+        }
+    }
+
+    private void OnDiskChange(object sender, FileSystemEventArgs e)
+    {
+        if (DateTimeOffset.UtcNow - lastOwnWrite < TimeSpan.FromSeconds(3))
+        {
+            return;   // our own Apply
+        }
+
+        debounce?.Dispose();
+        debounce = new Timer(_ => ExternalChange?.Invoke(), null, TimeSpan.FromMilliseconds(600), Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// Call on the UI thread after <see cref="ExternalChange"/>: refreshes the services and the open service (right
+    /// away if it has no edits; otherwise it waits for <see cref="ReloadCurrent"/>).
+    /// </summary>
+    public void HandleExternalChange()
+    {
+        Reload();
+        if (Current is { IsNew: false } open)
+        {
+            var refreshed = Services.FirstOrDefault(x => FullPath(x.Directory) == FullPath(open.Directory));
+            if (refreshed is null)
+            {
+                Current = null;
+            }
+            else if (Dirty)
+            {
+                ExternalChangePending = true;
+            }
+            else
+            {
+                Open(refreshed);
+            }
+        }
+
+        Changed?.Invoke();
+    }
+
+    /// <summary>Discards the edits of the open service and loads what is on disk.</summary>
+    public void ReloadCurrent()
+    {
+        Reload();
+        ExternalChangePending = false;
+        if (Current is { } open && Services.FirstOrDefault(x => FullPath(x.Directory) == FullPath(open.Directory)) is { } refreshed)
+        {
+            Open(refreshed);
+        }
+
+        Changed?.Invoke();
+    }
+
+    public void Dispose()
+    {
+        watcher?.Dispose();
+        debounce?.Dispose();
+    }
+
     public void Reload()
     {
         Services = [.. Discover()];
         Team = TeamTemplates.Find(Workspace);   // picks up templates edited while the Studio is open
     }
 
+    /// <summary>Services whose Stratum.* packages aren't at this Stratum's version, with the versions they use.</summary>
+    public IReadOnlyList<(WorkspaceService Service, IReadOnlyList<string> Versions)> PackagesBehind() =>
+        [.. Services.Select(s => (Service: s, Versions: ServiceUpgrader.PackageVersions(FullPath(s.Directory))))
+            .Where(x => x.Versions.Count > 0 && x.Versions.Any(v => v != StratumInfo.Version))];
+
+    /// <summary>
+    /// Brings the Stratum.* packages of these services to this version (same as "stratum upgrade"): only
+    /// Directory.Packages.props and stratumVersion change; the code doesn't.
+    /// </summary>
+    public IReadOnlyList<string> UpgradePackages(IEnumerable<WorkspaceService> services)
+    {
+        var lines = new List<string>();
+        lastOwnWrite = DateTimeOffset.UtcNow;
+        foreach (var service in services)
+        {
+            try
+            {
+                var result = ServiceUpgrader.Upgrade(FullPath(service.Directory), StratumInfo.Version);
+                lines.Add($"✔ {service.Definition.Service.Name}: Stratum {result.FromVersion} → {result.ToVersion} ({result.Packages.Count} {L("paquete(s)", "package(s)")}" +
+                          (result.Regenerated > 0 ? L($", {result.Regenerated} archivo(s) generados de nuevo)", $", {result.Regenerated} generated file(s) rewritten)") : ")"));
+                lines.AddRange(result.Hints.Select(h => "ℹ " + h));
+            }
+            catch (Exception e) when (e is StratumException or IOException or UnauthorizedAccessException)
+            {
+                lines.Add($"✘ {service.Definition.Service.Name}: {e.Message}");
+            }
+        }
+
+        Reload();
+        if (!Dirty && Current is { IsNew: false } current && Services.FirstOrDefault(s => s.Directory == current.Directory) is { } reopened)
+        {
+            Open(reopened);
+        }
+
+        Changed?.Invoke();
+        return lines;
+    }
+
+    /// <summary>A new entity as stratum.json keeps it: 1–N and "restrict" are the defaults, so they aren't written.</summary>
+    private static EntityDefinition Normalized(EntityDefinition entity) => entity with
+    {
+        Properties = [.. entity.Properties.Select(p => p.References is null ? p : p with
+        {
+            Unique = p.Unique == true ? true : null,
+            OnDelete = p.OnDelete is null or DeleteBehaviors.Restrict ? null : p.OnDelete,
+        })],
+    };
+
     public void Open(WorkspaceService service)
     {
         Current = ServiceDraft.ForExisting(service.Directory, service.Definition);
         Current.UsesWiring = ServicePlanner.UsesStratumWiring(Path.Combine(Workspace, service.Directory), service.Definition);
         SelectedEntity = Current.Entities.FirstOrDefault()?.Name;
-        Recompute();
+        ExternalChangePending = false;
+        opening = true;
+        try
+        {
+            Recompute();
+        }
+        finally
+        {
+            opening = false;
+        }
+
+        Dirty = false;
     }
 
     /// <param name="location">Folder where the service folder is created. Null: the workspace. Elsewhere, the
@@ -81,13 +252,26 @@ public sealed class StudioState(StudioOptions options)
         var parent = string.IsNullOrWhiteSpace(location) ? Workspace : Path.GetFullPath(Path.Combine(Workspace, location.Trim()));
         if (Directory.Exists(parent) && Directory.EnumerateFiles(parent, "*.csproj").Any())
         {
-            throw new StratumException($"'{parent}' es la carpeta de un proyecto .NET: elige la carpeta donde quieres el servicio.");
+            throw new StratumException(L($"'{parent}' es la carpeta de un proyecto .NET: elige la carpeta donde quieres el servicio.", $"'{parent}' is the folder of a .NET project: choose the folder where you want the service."));
+        }
+
+        for (var folder = new DirectoryInfo(parent); folder is not null; folder = folder.Parent)
+        {
+            if (ServiceGenerator.FindDefinition(folder.FullName) is not null)
+            {
+                throw new StratumException(L($"'{folder.FullName}' ya es un servicio: no se crean servicios dentro de otro. Elige una carpeta del sistema que no sea un servicio.", $"'{folder.FullName}' is already a service: services aren't created inside another. Choose a folder of the system that isn't a service."));
+            }
+
+            if (string.Equals(folder.FullName.TrimEnd(Path.DirectorySeparatorChar), Workspace.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
         }
 
         var full = Path.Combine(parent, ServiceName.ToKebab(normalized));
         if (Directory.Exists(full))
         {
-            throw new StratumException($"Ya existe la carpeta '{full}'.");
+            throw new StratumException(L($"Ya existe la carpeta '{full}'.", $"The folder '{full}' already exists."));
         }
 
         // Inside the workspace: relative ("orders"); elsewhere: the full path.
@@ -115,13 +299,13 @@ public sealed class StudioState(StudioOptions options)
             }
             catch (HttpRequestException ex)
             {
-                throw new StratumException($"No se pudo descargar {source}: {ex.Message}", ex);
+                throw new StratumException(L($"No se pudo descargar {source}: {ex.Message}", $"Couldn't download {source}: {ex.Message}"), ex);
             }
         }
         else
         {
             var path = Path.GetFullPath(Path.Combine(Workspace, source));
-            text = File.Exists(path) ? File.ReadAllText(path) : throw new StratumException($"No existe el archivo '{path}'.");
+            text = File.Exists(path) ? File.ReadAllText(path) : throw new StratumException(L($"No existe el archivo '{path}'.", $"The file '{path}' doesn't exist."));
         }
 
         var prepared = Stratum.Core.Import.OpenApiImporter.Prepare(Stratum.Core.Import.OpenApiImporter.Load(text), null, null, architecture);
@@ -129,6 +313,8 @@ public sealed class StudioState(StudioOptions options)
         var draft = Current!;
         draft.Architecture = prepared.Architecture;
         draft.Entities.AddRange(prepared.Entities.Select(e => EntityDraft.From(e, isNew: true)));
+        draft.Enums.AddRange(prepared.Enums.Select(e => new EnumDraft { Name = e.Name, Values = string.Join(", ", e.Values) }));
+        draft.Types.AddRange(prepared.Types.Select(t => new TypeDraft { Name = t.Name, Properties = PropertyTypes.Spec(t.Properties) }));
         SelectedEntity = prepared.Entities.FirstOrDefault()?.Name;
         Recompute();
         return prepared.Report();
@@ -136,7 +322,7 @@ public sealed class StudioState(StudioOptions options)
 
     public EntityDraft AddEntity()
     {
-        var draft = Current ?? throw new InvalidOperationException("No hay servicio abierto.");
+        var draft = Current ?? throw new InvalidOperationException(L("No hay servicio abierto.", "No service is open."));
         var name = "Entity";
         for (var i = 2; draft.Entities.Any(e => e.Name == name); i++)
         {
@@ -187,6 +373,11 @@ public sealed class StudioState(StudioOptions options)
     /// <summary>Recalculates preview and plan after any edit.</summary>
     public void Recompute()
     {
+        if (!opening)
+        {
+            Dirty = true;
+        }
+
         Plan = null;
         Preview = [];
         var errors = new List<string>();
@@ -223,15 +414,42 @@ public sealed class StudioState(StudioOptions options)
         }
 
         var count = Plan.Changes.Count;
+        lastOwnWrite = DateTimeOffset.UtcNow;
         Plan.Apply();
         var full = FullPath(Current.Directory);
         WorkspaceFile.Add(Workspace, full);   // no-op inside the workspace
         Reload();
-        LastMessage = $"✔ {count} archivo(s) escritos en {full}";
+        LastMessage = L($"✔ {count} archivo(s) escritos en {full}", $"✔ {count} file(s) written in {full}");
 
         if (Services.FirstOrDefault(s => FullPath(s.Directory) == full) is { } service)
         {
             Open(service);
+        }
+    }
+
+    /// <summary>
+    /// A file of the open service by name ("Order.Ship.cs", "OrderShippedHandler.cs"), wherever Stratum put it; null
+    /// when it doesn't exist yet (not applied).
+    /// </summary>
+    public string? FindServiceFile(string fileName)
+    {
+        if (Current is not { IsNew: false } open)
+        {
+            return null;
+        }
+
+        var root = FullPath(open.Directory);
+        try
+        {
+            return Directory.Exists(root)
+                ? Directory.EnumerateFiles(root, fileName, SearchOption.AllDirectories)
+                    .FirstOrDefault(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                                         && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 
@@ -246,7 +464,7 @@ public sealed class StudioState(StudioOptions options)
         var full = Path.GetFullPath(Path.Combine(Workspace, directory.Trim()));
         if (!WorkspaceFile.Add(Workspace, full) && !Services.Any(s => FullPath(s.Directory) == full))
         {
-            throw new StratumException($"'{full}' no se ha añadido: ¿tiene src/<Servicio>.Api?");
+            throw new StratumException(L($"'{full}' no se ha añadido: ¿tiene src/<Servicio>.Api?", $"'{full}' wasn't added: does it have src/<Service>.Api?"));
         }
 
         Reload();
@@ -268,9 +486,7 @@ public sealed class StudioState(StudioOptions options)
         var own = draft.IsNew ? null : FullPath(draft.Directory);
         return [.. Services
             .Where(s => FullPath(s.Directory) != own && s.Definition.Messaging is not null)
-            .SelectMany(s => s.Definition.Entities
-                .Where(e => e.IsEditable && e.Publishes)
-                .SelectMany(e => Subscription.Events.Select(name => ServicePlanner.SubscriptionTo(s.Definition, e.Name, name))))
+            .SelectMany(s => IntegrationEvents.Of(s.Definition).Select(e => ServicePlanner.SubscriptionTo(s.Definition, e.Entity.Name, e.Name)))
             .OrderBy(s => s.Topic, StringComparer.Ordinal)];
     }
 
@@ -302,7 +518,7 @@ public sealed class StudioState(StudioOptions options)
         SelectedEntity = null;
         Plan = null;
         Reload();
-        LastMessage = $"✔ {plan.ServiceName} eliminado. " + string.Join(" ", done);
+        LastMessage = L($"✔ {plan.ServiceName} eliminado. ", $"✔ {plan.ServiceName} deleted. ") + string.Join(" ", done);
         Changed?.Invoke();
         return done;
     }
@@ -376,6 +592,44 @@ public sealed class StudioState(StudioOptions options)
             }
             : ServicePlanner.Load(Path.Combine(Workspace, draft.Directory));
 
+        // Enumerations first: entity properties may use them.
+        try
+        {
+            var enums = draft.ToEnums();
+            foreach (var renamed in draft.Enums.Where(e => e.OriginalName is not null && !string.Equals(e.OriginalName, e.Name.Trim(), StringComparison.Ordinal)))
+            {
+                if (ModelRules.EnumUsages(definition, renamed.OriginalName!) is { Count: > 0 } usages)
+                {
+                    errors.Add(L($"No se puede renombrar {renamed.OriginalName}: lo usan {string.Join(", ", usages)}.", $"{renamed.OriginalName} can't be renamed: it's used by {string.Join(", ", usages)}."));
+                }
+            }
+
+            definition = definition with { Enums = enums };
+        }
+        catch (StratumException ex)
+        {
+            errors.Add(ex.Message);
+        }
+
+        // Item types next: they may use enumerations, and entity lists use them.
+        try
+        {
+            var types = draft.ToTypes(definition.EnumNames);
+            foreach (var renamed in draft.Types.Where(t => t.OriginalName is not null && !string.Equals(t.OriginalName, t.Name.Trim(), StringComparison.Ordinal)))
+            {
+                if (ModelRules.TypeUsages(definition, renamed.OriginalName!) is { Count: > 0 } usages)
+                {
+                    errors.Add(L($"No se puede renombrar {renamed.OriginalName}: lo usan {string.Join(", ", usages)}.", $"{renamed.OriginalName} can't be renamed: it's used by {string.Join(", ", usages)}."));
+                }
+            }
+
+            definition = definition with { Types = types };
+        }
+        catch (StratumException ex)
+        {
+            errors.Add(ex.Message);
+        }
+
         if (!draft.IsNew && draft.Features != definition.Features)
         {
             definition = draft.ConvertWiring
@@ -390,12 +644,17 @@ public sealed class StudioState(StudioOptions options)
                 : ServicePlanner.SetMessaging(Path.Combine(Workspace, draft.Directory), definition, draft.Broker);
         }
 
+        if (draft.Broker is null && draft.Entities.Where(e => !e.Removed).SelectMany(e => e.Operations).Any(o => o.Publish))
+        {
+            errors.Add(L("Hay operaciones marcadas como Publica y el servicio no tiene mensajería: elige un broker en Mensajería o desmárcalas.", "Some operations are marked Publish and the service has no messaging: choose a broker in Messaging or untick them."));
+        }
+
         var subscriptions = draft.Subscriptions.Count == 0 ? null : draft.Subscriptions.ToList();
         if (!(subscriptions ?? []).SequenceEqual(definition.Subscriptions ?? []))
         {
             if (subscriptions is not null && definition.Messaging is null)
             {
-                errors.Add("Para escuchar eventos de otros servicios, activa la mensajería (Servicio → Mensajería).");
+                errors.Add(L("Para escuchar eventos de otros servicios, activa la mensajería (Servicio → Mensajería).", "To listen to other services' events, turn messaging on (Service → Messaging)."));
             }
             else
             {
@@ -428,9 +687,9 @@ public sealed class StudioState(StudioOptions options)
                     .Where(p => p.IsRenamed)
                     .Select(p => new PropertyRename { Entity = entity.Name, From = p.OriginalName!, To = p.Name.Trim() })
                     .ToList();
-                definition = ServicePlanner.UpdateEntity(definition, entity.Name, entity.ToDefinition().Properties, renames);
-                definition = ServicePlanner.SetOperations(definition, entity.Name, entity.ToOperations());
-                if (entity.PublishEvents != ServicePlanner.FindEntity(definition, entity.Name).Publishes)
+                definition = ServicePlanner.UpdateEntity(definition, entity.Name, entity.ToDefinition().Properties, renames, keepRelationOptions: false);
+                definition = ServicePlanner.SetOperations(definition, entity.Name, entity.ToOperations(definition.EnumNames, definition.TypeNames));
+                if (entity.PublishEvents != ServicePlanner.FindEntity(definition, entity.Name).Publishes && (definition.Messaging is not null || !entity.PublishEvents))
                 {
                     definition = ServicePlanner.SetPublishEvents(definition, entity.Name, entity.PublishEvents);
                 }
@@ -446,16 +705,16 @@ public sealed class StudioState(StudioOptions options)
         {
             try
             {
-                var accepted = ServicePlanner.ValidateEntity(entity.ToDefinition(), definition) with { Operations = entity.ToOperations() };
+                var accepted = ServicePlanner.ValidateEntity(Normalized(entity.ToDefinition()), definition) with { Operations = entity.ToOperations(definition.EnumNames, definition.TypeNames) };
                 definition = definition with { Entities = [.. definition.Entities, accepted] };
-                if (entity.PublishEvents)
+                if (entity.PublishEvents && definition.Messaging is not null)
                 {
                     definition = ServicePlanner.SetPublishEvents(definition, accepted.Name, publish: true);
                 }
             }
             catch (StratumException ex)
             {
-                errors.Add($"{(string.IsNullOrWhiteSpace(entity.Name) ? "Entidad sin nombre" : entity.Name)}: {ex.Message}");
+                errors.Add($"{(string.IsNullOrWhiteSpace(entity.Name) ? L("Entidad sin nombre", "Unnamed entity") : entity.Name)}: {ex.Message}");
             }
         }
 
@@ -482,7 +741,7 @@ public sealed class StudioState(StudioOptions options)
     }
 
     private GenerationOptions PackageOptions() =>
-        new() { LocalPackageSource = options.PackageSource, Team = Team };
+        new() { LocalPackageSource = options.PackageSource ?? StratumPackages.LocalSource(), Team = Team };
 
     private IEnumerable<WorkspaceService> Discover()
     {

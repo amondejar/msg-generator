@@ -24,6 +24,17 @@ internal sealed class McpTools(string root, string? packageSource)
         new("event_map", "Mapa de eventos",
             "Quién publica y quién escucha cada evento de integración, con avisos (contratos desactualizados, brokers distintos, eventos que nadie publica).",
             [], [], ReadOnly: true),
+        new("get_specification", "Especificación e historias de usuario",
+            "Especificación funcional en Markdown (en español) generada del modelo: entidades con sus reglas, API con respuestas, ejemplos, operaciones, eventos que publica y escucha, y dónde va cada cosa. Sin \"service\", la del sistema (servicios y eventos entre ellos, con diagrama). Con \"story\" (p. ej. \"ORD-06\") devuelve esa historia de usuario: criterios de aceptación en Gherkin y reglas por completar. Úsala antes de implementar reglas o handlers.",
+            new JsonObject
+            {
+                ["service"] = Service("Servicio: su nombre o su carpeta. Vacío: el sistema."),
+                ["story"] = Text("Id de una historia (\"ORD-06\") para leerla entera."),
+            }, [], ReadOnly: true),
+        new("generate_docs", "Generar la documentación",
+            "Crea o actualiza docs/ del servicio (o de todos y docs/sistema.g.md si no se indica servicio): especificacion.g.md (de Stratum), contexto.md e historias de usuario (del usuario: se crean una vez, nunca se sobrescriben). Desde entonces cada cambio del modelo mantiene la especificación al día. " + PlanNote,
+            new JsonObject { ["service"] = Service("Servicio: su nombre o su carpeta. Vacío: todo el sistema."), ["apply"] = Apply() },
+            [], ReadOnly: false),
         new("get_asyncapi", "AsyncAPI del sistema",
             "Especificación AsyncAPI 3.1 (YAML) de los eventos del sistema. Con \"save\": true la guarda en asyncapi.yaml en la carpeta del sistema.",
             new JsonObject { ["save"] = Bool("Guardar asyncapi.yaml en la carpeta del sistema.") }, [], ReadOnly: false),
@@ -79,6 +90,73 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["deleteOwnFiles"] = Bool("Borrar también los archivos del usuario de esa entidad (partial classes, endpoints propios)."),
                 ["apply"] = Apply(),
             }, ["service", "name"], ReadOnly: false, Destructive: true),
+        new("add_relation", "Relacionar dos entidades",
+            "Añade a una entidad una referencia a otra del mismo servicio (clave ajena): 1–N por defecto (muchos Order para un Customer) o 1–1 con oneToOne (índice único). onDelete decide qué pasa al borrar el destino: restrict (por defecto, no deja borrarlo mientras se use), cascade (borra los dependientes) o setNull (solo con optional). El listado gana el filtro ?<propiedad>=. Necesita una migración después. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["entity"] = Text("Entidad que lleva la clave ajena, p. ej. Order."),
+                ["target"] = Text("Entidad a la que apunta, p. ej. Customer."),
+                ["property"] = Text("Nombre de la propiedad (por defecto <Destino>Id, p. ej. CustomerId)."),
+                ["oneToOne"] = Bool("1–1: como mucho una entidad por cada destino."),
+                ["optional"] = Bool("La referencia admite null."),
+                ["onDelete"] = Enum("Qué pasa al borrar el destino.", "restrict", "cascade", "setNull"),
+                ["apply"] = Apply(),
+            }, ["service", "entity", "target"], ReadOnly: false),
+        new("update_relation", "Cambiar una relación",
+            "Cambia una referencia existente: 1–1 o 1–N, opcional u obligatoria, y qué pasa al borrar el destino. Lo que no se indique se queda como está. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["entity"] = Text("Entidad."),
+                ["property"] = Text("Propiedad de la referencia, p. ej. CustomerId."),
+                ["oneToOne"] = Bool("true: 1–1; false: 1–N."),
+                ["optional"] = Bool("true: admite null; false: obligatoria."),
+                ["onDelete"] = Enum("Qué pasa al borrar el destino.", "restrict", "cascade", "setNull"),
+                ["apply"] = Apply(),
+            }, ["service", "entity", "property"], ReadOnly: false),
+        new("add_composition", "Componer un tipo de elemento en una entidad",
+            "Mete un tipo de elemento dentro de una entidad: un solo elemento (columnas en la misma tabla, OwnsOne), opcional o no, o una lista (tabla propia, OwnsMany). El tipo se crea antes con set_type. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["entity"] = Text("Entidad, p. ej. Customer."),
+                ["property"] = Text("Propiedad, p. ej. Address."),
+                ["type"] = Text("Tipo de elemento, p. ej. PostalAddress."),
+                ["list"] = Bool("Una lista de elementos en lugar de uno."),
+                ["optional"] = Bool("Un solo elemento que puede faltar (no vale para listas)."),
+                ["apply"] = Apply(),
+            }, ["service", "entity", "property", "type"], ReadOnly: false),
+        new("remove_relation", "Quitar una relación o composición",
+            "Quita de una entidad una referencia o un elemento compuesto (sus columnas o su tabla se borran en la migración). " + PlanNote,
+            new JsonObject { ["service"] = Service(), ["entity"] = Text("Entidad."), ["property"] = Text("Propiedad."), ["apply"] = Apply() },
+            ["service", "entity", "property"], ReadOnly: false, Destructive: true),
+        new("set_enum", "Crear o cambiar un enumerado",
+            "Crea un enumerado del servicio (p. ej. OrderStatus: Draft, Confirmed, Shipped) o sustituye sus valores. Se usa como tipo de propiedad (\"Status:OrderStatus\"); se guarda como texto. Quitar un valor que ya esté en la base de datos rompe esas filas: el plan lo avisa. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["name"] = Text("Nombre en PascalCase, p. ej. OrderStatus."),
+                ["values"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string" }, ["minItems"] = 1, ["description"] = "Valores en PascalCase, en orden (el primero es el de por defecto)." },
+                ["apply"] = Apply(),
+            }, ["service", "name", "values"], ReadOnly: false),
+        new("remove_enum", "Eliminar un enumerado",
+            "Elimina un enumerado que no use ninguna propiedad. " + PlanNote,
+            new JsonObject { ["service"] = Service(), ["name"] = Text("Enumerado."), ["apply"] = Apply() },
+            ["service", "name"], ReadOnly: false, Destructive: true),
+        new("set_type", "Crear o cambiar un tipo de elemento",
+            "Crea un tipo de elemento para listas de objetos (p. ej. OrderItem: ProductId:guid, Quantity:int, UnitPrice:decimal) o sustituye sus propiedades (la lista completa). Se usa en una entidad como lista: \"Items:OrderItem[]\"; cada elemento se guarda en una tabla propia y la lista se reemplaza entera en el PUT. Sus propiedades: tipos básicos y enumerados (sin referencias ni listas). " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["name"] = Text("Nombre en PascalCase, p. ej. OrderItem."),
+                ["properties"] = Text("Propiedades \"Nombre:tipo, ...\" (tipos básicos o enumerados; ? para opcional). Lista completa: las que falten se eliminan."),
+                ["apply"] = Apply(),
+            }, ["service", "name", "properties"], ReadOnly: false),
+        new("remove_type", "Eliminar un tipo de elemento",
+            "Elimina un tipo de elemento que no use ninguna lista. " + PlanNote,
+            new JsonObject { ["service"] = Service(), ["name"] = Text("Tipo."), ["apply"] = Apply() },
+            ["service", "name"], ReadOnly: false, Destructive: true),
         new("add_operation", "Añadir una operación al agregado",
             "Operación de negocio de un agregado (solo clean-ddd), p. ej. Order.Confirm o Order.Cancel(Reason): genera el evento de dominio, el comando, su handler y POST /<entidades>/{id}/<operación>, y un archivo del usuario <Entidad>.<Operación>.cs donde va la regla. " + PlanNote,
             new JsonObject
@@ -88,8 +166,19 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["name"] = Text("Verbo en PascalCase: Confirm, Cancel, Ship..."),
                 ["parameters"] = Text("Datos que necesita, con el formato de properties (\"Reason:string, Amount:decimal?\"). Vacío si no necesita."),
                 ["event"] = Text("Nombre del evento de dominio. Por defecto: entidad + pasado (OrderConfirmed)."),
+                ["publish"] = Bool("Publicarla también como evento de integración propio para otros servicios (OrderShipped en orders.order-shipped), con los datos de la entidad y los parámetros. Requiere mensajería."),
                 ["apply"] = Apply(),
             }, ["service", "entity", "name"], ReadOnly: false),
+        new("publish_operation", "Publicar una operación para otros servicios",
+            "Publica (o deja de publicar) una operación del agregado como evento de integración propio (OrderShipped), que otros servicios pueden escuchar con subscribe. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["entity"] = Text("Entidad (agregado)."),
+                ["name"] = Text("Operación."),
+                ["publish"] = Bool("true para publicarla, false para dejar de publicarla."),
+                ["apply"] = Apply(),
+            }, ["service", "entity", "name", "publish"], ReadOnly: false),
         new("remove_operation", "Quitar una operación del agregado",
             "Quita una operación (su comando, endpoint y evento generados). El archivo del usuario con la regla se conserva. " + PlanNote,
             new JsonObject
@@ -201,6 +290,8 @@ internal sealed class McpTools(string root, string? packageSource)
             "get_service" => new(File.ReadAllText(ServiceGenerator.FindDefinition(Folder(args, "service"))!)),
             "event_map" => EventMapOutcome(),
             "get_asyncapi" => AsyncApi(args["save"]?.GetValue<bool>() ?? false),
+            "get_specification" => Specification(args),
+            "generate_docs" => Cli(apply, ["spec", "--path", string.IsNullOrWhiteSpace(args["service"]?.GetValue<string>()) ? root : Folder(args, "service")]),
             "create_service" => CreateService(args, apply),
             "add_entity" => Cli(apply, ["add", "entity", Str(args, "name"), "--props", Str(args, "properties"), "--path", Folder(args, "service"),
                 .. Optional(args, "plural", "--plural"), .. Optional(args, "database", "--db")]),
@@ -209,8 +300,23 @@ internal sealed class McpTools(string root, string? packageSource)
             "remove_entity" => Cli(apply, ["entity", "remove", Str(args, "name"), "--path", Folder(args, "service"),
                 .. Flag(args, "deleteOwnFiles", "--delete-own-files")]),
             "import_openapi" => ImportOpenApi(args, apply),
+            "add_relation" => Cli(apply, ["relation", "add", Optional(args, "property", "") is [_, var property] ? $"{Str(args, "entity")}.{property}" : Str(args, "entity"),
+                Str(args, "target"), "--path", Folder(args, "service"), .. Flag(args, "oneToOne", "--one-to-one"), .. Flag(args, "optional", "--optional"),
+                .. Optional(args, "onDelete", "--on-delete")]),
+            "update_relation" => Cli(apply, ["relation", "update", $"{Str(args, "entity")}.{Str(args, "property")}", "--path", Folder(args, "service"),
+                .. Choice(args, "oneToOne", "--one-to-one", "--one-to-many"), .. Choice(args, "optional", "--optional", "--required"),
+                .. Optional(args, "onDelete", "--on-delete")]),
+            "add_composition" => Cli(apply, ["relation", "compose", $"{Str(args, "entity")}.{Str(args, "property")}", Str(args, "type"),
+                "--path", Folder(args, "service"), .. Flag(args, "list", "--list"), .. Flag(args, "optional", "--optional")]),
+            "remove_relation" => Cli(apply, ["relation", "remove", $"{Str(args, "entity")}.{Str(args, "property")}", "--path", Folder(args, "service")]),
+            "set_enum" => SetEnum(args, apply),
+            "remove_enum" => Cli(apply, ["enum", "remove", Str(args, "name"), "--path", Folder(args, "service")]),
+            "set_type" => SetType(args, apply),
+            "remove_type" => Cli(apply, ["type", "remove", Str(args, "name"), "--path", Folder(args, "service")]),
             "add_operation" => Cli(apply, ["entity", "operation", "add", Str(args, "entity"), Str(args, "name"), "--path", Folder(args, "service"),
-                .. Optional(args, "parameters", "--params"), .. Optional(args, "event", "--event")]),
+                .. Optional(args, "parameters", "--params"), .. Optional(args, "event", "--event"), .. Flag(args, "publish", "--publish")]),
+            "publish_operation" => Cli(apply, ["entity", "operation", "publish", Str(args, "entity"), Str(args, "name"), "--path", Folder(args, "service"),
+                .. (Bool(args, "publish") ? Array.Empty<string>() : ["--off"])]),
             "remove_operation" => Cli(apply, ["entity", "operation", "remove", Str(args, "entity"), Str(args, "name"), "--path", Folder(args, "service")]),
             "set_features" => SetFeatures(args, apply),
             "set_messaging" => Str(args, "broker") == "off"
@@ -226,6 +332,45 @@ internal sealed class McpTools(string root, string? packageSource)
             "remove_service" => RemoveService(args, apply),
             _ => throw new StratumException($"Herramienta desconocida '{name}'."),
         };
+    }
+
+    /// <summary>The specification (generated now from the model, so it's never stale) or one user story.</summary>
+    private ToolOutcome Specification(JsonObject args)
+    {
+        if (string.IsNullOrWhiteSpace(args["service"]?.GetValue<string>()))
+        {
+            var services = AspireGenerator.Discover(root);
+            return new(SpecGenerator.ForSystem(AspireGenerator.DefaultSystemName(root), [.. services.Select(s => (s.RelativeDirectory, s.Definition))]).Content);
+        }
+
+        var directory = Folder(args, "service");
+        var files = SpecGenerator.ForService(directory, ServicePlanner.Load(directory));
+        if (args["story"]?.GetValue<string>() is { Length: > 0 } story)
+        {
+            var file = files.FirstOrDefault(f => Path.GetFileName(f.Path).StartsWith(story.Trim() + "-", StringComparison.OrdinalIgnoreCase))
+                ?? throw new StratumException($"No hay ninguna historia {story}. Las del servicio: {string.Join(", ", files.Where(f => f.Path.StartsWith(SpecGenerator.StoriesFolder, StringComparison.Ordinal)).Select(f => Path.GetFileNameWithoutExtension(f.Path)))}.");
+            var onDisk = Path.Combine(directory, file.Path);
+            return new(File.Exists(onDisk) ? File.ReadAllText(onDisk) : file.Content + "\n\n(Aún no está en disco: generate_docs la crea.)");
+        }
+
+        var text = new StringBuilder(files[0].Content);
+        text.AppendLine();
+        text.AppendLine("## Historias de usuario");
+        text.AppendLine();
+        foreach (var file in files.Where(f => f.Path.StartsWith(SpecGenerator.StoriesFolder, StringComparison.Ordinal)))
+        {
+            var exists = File.Exists(Path.Combine(directory, file.Path));
+            text.AppendLine($"- {file.Path}{(exists ? string.Empty : " (aún no está en disco)")}");
+        }
+
+        var context = Path.Combine(directory, SpecGenerator.ContextPath);
+        if (File.Exists(context))
+        {
+            text.AppendLine();
+            text.AppendLine(File.ReadAllText(context));
+        }
+
+        return new(text.ToString());
     }
 
     private ToolOutcome ListServices()
@@ -262,10 +407,20 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["features"] = new JsonArray([.. features.Select(f => (JsonNode)f)]),
                 ["entities"] = new JsonArray([.. entities.Cast<JsonNode>()]),
                 ["subscribesTo"] = new JsonArray([.. subscriptions.Select(s => (JsonNode)s)]),
+                ["enums"] = new JsonArray([.. (d.Enums ?? []).Select(e => (JsonNode)$"{e.Name}: {string.Join(", ", e.Values)}")]),
+                ["types"] = new JsonArray([.. (d.Types ?? []).Select(t => (JsonNode)$"{t.Name}: {PropertyTypes.Spec(t.Properties)}")]),
             });
 
             text.AppendLine($"{d.Service.Name} ({d.Architecture}{(d.Persistence is { } p ? ", " + p.Provider : "")}{(d.Messaging is { } m ? ", " + m.Broker : "")}) en {service.RelativeDirectory}");
             text.AppendLine($"  features: {string.Join(", ", features)}");
+            foreach (var e in d.Enums ?? [])
+            {
+                text.AppendLine($"  enum {e.Name}: {string.Join(", ", e.Values)}");
+            }
+            foreach (var t in d.Types ?? [])
+            {
+                text.AppendLine($"  tipo {t.Name}: {PropertyTypes.Spec(t.Properties)}");
+            }
             foreach (var e in d.Entities)
             {
                 text.AppendLine($"  {e.Name}: {PropertyTypes.Spec(e.Properties)}{(e.Publishes ? "  [publica eventos]" : "")}{(e.IsEditable ? "" : "  [anterior a 0.10: entity convert]")}");
@@ -343,6 +498,23 @@ internal sealed class McpTools(string root, string? packageSource)
         }
 
         return outcome;
+    }
+
+    private ToolOutcome SetEnum(JsonObject args, bool apply)
+    {
+        var folder = Folder(args, "service");
+        var name = Str(args, "name");
+        var values = string.Join(", ", (args["values"] as JsonArray ?? []).Select(v => v!.GetValue<string>()));
+        var exists = ServicePlanner.Load(folder).EnumNames.Contains(name, StringComparer.OrdinalIgnoreCase);
+        return Cli(apply, ["enum", exists ? "update" : "add", name, "--values", values, "--path", folder]);
+    }
+
+    private ToolOutcome SetType(JsonObject args, bool apply)
+    {
+        var folder = Folder(args, "service");
+        var name = Str(args, "name");
+        var exists = ServicePlanner.Load(folder).TypeNames.Contains(name, StringComparer.OrdinalIgnoreCase);
+        return Cli(apply, ["type", exists ? "update" : "add", name, "--props", Str(args, "properties"), "--path", folder]);
     }
 
     private ToolOutcome ImportOpenApi(JsonObject args, bool apply)
@@ -504,6 +676,9 @@ internal sealed class McpTools(string root, string? packageSource)
     private static string[] Optional(JsonObject args, string key, string option) =>
         args[key]?.GetValue<string>() is { Length: > 0 } value ? [option, value] : [];
 
+    private static string[] Choice(JsonObject args, string key, string whenTrue, string whenFalse) =>
+        args[key]?.GetValue<bool>() switch { true => [whenTrue], false => [whenFalse], null => [] };
+
     private static string[] Flag(JsonObject args, string key, string option) =>
         args[key]?.GetValue<bool>() == true ? [option] : [];
 
@@ -520,7 +695,7 @@ internal sealed class McpTools(string root, string? packageSource)
 
     private static JsonObject Service(string description = "Servicio: su nombre (\"Orders\") o su carpeta.") => Text(description);
 
-    private static JsonObject Props() => Text("Propiedades \"Nombre:tipo, ...\" (string, int, long, decimal, bool, guid, date, datetime; ? para opcional). Para una referencia a otra entidad del mismo servicio (clave ajena, se comprueba que existe) usa su nombre como tipo: \"CustomerId:Customer\" o \"ParentId:Category?\". Id, CreatedAt y UpdatedAt ya existen.");
+    private static JsonObject Props() => Text("Propiedades \"Nombre:tipo, ...\" (string, int, long, decimal, bool, guid, date, datetime; ? para opcional). Para una referencia a otra entidad del mismo servicio (clave ajena, se comprueba que existe) usa su nombre como tipo: \"CustomerId:Customer\" o \"ParentId:Category?\". Para un enumerado del servicio (set_enum), su nombre: \"Status:OrderStatus\". Listas con []: \"Tags:string[]\", \"Statuses:OrderStatus[]\" o de objetos con un tipo de elemento (set_type): \"Items:OrderItem[]\". Id, CreatedAt y UpdatedAt ya existen.");
 
     private static JsonObject Enum(string description, params string[] values) => new()
     {

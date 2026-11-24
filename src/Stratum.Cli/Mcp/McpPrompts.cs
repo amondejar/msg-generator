@@ -30,6 +30,25 @@ internal static class McpPrompts
         Especificación:
         """;
 
+    private const string ImplementStory = """
+        Implementa esta historia de usuario de un servicio generado con Stratum:
+
+        1. Lee la historia con get_specification (service y story) y la especificación del servicio
+           (get_specification con service), y docs/contexto.md si existe.
+        2. Si la historia tiene huecos «por completar» (rol, beneficio, reglas de negocio, qué hace un handler),
+           pregúntamelos antes de escribir código; no los inventes. Cuando te los dé, complétalos en el archivo de la
+           historia (es del usuario) y añade un escenario Gherkin por regla.
+        3. Si falta algo en el modelo (una propiedad, una operación, un evento, una suscripción), cámbialo con las
+           herramientas de Stratum (enséñame el plan y aplica cuando lo apruebe), nunca editando archivos *.g.cs.
+        4. Escribe el código solo donde dice la historia («Para implementarla»): la regla de la operación, el
+           EnsureInvariants del agregado o el handler del evento. Una regla incumplida lanza DomainException (422).
+        5. Añade un test por escenario nuevo en tests/ (archivos o clases nuevas; no edites los *.g.cs) y ejecuta
+           dotnet build y dotnet test en la carpeta del servicio.
+        6. Marca las reglas hechas en la historia y cambia su estado a «implementada».
+
+        Historia:
+        """;
+
     private const string ReviewSystem = """
         Revisa el sistema de microservicios con las herramientas de Stratum (list_services, event_map, get_asyncapi)
         y dime, por orden de importancia:
@@ -57,12 +76,26 @@ internal static class McpPrompts
         },
         new JsonObject
         {
+            ["name"] = "implement_story",
+            ["title"] = "Implementar una historia de usuario",
+            ["description"] = "Lee una historia de docs/historias (criterios en Gherkin), pregunta lo que falte, cambia el modelo si hace falta e implementa las reglas con sus tests.",
+            ["arguments"] = new JsonArray(
+                new JsonObject { ["name"] = "service", ["description"] = "Servicio, p. ej. Orders.", ["required"] = true },
+                new JsonObject { ["name"] = "story", ["description"] = "Id de la historia, p. ej. ORD-06.", ["required"] = true }),
+        },
+        new JsonObject
+        {
             ["name"] = "review_system",
             ["title"] = "Revisar el sistema",
             ["description"] = "Busca problemas en servicios, eventos y features y propone cómo resolverlos, sin cambiar nada.",
             ["arguments"] = new JsonArray(),
         },
     ];
+
+    private static string Argument(JsonObject parameters, string name) =>
+        parameters["arguments"]?[name]?.GetValue<string>() is { Length: > 0 } value
+            ? value
+            : throw new McpProtocolException(-32602, $"Missing argument: {name}");
 
     public static JsonObject Get(JsonObject parameters)
     {
@@ -72,6 +105,7 @@ internal static class McpPrompts
             "design_from_spec" => DesignFromSpec + "\n" + (parameters["arguments"]?["spec"]?.GetValue<string>() is { Length: > 0 } spec
                 ? spec
                 : throw new McpProtocolException(-32602, "Missing argument: spec")),
+            "implement_story" => ImplementStory + "\n" + Argument(parameters, "service") + " · " + Argument(parameters, "story"),
             "review_system" => ReviewSystem,
             _ => throw new McpProtocolException(-32602, $"Unknown prompt: {name}"),
         };

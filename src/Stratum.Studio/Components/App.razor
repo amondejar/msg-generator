@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="@I18n.Current">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -92,6 +92,16 @@
         .icon-btn:hover { color: var(--err); background: #2A1C22; }
 
         .feature { display: flex; gap: 14px; align-items: flex-start; }
+        .content.wide { max-width: none; }
+        .link-btn { background: none; border: 0; padding: 0; color: var(--link); font: inherit; font-size: 13px; cursor: pointer; text-decoration: underline; }
+        button.card:disabled { cursor: default; }
+        button.card:disabled:not(.selected) { opacity: .4; }
+        .tab-group { flex-basis: 100%; margin: 6px 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+        .tab-group:first-child { margin-top: 0; }
+        .pending { border-color: var(--accent); }
+        .ev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+        .ev-mini { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); font-size: 13px; }
+        .ev-mini.problem { border-color: var(--err); }
         .switch { flex: 0 0 auto; position: relative; width: 44px; height: 26px; margin-top: 1px; border-radius: 999px; border: 0; padding: 0; background: var(--line-2); cursor: pointer; }
         .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 999px; background: #F4F5F8; transition: left .12s; }
         .switch[aria-pressed="true"] { background: var(--accent); }
@@ -137,15 +147,67 @@
         .stats .card b { font-size: 28px; display: block; }
 
         .stratum { padding: 12px 14px; border-radius: 10px; border: 1px solid; }
+        .msg { padding: 10px 14px; border: 1px solid var(--line-2); border-radius: 10px; font-size: 13.5px; line-height: 1.5; }
         .msg.err { border-color: #7F1D1D; background: #2A1416; color: #FECACA; }
         .msg.ok { border-color: #065F46; background: #0E241C; color: #A7F3D0; }
         .msg.warn { border-color: #78350F; background: #261C0B; color: #FDE68A; white-space: pre-wrap; }
         .stratum ul { margin: 0; padding-left: 18px; }
+        .modal-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px 16px; background: rgba(4, 6, 10, .62); }
+        .modal-backdrop + .modal-backdrop { background: rgba(4, 6, 10, .35); padding-top: 12vh; }
+        .modal { position: relative; display: flex; flex-direction: column; max-height: 84vh; border: 1px solid var(--line-2); border-radius: 14px; background: var(--bar); box-shadow: 0 24px 60px rgba(0, 0, 0, .55); }
+        .modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 12px 12px 20px; border-bottom: 1px solid var(--line); cursor: move; user-select: none; }
+        .modal-head h2 { margin: 0; font-size: 17px; }
+        .modal-body { padding: 16px 20px; overflow-y: auto; gap: 14px; }
+        .modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+        .modal-foot .hint { flex: 1; }
+        .rows { display: flex; flex-direction: column; gap: 6px; }
+        .rows .r { display: grid; gap: 6px; align-items: center; }
+        .rows .r.head { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+        .rows input[type=text], .rows select { min-height: 36px; font-size: 13px; }
+        .rows .icon-btn { width: 32px; height: 32px; }
+        .sig { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-family: var(--mono); font-size: 13px; color: var(--text-2); overflow-x: auto; white-space: nowrap; }
+        .icon-btn.edit:hover { color: var(--accent); background: var(--accent-bg); }
+        .modal .icon-btn:disabled { opacity: .3; cursor: default; }
+        .row-actions { display: flex; gap: 2px; justify-content: flex-end; }
+        .row-actions .icon-btn { width: 32px; height: 32px; font-size: 15px; }
+        .link-row { background: none; border: 0; padding: 0; color: var(--text); font: inherit; cursor: pointer; text-align: left; }
+        .link-row:hover { color: var(--accent); }
     </style>
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>
     <Routes @rendermode="InteractiveServer" />
     <script src="_framework/blazor.web.js"></script>
+    <script>
+        // Floating dialogs (Components/Shared/Modal.razor): drag by the title bar, Esc closes the topmost one, and the
+        // first field gets the focus when one opens. Plain DOM, no round trips to the server.
+        (() => {
+            document.addEventListener("pointerdown", (e) => {
+                const head = e.target.closest(".modal-head[data-drag]");
+                if (!head || e.button !== 0 || e.target.closest("button, input, select, a")) return;
+                const box = head.closest(".modal");
+                const start = { x: e.clientX, y: e.clientY, dx: +(box.dataset.dx || 0), dy: +(box.dataset.dy || 0) };
+                const move = (ev) => {
+                    const dx = start.dx + ev.clientX - start.x, dy = start.dy + ev.clientY - start.y;
+                    box.dataset.dx = dx; box.dataset.dy = dy;
+                    box.style.transform = `translate(${dx}px, ${dy}px)`;
+                };
+                const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+                window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+                e.preventDefault();
+            });
+            document.addEventListener("keydown", (e) => {
+                if (e.key !== "Escape") return;
+                const dialogs = document.querySelectorAll(".modal");
+                dialogs[dialogs.length - 1]?.querySelector("[data-close]")?.click();
+            });
+            new MutationObserver((records) => {
+                for (const r of records) for (const n of r.addedNodes) {
+                    const dialog = n.nodeType === 1 && (n.matches(".modal-backdrop") ? n : n.querySelector?.(".modal-backdrop"));
+                    if (dialog) setTimeout(() => dialog.querySelector("input:not([disabled]), select:not([disabled])")?.focus(), 0);
+                }
+            }).observe(document.body, { childList: true, subtree: true });
+        })();
+    </script>
 </body>
 </html>

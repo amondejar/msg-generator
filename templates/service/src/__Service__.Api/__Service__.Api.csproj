@@ -2,6 +2,9 @@
 
   <PropertyGroup>
     <RootNamespace>{{Service}}.Api</RootNamespace>
+    <!-- The <summary> comments of endpoints and DTOs go into the OpenAPI document. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -57,6 +60,13 @@
   <ItemGroup>
     <ProjectReference Include="..\{{Service}}.Application\{{Service}}.Application.csproj" />
     <ProjectReference Include="..\{{Service}}.Infrastructure\{{Service}}.Infrastructure.csproj" />
+  </ItemGroup>
+  <!-- @stratum:end -->
+
+  <!-- @stratum:if hasModelTypes -->
+  <ItemGroup>
+    <!-- Enums and item types of stratum.json, usable everywhere without a using. -->
+    <Using Include="{{EnumNamespace}}" />
   </ItemGroup>
   <!-- @stratum:end -->
 

@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Implements the Domain and Application contracts: EF Core persistence, repositories, external services. -->
+
+  <PropertyGroup>
+    <RootNamespace>{{Service}}.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- @stratum:if postgres -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if sqlserver -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if persistence -->
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+    <!-- @stratum:if messaging -->
+    <PackageReference Include="Stratum.Messaging.EntityFrameworkCore" />
+    <!-- @stratum:end -->
+    <!-- @stratum:end -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\{{Service}}.Application\{{Service}}.Application.csproj" />
+  </ItemGroup>
+
+  <!-- @stratum:if hasModelTypes -->
+  <ItemGroup>
+    <!-- Enums and item types of stratum.json, usable everywhere without a using. -->
+    <Using Include="{{EnumNamespace}}" />
+  </ItemGroup>
+  <!-- @stratum:end -->
+
+</Project>

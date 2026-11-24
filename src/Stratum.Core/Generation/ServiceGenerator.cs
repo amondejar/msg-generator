@@ -111,7 +111,8 @@ public static class ServiceGenerator
                     ["Entity"] = subscription.Entity,
                     ["EventClass"] = subscription.EventClass,
                     ["Topic"] = subscription.Topic,
-                    ["EventParameters"] = string.Join(", ", ["Guid Id", .. subscription.Properties.Select(p => $"{PropertyTypes.ToCSharp(p)} {p.Name}")]),
+                    ["EventParameters"] = string.Join(", ", ["Guid Id", .. subscription.Properties.Select(p => $"{PropertyTypes.ToCSharp(p, subscription.EventClass)} {p.Name}")]),
+                    ["EventBody"] = EntityCodeGen.ContractBody(subscription.Properties),
                 };
                 RenderTemplateSet(SubscriptionTemplateName, subscriptionTokens, isEnabled, result, team);
             }
@@ -153,7 +154,7 @@ public static class ServiceGenerator
         TeamTemplates? team)
     {
         var entityTokens = new Dictionary<string, string>(tokens, StringComparer.Ordinal);
-        foreach (var (key, value) in EntityCodeGen.Tokens(entity, definition.Features))
+        foreach (var (key, value) in EntityCodeGen.Tokens(entity, definition.Features, definition))
         {
             entityTokens[key] = value;
         }
@@ -164,18 +165,24 @@ public static class ServiceGenerator
         }
 
         var hasReferences = entity.References.Any();
-        var referenced = ModelRules.Dependents(definition, entity.Name, includeSelf: true).Count > 0;
+        var referenced = ModelRules.Dependents(definition, entity.Name, includeSelf: true, blockingOnly: true).Count > 0;
         var operations = definition.Architecture == Architectures.CleanDdd ? entity.Operations ?? [] : [];
 
         bool EntityConditions(string feature) => feature switch
         {
             "hasRequiredString" => EntityCodeGen.HasRequiredString(entity),
             "publishEvents" => entity.Publishes && definition.Messaging is not null,
+            "publishCreated" => entity.PublishesEvent(Subscription.Created) && definition.Messaging is not null,
+            "publishUpdated" => entity.PublishesEvent(Subscription.Updated) && definition.Messaging is not null,
+            "publishDeleted" => entity.PublishesEvent(Subscription.Deleted) && definition.Messaging is not null,
+            "integrationEvents" => IntegrationEvents.Of(definition, entity).Count > 0,
             "hasReferences" => hasReferences,
             "hasRequiredReferences" => entity.References.Any(p => !p.Nullable),
             "referenced" => referenced,
+            "hasUnique" => entity.References.Any(p => p.IsOneToOne),
             "relations" => hasReferences || referenced,
             "hasOperations" => operations.Count > 0,
+            "hasLists" => entity.Properties.Any(p => p.IsList),
             _ => isEnabled(feature),
         };
 
@@ -238,7 +245,7 @@ public static class ServiceGenerator
         ];
     }
 
-    private static string LocalNuGetConfig(string source)
+    internal static string LocalNuGetConfig(string source)
     {
         var path = System.Security.SecurityElement.Escape(Path.GetFullPath(source));
         return $"""
@@ -327,11 +334,14 @@ public static class ServiceGenerator
             "kafka" => definition.Messaging?.Broker == MessagingSettings.Kafka,
             "azureServiceBus" => definition.Messaging?.Broker == MessagingSettings.AzureServiceBus,
             "brokerConnection" => definition.Messaging?.Broker is MessagingSettings.Kafka or MessagingSettings.AzureServiceBus,
-            "publishesEvents" => definition.Messaging is not null && definition.Entities.Any(e => e.IsEditable && e.Publishes),
+            "publishesEvents" => IntegrationEvents.Of(definition).Count > 0,
+            "hasEnums" => definition.Enums is { Count: > 0 },
+            "hasTypes" => definition.Types is { Count: > 0 },
+            "hasModelTypes" => definition.Enums is { Count: > 0 } || definition.Types is { Count: > 0 },
             _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new StratumException(
                 $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
-                "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents " +
-                "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, hasOperations en plantillas de entidad)."),
+                "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents, hasEnums, hasTypes, hasModelTypes " +
+                "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, hasOperations, hasLists, integrationEvents, publishCreated/Updated/Deleted en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };
     }

@@ -1,0 +1,80 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
+
+namespace Stratum.ServiceDefaults;
+
+/// <summary>
+/// What every Stratum service does the same way. A generated Program.cs calls, in this order:
+/// <c>builder.AddStratumServiceDefaults()</c>, <c>app.UseStratumServiceDefaults()</c>, <c>app.MapStratumDefaultEndpoints()</c>.
+/// </summary>
+public static class StratumServiceDefaultsExtensions
+{
+    public const string HealthPath = "/health";
+    public const string LivenessPath = HealthPath + "/live";
+    public const string ReadinessPath = HealthPath + "/ready";
+
+    /// <summary>
+    /// Registers health checks and ProblemDetails. Add dependency checks (database, broker...)
+    /// with <c>builder.Services.AddHealthChecks().AddXxx()</c>: without the <see cref="HealthTags.Live"/> tag
+    /// they only affect readiness, which is what you want.
+    /// </summary>
+    public static TBuilder AddStratumServiceDefaults<TBuilder>(this TBuilder builder)
+        where TBuilder : IHostApplicationBuilder
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.Services.AddStratumProblemDetails();
+        builder.Services.AddExceptionHandler<DomainExceptionHandler>();
+        builder.Services.AddDistributedMemoryCache();   // Idempotency-Key responses; Redis replaces it to share them
+        builder.Services.AddOptions<IdempotencyOptions>().BindConfiguration(IdempotencyOptions.SectionName);
+        builder.Services.AddHealthChecks()
+            .AddCheck("self", () => HealthCheckResult.Healthy(), [HealthTags.Live]);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Correlation id → exception handler (unhandled exceptions as ProblemDetails) → status code pages
+    /// (empty 4xx/5xx as ProblemDetails) → Idempotency-Key. Call it first, before authentication and endpoints.
+    /// </summary>
+    public static WebApplication UseStratumServiceDefaults(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        app.UseMiddleware<CorrelationIdMiddleware>();
+        app.UseExceptionHandler();
+        app.UseStatusCodePages();
+        app.UseMiddleware<IdempotencyMiddleware>();   // only acts on requests with an Idempotency-Key header
+
+        return app;
+    }
+
+    /// <summary>
+    /// Maps <c>/health/live</c> (only checks tagged <see cref="HealthTags.Live"/>) and <c>/health/ready</c> (all checks).
+    /// Both allow anonymous access so Kubernetes probes work when authentication is enabled.
+    /// </summary>
+    public static WebApplication MapStratumDefaultEndpoints(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        var health = app.MapGroup(HealthPath);
+        health.MapHealthChecks("/live", new HealthCheckOptions
+        {
+            Predicate = check => check.Tags.Contains(HealthTags.Live),
+        });
+        health.MapHealthChecks("/ready");
+        health.AllowAnonymous();
+
+        return app;
+    }
+}
+
+public static class HealthTags
+{
+    /// <summary>Checks with this tag are part of liveness. Use it only for "the process itself is broken" checks.</summary>
+    public const string Live = "live";
+}

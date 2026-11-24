@@ -2,27 +2,27 @@
 @implements IDisposable
 @inject StudioState State
 
-<PageTitle>Datos y migraciones · Stratum Studio</PageTitle>
+<PageTitle>@L("Datos y migraciones", "Data and migrations") · Stratum Studio</PageTitle>
 
 @if (State.Current is not { } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
 }
 else
 {
     <main class="content">
         <div>
-            <h1>Datos y migraciones</h1>
-            <p class="lead">El proveedor de base de datos del servicio y sus migraciones de EF Core: Stratum avisa de lo que borra datos y conserva los renombrados.</p>
+            <h1>@L("Datos y migraciones", "Data and migrations")</h1>
+            <p class="lead">@L("El proveedor de base de datos del servicio y sus migraciones de EF Core: Stratum avisa de lo que borra datos y conserva los renombrados.", "The service's database provider and its EF Core migrations: Stratum warns about what deletes data and keeps renames.")</p>
         </div>
 
         <section class="stack" aria-labelledby="h-db">
-            <h2 class="section" id="h-db">Base de datos</h2>
-            <div class="seg" role="group" aria-label="Proveedor de base de datos">
+            <h2 class="section" id="h-db">@L("Base de datos", "Database")</h2>
+            <div class="seg" role="group" aria-label="@L("Proveedor de base de datos", "Database provider")">
                 <button type="button" aria-pressed="@(draft.Provider == PersistenceSettings.Postgres ? "true" : "false")" disabled="@draft.ProviderLocked" @onclick="() => SetProvider(PersistenceSettings.Postgres)">PostgreSQL</button>
                 <button type="button" aria-pressed="@(draft.Provider == PersistenceSettings.SqlServer ? "true" : "false")" disabled="@draft.ProviderLocked" @onclick="() => SetProvider(PersistenceSettings.SqlServer)">SQL Server</button>
             </div>
-            <span class="hint">@(draft.ProviderLocked ? "Fijada: el servicio ya tiene entidades en esta base de datos." : "Se fija con la primera entidad. Los tests usan SQLite en memoria, así que no necesitan Docker.")</span>
+            <span class="hint">@(draft.ProviderLocked ? L("Fijada: el servicio ya tiene entidades en esta base de datos.", "Fixed: the service already has entities in this database.") : L("Se fija con la primera entidad. Los tests usan SQLite en memoria, así que no necesitan Docker.", "It's set with the first entity. Tests use in-memory SQLite, so they don't need Docker."))</span>
         </section>
 
         @if (!draft.IsNew && draft.ProviderLocked)
@@ -32,8 +32,8 @@ else
         else
         {
             <div class="card stack">
-                <b>Sin migraciones todavía</b>
-                <span class="hint">@(draft.IsNew ? "Crea el servicio (Revisar y aplicar) y añade una entidad: aquí podrás crear y revisar sus migraciones." : "Añade la primera entidad en Entidades: fija la base de datos y podrás crear la migración inicial.")</span>
+                <b>@L("Sin migraciones todavía", "No migrations yet")</b>
+                <span class="hint">@(draft.IsNew ? L("Crea el servicio (Revisar y aplicar) y añade una entidad: aquí podrás crear y revisar sus migraciones.", "Create the service (Review and apply) and add an entity: here you'll be able to create and review its migrations.") : L("Añade la primera entidad en Entidades: fija la base de datos y podrás crear la migración inicial.", "Add the first entity in Entities: it sets the database and you'll be able to create the initial migration."))</span>
             </div>
         }
 

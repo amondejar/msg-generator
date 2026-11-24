@@ -22,11 +22,23 @@ public static partial class {{Entity}}Endpoints
 
         var group = api.MapGroup("/{{entities-kebab}}").WithTags("{{Entities}}");
 
-        group.MapGet(string.Empty, List).WithName("List{{Entities}}");
-        group.MapGet("/{id:guid}", Get).WithName("Get{{Entity}}");
-        group.MapPost(string.Empty, Create).WithName("Create{{Entity}}");
-        group.MapPut("/{id:guid}", Update).WithName("Update{{Entity}}");
-        group.MapDelete("/{id:guid}", Delete).WithName("Delete{{Entity}}");
+        group.MapGet(string.Empty, List).WithName("List{{Entities}}")
+            .WithSummary("List {{Entities}}")
+            .WithDescription("Pages of {{Entities}}, oldest first (page from 1, pageSize up to 100).");
+        group.MapGet("/{id:guid}", Get).WithName("Get{{Entity}}")
+            .WithSummary("Get a {{Entity}}")
+            .WithDescription("Returns the {{Entity}} with that id, or 404.");
+        group.MapPost(string.Empty, Create).WithName("Create{{Entity}}")
+            .WithSummary("Create a {{Entity}}")
+            .WithDescription("Creates a {{Entity}}: 201 with its Location, or 400 with the validation errors.")
+            .ProducesValidationProblem();
+        group.MapPut("/{id:guid}", Update).WithName("Update{{Entity}}")
+            .WithSummary("Replace a {{Entity}}")
+            .WithDescription("Replaces all the data of the {{Entity}} (lists included): 204, 400 or 404.")
+            .ProducesValidationProblem();
+        group.MapDelete("/{id:guid}", Delete).WithName("Delete{{Entity}}")
+            .WithSummary("Delete a {{Entity}}")
+            .WithDescription("Deletes the {{Entity}}: 204, or 404 when it doesn't exist.");
 
         MapOperationEndpoints(group);
         MapCustomEndpoints(group);
@@ -41,11 +53,11 @@ public static partial class {{Entity}}Endpoints
     private static async Task<Ok<PagedResponse<{{Entity}}Response>>> List(
         IQueryHandler<List{{Entities}}, PagedResult<{{Entity}}Dto>> handler,
         int? page,
-        int? pageSize,
+        int? pageSize,{{ListFilterParameterLines}}
         CancellationToken cancellationToken)
     {
         var (p, size) = PagedResponse<{{Entity}}Response>.Normalize(page, pageSize);
-        var result = await handler.HandleAsync(new List{{Entities}}(p, size), cancellationToken);
+        var result = await handler.HandleAsync(new List{{Entities}}(p, size{{ListFilterArguments}}), cancellationToken);
 
         return TypedResults.Ok(new PagedResponse<{{Entity}}Response>(
             [.. result.Items.Select({{Entity}}Response.From)], result.Page, result.PageSize, result.Total));

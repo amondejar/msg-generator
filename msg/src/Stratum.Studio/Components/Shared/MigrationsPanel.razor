@@ -1,0 +1,245 @@
+@* Guided EF Core migrations of an existing service: model check, create + review (renames, data loss), SQL, undo. *@
+@implements IDisposable
+@inject StudioState State
+@inject ProcessRunner Runner
+@inject Toolchain Tools
+@inject MigrationAssistant Assistant
+
+<section class="stack" id="migrations" aria-labelledby="h-migrations">
+    <h2 class="section" id="h-migrations">Migraciones</h2>
+    <div class="card stack">
+        @{
+            var definition = ServicePlanner.Load(ServiceDirectory);
+            var migrations = ServiceCommands.Migrations(ServiceDirectory, definition);
+            var status = Assistant.Get(ServiceDirectory);
+            var creating = Runner.IsRunning(MigrationAssistant.CreateJob(ServiceDirectory));
+            var removing = Runner.IsRunning(MigrationAssistant.RemoveJob(ServiceDirectory));
+            var busy = creating || removing;
+            var latest = migrations.Count > 0 ? migrations[^1] : null;
+            var review = latest is null ? null
+                : status.Review is { } r && r.Name == latest ? r
+                : SafeReview(definition, latest);
+        }
+        <p style="margin: 0">
+            @if (latest is null)
+            {
+                <span>Aún no hay migraciones. Crea la primera para que la base de datos tenga el esquema de tus entidades.</span>
+            }
+            else
+            {
+                <span>@migrations.Count migración(es) en <span class="mono">@ServiceCommands.MigrationsProject(definition)/Migrations</span>. Última: <b class="mono">@latest</b>.</span>
+            }
+            <span class="hint"> Al ejecutar con Aspire se aplican solas al arrancar: revisa los avisos antes.</span>
+        </p>
+
+        @if (efAvailable == false)
+        {
+            <div class="msg warn">
+                Para trabajar con migraciones hace falta la herramienta <span class="mono">dotnet-ef</span>.
+                <div class="row" style="margin-top: 8px">
+                    <button type="button" class="btn" disabled="@Runner.IsRunning(ServiceCommands.InstallEfJob)" @onclick="InstallEf">Instalar dotnet-ef</button>
+                    <button type="button" class="btn" @onclick="Recheck">Volver a comprobar</button>
+                </div>
+            </div>
+            <JobOutput Key="@ServiceCommands.InstallEfJob" Lines="6" />
+        }
+        else
+        {
+            @* 1. Does the model have changes without a migration? *@
+            <div class="row" style="align-items: center; gap: 10px">
+                @switch (status.Check)
+                {
+                    case ModelCheck.Checking:
+                        <span class="hint">Compilando y comparando el modelo con la última migración…</span>
+                        break;
+                    case ModelCheck.UpToDate:
+                        <span style="color: var(--ok)">✔ La base de datos está al día con tus entidades.</span>
+                        break;
+                    case ModelCheck.Pending:
+                        <span style="color: var(--warn)"><b>Hay cambios en las entidades sin migración.</b> Crea una para llevarlos a la base de datos.</span>
+                        break;
+                    case ModelCheck.Failed:
+                        <span style="color: var(--err)">No se pudo comprobar: el servicio no compila o falla al arrancar el diseño de EF.</span>
+                        break;
+                    default:
+                        <span class="hint">¿Tienen tus entidades cambios sin migración?</span>
+                        break;
+                }
+                <button type="button" class="btn" disabled="@(status.Check == ModelCheck.Checking || busy)" @onclick="Check">Comprobar</button>
+            </div>
+            @if (status.Check == ModelCheck.Failed && status.CheckOutput is { } checkOutput)
+            {
+                <pre class="code" style="max-height: 180px; overflow: auto; margin: 0">@checkOutput</pre>
+            }
+
+            @if (definition.PendingRenames is { Count: > 0 } renames)
+            {
+                <div class="msg" role="status">
+                    <b>@renames.Count renombrado(s) pendiente(s):</b>
+                    <span class="mono">@string.Join(", ", renames.Select(r => $"{r.Entity}.{r.From} → {r.To}"))</span>.
+                    La migración que crees aquí los convertirá en <span class="mono">RenameColumn</span> para conservar los datos.
+                    <span class="hint">Si ya la creaste con <span class="mono">dotnet ef</span>, corrígela:</span>
+                    <button type="button" class="btn" style="margin-left: 6px" disabled="@(busy || latest is null)" @onclick="ReviewLatest">Corregir la última migración</button>
+                </div>
+            }
+
+            @* 2. Create *@
+            <div class="row" style="align-items: flex-end">
+                <label class="field" style="flex: 0 1 280px">
+                    Nombre de la migración
+                    <input type="text" @bind="name" @bind:event="oninput" placeholder="@ServiceCommands.SuggestMigrationName(migrations, definition)" />
+                </label>
+                <button type="button" class="btn btn-primary" disabled="@(busy || efAvailable is null || !ServiceCommands.IsValidMigrationName(EffectiveName(migrations, definition)))"
+                        @onclick="() => Create(EffectiveName(migrations, definition))">
+                    @(creating ? "Creando…" : "Crear y revisar migración")
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(name) && !ServiceCommands.IsValidMigrationName(name))
+            {
+                <span class="hint" style="color: var(--err)">Solo letras, números y _, empezando por letra.</span>
+            }
+            <JobOutput Key="@MigrationAssistant.CreateJob(ServiceDirectory)" Lines="8" />
+
+            @if (status.Error is { } error)
+            {
+                <div class="msg err" role="alert" style="white-space: pre-wrap">@error</div>
+            }
+
+            @* 3. Review of the newest migration *@
+            @if (review is not null)
+            {
+                <div class="stack" style="gap: 8px; border-top: 1px solid var(--line); padding-top: 12px">
+                    <b>Revisión de <span class="mono">@review.Name</span></b>
+                    @if (review.Findings.Count == 0)
+                    {
+                        <span style="color: var(--ok)">✔ No borra datos ni cambia columnas existentes.</span>
+                    }
+                    <ul style="margin: 0; padding-left: 0; list-style: none" class="stack">
+                        @foreach (var finding in review.Findings.OrderByDescending(f => f.Level))
+                        {
+                            <li style="color: @Color(finding.Level)">
+                                <b>@Label(finding.Level)</b> @finding.Message
+                            </li>
+                        }
+                    </ul>
+                    @if (review.DeletesData)
+                    {
+                        <div class="msg err" role="alert">
+                            <b>Esta migración borra datos.</b> Si no es lo que quieres, deshazla antes de ejecutar el sistema
+                            (con Aspire se aplicaría al arrancar). Para un renombrado, vuelve a Entidades y cambia el nombre en su fila en lugar de borrar y crear.
+                        </div>
+                    }
+                    <div class="row" style="gap: 8px">
+                        <button type="button" class="btn" disabled="@(busy || status.SqlLoading)" @onclick="LoadSql">
+                            @(status.SqlLoading ? "Generando SQL…" : status.SqlFor == review.Name && status.Sql is not null ? "Actualizar SQL" : "Ver SQL")
+                        </button>
+                        @if (!confirmRemove)
+                        {
+                            <button type="button" class="btn" style="color: var(--err)" disabled="@busy" @onclick="() => confirmRemove = true">Deshacer esta migración</button>
+                        }
+                        else
+                        {
+                            <span class="hint">Solo si no se ha aplicado aún a ninguna base de datos.</span>
+                            <button type="button" class="btn" style="color: var(--err)" disabled="@busy" @onclick="Remove">@(removing ? "Deshaciendo…" : "Sí, deshacer " + review.Name)</button>
+                            <button type="button" class="btn" @onclick="() => confirmRemove = false">Cancelar</button>
+                        }
+                    </div>
+                    @if (status.SqlFor == review.Name && status.Sql is { } sql)
+                    {
+                        <pre class="code" style="max-height: 320px; overflow: auto; margin: 0">@sql</pre>
+                    }
+                    <JobOutput Key="@MigrationAssistant.RemoveJob(ServiceDirectory)" Lines="6" />
+                </div>
+            }
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string ServiceDirectory { get; set; } = string.Empty;
+
+    private string name = string.Empty;
+    private bool? efAvailable;
+    private bool confirmRemove;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Runner.Changed += OnChanged;
+        Assistant.Changed += OnChanged;
+        await Task.CompletedTask;
+    }
+
+    // "dotnet ef --version" takes seconds the first time: checked after the first render, not while prerendering.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            efAvailable = await Tools.HasDotnetEfAsync();
+            StateHasChanged();
+        }
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Runner.Changed -= OnChanged;
+        Assistant.Changed -= OnChanged;
+    }
+
+    private MigrationReview? SafeReview(ServiceDefinition definition, string latest)
+    {
+        // Read-only review (no fixes) of a migration created outside the Studio or in an earlier session.
+        var relative = $"{ServiceCommands.MigrationsProject(definition)}/Migrations/{latest}.cs";
+        var path = Path.Combine(ServiceDirectory, relative);
+        return File.Exists(path)
+            ? MigrationReviewer.Review(File.ReadAllText(path), latest, relative, definition with { PendingRenames = null })
+            : null;
+    }
+
+    private static string Color(FindingLevel level) => level switch
+    {
+        FindingLevel.Danger => "var(--err)",
+        FindingLevel.Warning => "var(--warn)",
+        _ => "var(--ok)",
+    };
+
+    private static string Label(FindingLevel level) => level switch
+    {
+        FindingLevel.Danger => "✖ Borra datos:",
+        FindingLevel.Warning => "⚠",
+        _ => "✔",
+    };
+
+    private string EffectiveName(IReadOnlyList<string> migrations, ServiceDefinition definition) =>
+        string.IsNullOrWhiteSpace(name) ? ServiceCommands.SuggestMigrationName(migrations, definition) : name.Trim();
+
+    private void Create(string migration)
+    {
+        name = string.Empty;
+        confirmRemove = false;
+        _ = Assistant.CreateAsync(ServiceDirectory, migration);
+    }
+
+    private void Check() => _ = Assistant.CheckAsync(ServiceDirectory);
+
+    private void ReviewLatest() => Assistant.ReviewLatest(ServiceDirectory);
+
+    private void LoadSql() => _ = Assistant.LoadSqlAsync(ServiceDirectory);
+
+    private void Remove()
+    {
+        confirmRemove = false;
+        _ = Assistant.RemoveLatestAsync(ServiceDirectory);
+    }
+
+    private void InstallEf() =>
+        Runner.Start(ServiceCommands.InstallEfJob, "Instalar dotnet-ef", State.Workspace, "dotnet", ["tool", "install", "--global", "dotnet-ef"]);
+
+    private async Task Recheck()
+    {
+        Tools.Reset();
+        efAvailable = null;
+        efAvailable = await Tools.HasDotnetEfAsync();
+    }
+}

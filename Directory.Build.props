@@ -12,9 +12,23 @@
       Single source of truth for the Stratum version: the CLI, the Stratum.* packages and the
       version written into generated services (stratum.json, Directory.Packages.props) all come from here.
     -->
-    <Version>0.22.0</Version>
+    <Version>0.36.0</Version>
     <Authors>Stratum</Authors>
-    <PackageTags>dotnet;microservices;aspnetcore;service-defaults;msg</PackageTags>
+    <PackageTags>dotnet;microservices;aspnetcore;service-defaults;aspire;ddd;messaging;generator</PackageTags>
+
+    <!-- nuget.org metadata. The repository URL comes from GitHub Actions when the release workflow packs. -->
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) Stratum contributors</Copyright>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl Condition="'$(GITHUB_REPOSITORY)' != ''">$(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY)</RepositoryUrl>
+    <PackageProjectUrl Condition="'$(GITHUB_REPOSITORY)' != ''">$(GITHUB_SERVER_URL)/$(GITHUB_REPOSITORY)</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
 
     <!-- Only projects that opt in are packed (the Stratum.ServiceDefaults.* libraries and the CLI tool). -->
     <IsPackable>false</IsPackable>

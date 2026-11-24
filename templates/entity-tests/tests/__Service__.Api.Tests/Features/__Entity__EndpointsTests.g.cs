@@ -15,33 +15,68 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
     private static readonly Uri Collection = new("/api/v1/{{entities-kebab}}", UriKind.Relative);
 
     [Fact]
-    public async Task CreateGetUpdateListDelete()
+    public async Task CreateReturnsCreatedWithLocation()
     {
         using var client = {{TestClient}};
 
-        // Create
-        var create = await client.PostAsJsonAsync(Collection, await SampleRequestAsync(client));
-        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
-        var created = await create.Content.ReadFromJsonAsync<{{Entity}}Response>();
+        var response = await client.PostAsJsonAsync(Collection, await SampleRequestAsync(client));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<{{Entity}}Response>();
         Assert.NotNull(created);
-        Assert.NotNull(create.Headers.Location);
-        var item = new Uri($"/api/v1/{{entities-kebab}}/{created.Id}", UriKind.Relative);
+        var location = Assert.IsType<Uri>(response.Headers.Location);
+        Assert.EndsWith($"/api/v1/{{entities-kebab}}/{created.Id}", location.ToString(), StringComparison.Ordinal);
+    }
 
-        // Get
+    [Fact]
+    public async Task GetReturnsWhatWasCreated()
+    {
+        using var client = {{TestClient}};
+        var request = await SampleRequestAsync(client);
+        var item = await CreateAsync(client, request);
+
         var fetched = await client.GetFromJsonAsync<{{Entity}}Response>(item);
-        Assert.Equal(created.Id, fetched?.Id);
 
-        // Update
-        var update = await client.PutAsJsonAsync(item, await SampleRequestAsync(client));
-        Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
+        Assert.NotNull(fetched);
+        AssertSameData(request, fetched);
+    }
 
-        // List
-        var page = await client.GetFromJsonAsync<PagedResponse<{{Entity}}Response>>(Collection);
+    [Fact]
+    public async Task UpdateReplacesTheData()
+    {
+        using var client = {{TestClient}};
+        var item = await CreateAsync(client, await SampleRequestAsync(client));
+        var changed = await ChangedRequestAsync(client);
+
+        var response = await client.PutAsJsonAsync(item, changed);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        var fetched = await client.GetFromJsonAsync<{{Entity}}Response>(item);
+        Assert.NotNull(fetched);
+        AssertSameData(changed, fetched);
+    }
+
+    [Fact]
+    public async Task ListIncludesWhatWasCreated()
+    {
+        using var client = {{TestClient}};
+        var item = await CreateAsync(client, await SampleRequestAsync(client));
+
+        var page = await client.GetFromJsonAsync<PagedResponse<{{Entity}}Response>>(new Uri($"{Collection}?pageSize={PagedResponse<{{Entity}}Response>.MaxPageSize}", UriKind.Relative));
+
         Assert.NotNull(page);
-        Assert.Contains(page.Items, e => e.Id == created.Id);
+        Assert.Contains(page.Items, e => item.ToString().EndsWith($"/{e.Id}", StringComparison.Ordinal));
+    }
 
-        // Delete
-        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync(item)).StatusCode);
+    [Fact]
+    public async Task DeleteRemovesIt()
+    {
+        using var client = {{TestClient}};
+        var item = await CreateAsync(client, await SampleRequestAsync(client));
+
+        var response = await client.DeleteAsync(item);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(item)).StatusCode);
     }
 
@@ -97,9 +132,27 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
     }
     // @stratum:end
 
+    /// <summary>POST and the URI of the new {{Entity}}.</summary>
+    private static async Task<Uri> CreateAsync(HttpClient client, {{Entity}}Request request)
+    {
+        var response = await client.PostAsJsonAsync(Collection, request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return Assert.IsType<Uri>(response.Headers.Location);
+    }
+
+    /// <summary>Every field sent comes back as it was sent (lists included, in the same order).</summary>
+    private static void AssertSameData({{Entity}}Request expected, {{Entity}}Response actual)
+    {
+{{SameDataAssertions}}
+    }
+
     // @stratum:if hasRequiredReferences
     private static async Task<{{Entity}}Request> SampleRequestAsync(HttpClient client) => new(
 {{TestSampleArguments}});
+
+    /// <summary>Different values from <see cref="SampleRequestAsync"/> (optional fields empty), to check that PUT replaces.</summary>
+    private static async Task<{{Entity}}Request> ChangedRequestAsync(HttpClient client) => new(
+{{TestChangedArguments}});
 
 {{TestReferenceHelpers}}
     // @stratum:else
@@ -108,6 +161,14 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
         ArgumentNullException.ThrowIfNull(client);
         return Task.FromResult(new {{Entity}}Request(
 {{TestSampleArguments}}));
+    }
+
+    /// <summary>Different values from <see cref="SampleRequestAsync"/> (optional fields empty), to check that PUT replaces.</summary>
+    private static Task<{{Entity}}Request> ChangedRequestAsync(HttpClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        return Task.FromResult(new {{Entity}}Request(
+{{TestChangedArguments}}));
     }
     // @stratum:end
 }

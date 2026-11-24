@@ -17,12 +17,9 @@ public static class EventMap
 
         foreach (var service in all.Where(s => s.Messaging is not null))
         {
-            foreach (var entity in service.Entities.Where(e => e.IsEditable && e.Publishes))
+            foreach (var published in IntegrationEvents.Of(service))
             {
-                foreach (var name in Subscription.Events)
-                {
-                    routes[Subscription.TopicFor(service.Service.Name, entity.Name, name)] = (entity.Name + name, service.Service.Name, [], null);
-                }
+                routes[published.Topic] = (published.EventClass, service.Service.Name, [], null);
             }
         }
 

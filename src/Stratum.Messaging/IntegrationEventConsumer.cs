@@ -25,6 +25,7 @@ public sealed partial class IntegrationEventConsumer(
     {
         ArgumentNullException.ThrowIfNull(envelope);
         var settings = options.Value;
+        var receivedAt = time.GetUtcNow().UtcDateTime;
 
         foreach (var handler in registry.For(envelope.Topic))
         {
@@ -36,17 +37,21 @@ public sealed partial class IntegrationEventConsumer(
             catch (JsonException ex)
             {
                 LogUnreadable(logger, ex, envelope.Topic, envelope.MessageId);
+                MessagingTelemetry.Processed(envelope.Topic, handler.Consumer, ReceivedStatus.Unreadable, 0);
+                await JournalAsync(envelope, handler.Consumer, ReceivedStatus.Unreadable, 1, 0, ex.Message, receivedAt, cancellationToken).ConfigureAwait(false);
                 return ConsumeResult.DeadLetter;
             }
 
             if (integrationEvent is null)
             {
+                await JournalAsync(envelope, handler.Consumer, ReceivedStatus.Unreadable, 1, 0, "Empty payload (null).", receivedAt, cancellationToken).ConfigureAwait(false);
                 return ConsumeResult.DeadLetter;
             }
 
             for (var attempt = 1; ; attempt++)
             {
                 using var activity = MessagingTelemetry.StartProcess(envelope, handler.Consumer);
+                var started = Stopwatch.GetTimestamp();
                 try
                 {
                     await using var scope = scopes.CreateAsyncScope();
@@ -60,30 +65,100 @@ public sealed partial class IntegrationEventConsumer(
                         ct => handler.Invoker(instance, integrationEvent, context, ct),
                         cancellationToken).ConfigureAwait(false);
 
+                    var elapsed = Elapsed(started);
                     if (!ran)
                     {
                         activity?.SetTag("msg.duplicate", true);
+                        activity?.SetTag("stratum.messaging.outcome", "duplicate");
                         LogDuplicate(logger, envelope.Topic, envelope.MessageId, handler.Consumer);
+                    }
+                    else
+                    {
+                        activity?.SetTag("stratum.messaging.outcome", ReceivedStatus.Processed);
+                        MessagingTelemetry.Processed(envelope.Topic, handler.Consumer, ReceivedStatus.Processed, elapsed);
+                        await JournalAsync(envelope, handler.Consumer, ReceivedStatus.Processed, attempt, elapsed, null, receivedAt, cancellationToken).ConfigureAwait(false);
                     }
 
                     break;
                 }
                 catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
+                    var elapsed = Elapsed(started);
                     activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    activity?.AddException(ex);
                     if (attempt >= settings.MaxHandlerAttempts)
                     {
+                        activity?.SetTag("stratum.messaging.outcome", ReceivedStatus.DeadLettered);
                         LogDeadLetter(logger, ex, envelope.Topic, envelope.MessageId, handler.Consumer, attempt);
+                        MessagingTelemetry.Processed(envelope.Topic, handler.Consumer, ReceivedStatus.DeadLettered, elapsed);
+                        await JournalAsync(envelope, handler.Consumer, ReceivedStatus.DeadLettered, attempt, elapsed, Describe(ex), receivedAt, cancellationToken).ConfigureAwait(false);
                         return ConsumeResult.DeadLetter;
                     }
 
+                    activity?.SetTag("stratum.messaging.outcome", ReceivedStatus.Retrying);
                     LogRetry(logger, ex, envelope.Topic, envelope.MessageId, handler.Consumer, attempt);
+                    MessagingTelemetry.Processed(envelope.Topic, handler.Consumer, ReceivedStatus.Retrying, elapsed);
+                    await JournalAsync(envelope, handler.Consumer, ReceivedStatus.Retrying, attempt, elapsed, Describe(ex), receivedAt, cancellationToken).ConfigureAwait(false);
                     await Task.Delay(settings.BackoffFor(attempt), time, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
 
         return ConsumeResult.Completed;
+    }
+
+    private static int Elapsed(long started) => (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+
+    private static string Describe(Exception ex)
+    {
+        var text = $"{ex.GetType().Name}: {ex.Message}";
+        return text.Length > 2000 ? text[..2000] : text;
+    }
+
+    private int _journalWarned;
+
+    /// <summary>Writes the journal row in its own scope: a failure here (e.g. msg_received not migrated yet) never stops consuming.</summary>
+    private async Task JournalAsync(
+        MessageEnvelope envelope, string consumer, string status, int attempts, int durationMs, string? error, DateTime receivedAt, CancellationToken cancellationToken)
+    {
+        if (!options.Value.JournalEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            if (scope.ServiceProvider.GetService<IMessageJournal>() is not { } journal)
+            {
+                return;
+            }
+
+            await journal.RecordAsync(
+                new ReceivedMessage
+                {
+                    MessageId = envelope.MessageId,
+                    Consumer = consumer,
+                    Topic = envelope.Topic,
+                    Source = envelope.Source,
+                    CorrelationId = envelope.CorrelationId,
+                    TraceId = MessagingTelemetry.TraceIdOf(envelope.TraceParent),
+                    ReceivedAt = receivedAt,
+                    UpdatedAt = time.GetUtcNow().UtcDateTime,
+                    Status = status,
+                    Attempts = attempts,
+                    DurationMs = durationMs,
+                    LastError = error,
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (Interlocked.Exchange(ref _journalWarned, 1) == 0)
+            {
+                LogJournalFailed(logger, ex);
+            }
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -131,6 +206,9 @@ public sealed partial class IntegrationEventConsumer(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "{Consumer} failed on {Topic} {MessageId} {Attempt} times: moved to dead-letter")]
     private static partial void LogDeadLetter(ILogger logger, Exception exception, string topic, string messageId, string consumer, int attempt);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not write the journal of received messages (msg_received): is its migration applied? Messages are still handled; Stratum Studio's event traces won't show them")]
+    private static partial void LogJournalFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Lost the connection to the broker; reconnecting in 5 s")]
     private static partial void LogConsumeFailed(ILogger logger, Exception exception);

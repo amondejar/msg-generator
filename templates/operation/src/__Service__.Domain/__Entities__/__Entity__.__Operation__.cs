@@ -13,7 +13,7 @@ public sealed partial class {{Entity}}
         // 1. Check the rule; a DomainException becomes a 422 with its message. For example:
         //    if (...) throw new DomainException("This {{Entity}} can't do {{Operation}} now.");
         // 2. Change the state (add properties in stratum.json, or private fields here).
-
+{{OperationBody}}
         UpdatedAt = DateTimeOffset.UtcNow;
         Raise(new {{OperationEvent}}(Id{{OperationEventArguments}}));
     }

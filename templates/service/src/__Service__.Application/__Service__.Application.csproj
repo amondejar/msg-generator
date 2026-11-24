@@ -19,4 +19,11 @@
     <ProjectReference Include="..\{{Service}}.Domain\{{Service}}.Domain.csproj" />
   </ItemGroup>
 
+  <!-- @stratum:if hasModelTypes -->
+  <ItemGroup>
+    <!-- Enums and item types of stratum.json, usable everywhere without a using. -->
+    <Using Include="{{EnumNamespace}}" />
+  </ItemGroup>
+  <!-- @stratum:end -->
+
 </Project>

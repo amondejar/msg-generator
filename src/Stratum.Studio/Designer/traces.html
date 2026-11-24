@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{Trazas de eventos::Event traces}} · Stratum</title>
+<style>
+  :root {
+    --bg: #0B0D11; --bar: #0F1217; --panel: #151922; --panel-2: #1B202B; --line: #232A36; --line-2: #2E3746;
+    --text: #E6E9EF; --text-2: #B4BCCB; --muted: #7C8698; --accent: #2DD4BF; --accent-bg: rgba(45, 212, 191, .12);
+    --link: #93C5FD; --ok: #34D399; --warn: #FBBF24; --err: #F87171; --wait: #93C5FD;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  a { color: var(--link); }
+  .btn { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 12px; text-decoration: none; color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.small { padding: 3px 9px; font-size: 12.5px; }
+  select, input { background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; }
+  .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .muted { color: var(--muted); }
+  header { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 16px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; }
+  header .spacer { flex: 1; }
+  #live { font-size: 12.5px; padding: 3px 9px; border-radius: 999px; background: rgba(52, 211, 153, .12); color: var(--ok); }
+  #live.paused { background: var(--panel-2); color: var(--muted); }
+  #services { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bar); }
+  .svc { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 13px; background: var(--panel); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.offline { background: var(--muted); } .dot.noEndpoint, .dot.warn { background: var(--warn); } .dot.error { background: var(--err); }
+  #problems { padding: 0 16px; }
+  #problems div { margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: rgba(251, 191, 36, .1); color: var(--warn); font-size: 13px; }
+  #app { display: grid; grid-template-columns: minmax(340px, 440px) 1fr; height: calc(100% - 56px - var(--svc-h, 49px)); }
+  #left { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  #filters { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #filters input { flex: 1 1 100%; }
+  #filters select { flex: 1; }
+  #list { overflow-y: auto; flex: 1; }
+  .row { padding: 10px 14px 10px 12px; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; cursor: pointer; }
+  .row:hover { background: var(--panel); }
+  .row.sel { background: var(--accent-bg); }
+  .row.error { border-left-color: var(--err); } .row.warning { border-left-color: var(--warn); } .row.waiting { border-left-color: var(--wait); } .row.ok { border-left-color: var(--ok); } .row.noListeners { border-left-color: var(--line-2); }
+  .row .top { display: flex; justify-content: space-between; gap: 8px; }
+  .row b { font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; font-size: 12.5px; }
+  .chip { padding: 1px 8px; border-radius: 999px; background: var(--panel-2); color: var(--text-2); }
+  .chip.processed { color: var(--ok); } .chip.deadLettered, .chip.unreadable, .chip.failed { color: var(--err); }
+  .chip.retrying, .chip.missing, .chip.notSubscribed { color: var(--warn); } .chip.waiting, .chip.pending { color: var(--wait); } .chip.unknown { color: var(--muted); }
+  #detail { overflow-y: auto; padding: 18px 22px; min-width: 0; }
+  #detail h2 { margin: 0; font-size: 18px; }
+  .ids { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 10px 0 18px; font-size: 12.5px; color: var(--text-2); }
+  .ids span:nth-child(odd) { color: var(--muted); }
+  .steps { display: grid; grid-template-columns: 22px 1fr max-content; gap: 12px 10px; align-items: start; }
+  .ico { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #0B0D11; margin-top: 1px; }
+  .ico.ok { background: var(--ok); } .ico.err { background: var(--err); } .ico.warn { background: var(--warn); } .ico.wait { background: var(--wait); } .ico.unknown { background: var(--line-2); color: var(--text-2); }
+  .step small { display: block; color: var(--muted); }
+  .step .error { color: var(--err); font-size: 12.5px; margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+  .when { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 20px 0 10px; }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; font-size: 12.5px; max-height: 50vh; }
+  .empty { padding: 40px 24px; color: var(--muted); text-align: center; line-height: 1.6; }
+  .copy { cursor: pointer; } .copy:hover { color: var(--text); text-decoration: underline dotted; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{Trazas de eventos::Event traces}}</h1>
+  <span class="muted" id="system"></span>
+  <span id="live">● {{En vivo::Live}}</span>
+  <span class="spacer"></span>
+  <select id="window" title="{{Ventana de tiempo::Time window}}">
+    <option value="15">{{Últimos 15 min::Last 15 min}}</option>
+    <option value="60" selected>{{Última hora::Last hour}}</option>
+    <option value="360">{{Últimas 6 h::Last 6 h}}</option>
+    <option value="1440">{{Últimas 24 h::Last 24 h}}</option>
+  </select>
+  <button class="btn" id="pause">{{Pausar::Pause}}</button>
+  <a class="btn" id="dashboard" target="_blank" rel="noopener" hidden>{{Dashboard de Aspire::Aspire dashboard}} ↗</a>
+  <a class="btn" id="kafka" target="_blank" rel="noopener" hidden>Kafka UI ↗</a>
+</header>
+<div id="services"></div>
+<div id="problems"></div>
+<div id="app">
+  <section id="left">
+    <div id="filters">
+      <input id="search" placeholder="{{Evento, topic, id o correlation id::Event, topic, id or correlation id}}" />
+      <select id="service"><option value="">{{Todos los servicios::All services}}</option></select>
+      <select id="outcome">
+        <option value="">{{Todos::All}}</option>
+        <option value="error">{{Con errores::With errors}}</option>
+        <option value="warning">{{Con avisos::With warnings}}</option>
+        <option value="waiting">{{En curso::In progress}}</option>
+        <option value="ok">{{Bien::Fine}}</option>
+      </select>
+    </div>
+    <div id="list"></div>
+  </section>
+  <section id="detail"></section>
+</div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const T = {
+    processed: "{{procesado::processed}}", retrying: "{{reintentando::retrying}}", deadLettered: "{{dead-letter::dead-letter}}",
+    unreadable: "{{ilegible::unreadable}}", waiting: "{{esperando::waiting}}", missing: "{{no ha llegado::hasn't arrived}}",
+    unknown: "{{sin datos::no data}}", notSubscribed: "{{no lo escucha::not listening}}",
+    pending: "{{en el outbox::in the outbox}}", failed: "{{no se envió::not sent}}", sent: "{{enviado::sent}}",
+  };
+  const BROKER = { kafka: "Kafka", servicebus: "Service Bus", inMemory: "{{el broker en memoria::the in-memory broker}}" };
+  let report = null, selected = null, live = true, timer = null, showPayload = false, busy = false;
+
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const time = iso => { if (!iso) return ""; const d = new Date(iso); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`; };
+  const ago = iso => {
+    const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
+    return s < 60 ? `{{hace::}} ${s} s{{:: ago}}` : s < 3600 ? `{{hace::}} ${Math.round(s / 60)} min{{:: ago}}` : new Date(iso).toLocaleString();
+  };
+  const ms = n => n >= 10000 ? (n / 1000).toFixed(1) + " s" : n + " ms";
+  const since = (a, b) => a && b ? "+" + ms(Math.max(0, new Date(b) - new Date(a))) : "";
+
+  async function load() {
+    if (busy) return;
+    busy = true;
+    try {
+      const response = await fetch(`/traces/api/report?minutes=${$("window").value}`, { cache: "no-store" });
+      report = await response.json();
+      render();
+    } catch (e) {
+      $("problems").innerHTML = `<div>{{No se pudo leer el Studio::Couldn't reach the Studio}}: ${esc(e.message)}</div>`;
+    } finally {
+      busy = false;
+    }
+  }
+
+  function render() {
+    $("system").textContent = report.system;
+    const links = report.links || {};
+    $("dashboard").hidden = !links.dashboard; if (links.dashboard) $("dashboard").href = links.dashboard;
+    $("kafka").hidden = !links.kafkaUi; if (links.kafkaUi) $("kafka").href = links.kafkaUi;
+
+    const services = report.services;
+    $("services").innerHTML = services.length === 0
+      ? `<span class="muted">{{Ningún servicio del sistema usa mensajería.::No service of the system uses messaging.}}</span>`
+      : services.map(s => {
+          const journal = (s.problems || []).length > 0;
+          const state = s.state === "ok" && journal ? "warn" : s.state;
+          const label = { ok: "{{arrancado::running}}", offline: "{{parado::stopped}}", noEndpoint: "{{sin trazas::no traces}}", error: "{{error::error}}", warn: "{{arrancado::running}}" }[state];
+          return `<span class="svc" title="${esc(s.message || s.url)}"><span class="dot ${state}"></span><b>${esc(s.name)}</b><span class="muted">${label}${s.broker ? " · " + esc(BROKER[s.broker] || s.broker) : ""}</span></span>`;
+        }).join("");
+    document.documentElement.style.setProperty("--svc-h", $("services").offsetHeight + $("problems").offsetHeight + "px");
+
+    const problems = [];
+    for (const s of services) {
+      for (const p of s.problems || []) problems.push(`<b>${esc(s.name)}</b>: ${esc(p)}`);
+      if (s.state === "noEndpoint" || s.state === "error") problems.push(`<b>${esc(s.name)}</b>: ${esc(s.message)}`);
+    }
+    if (services.length > 0 && services.every(s => s.state === "offline")) {
+      problems.push(`{{Ningún servicio está arrancado. Arráncalos (aspire run o dotnet run, en Development) y los eventos aparecerán aquí.::No service is running. Start them (aspire run or dotnet run, in Development) and their events show up here.}}`);
+    }
+    $("problems").innerHTML = problems.map(p => `<div>${p}</div>`).join("");
+    document.documentElement.style.setProperty("--svc-h", $("services").offsetHeight + $("problems").offsetHeight + "px");
+
+    const select = $("service"), current = select.value;
+    select.innerHTML = `<option value="">{{Todos los servicios::All services}}</option>` + services.map(s => `<option>${esc(s.name)}</option>`).join("");
+    select.value = current;
+
+    renderList();
+    renderDetail();
+  }
+
+  function filtered() {
+    const q = $("search").value.trim().toLowerCase(), service = $("service").value, outcome = $("outcome").value;
+    return report.events.filter(e =>
+      (!q || [e.event, e.topic, e.messageId, e.correlationId, e.publisher].some(v => (v || "").toLowerCase().includes(q))) &&
+      (!service || e.publisher === service || e.deliveries.some(d => d.service === service)) &&
+      (!outcome || e.outcome === outcome || (outcome === "ok" && e.outcome === "noListeners")));
+  }
+
+  function renderList() {
+    const events = filtered();
+    if (events.length === 0) {
+      $("list").innerHTML = `<div class="empty">${report.events.length === 0
+        ? "{{Todavía no hay eventos en esta ventana de tiempo. Crea o cambia algo en un servicio que publique eventos (por ejemplo, con su .http o Scalar).::No events in this time window yet. Create or change something in a service that publishes events (with its .http file or Scalar, say).}}"
+        : "{{Ningún evento cumple los filtros.::No event matches the filters.}}"}</div>`;
+      return;
+    }
+    $("list").innerHTML = events.map(e => `
+      <div class="row ${e.outcome} ${e.messageId === selected ? "sel" : ""}" data-id="${esc(e.messageId)}">
+        <div class="top"><span><b>${esc(e.event)}</b> <span class="muted">· ${esc(e.publisher || "?")}</span></span><span class="muted">${ago(e.at)}</span></div>
+        <div class="chips">${sentChip(e)}${e.deliveries.map(d => `<span class="chip ${d.status}">${esc(d.service)} · ${T[d.status] || d.status}</span>`).join("")}
+          ${e.deliveries.length === 0 && e.sent?.status === "sent" ? `<span class="chip">{{nadie lo escucha::nobody listens}}</span>` : ""}</div>
+      </div>`).join("");
+  }
+
+  const sentChip = e => !e.sent || e.sent.status === "sent" ? "" : `<span class="chip ${e.sent.status}">${T[e.sent.status]}</span>`;
+
+  function step(icon, title, sub, when, error) {
+    const glyph = { ok: "✓", err: "✕", warn: "!", wait: "…", unknown: "?" }[icon];
+    return `<span class="ico ${icon}">${glyph}</span><div class="step">${title}${sub ? `<small>${sub}</small>` : ""}${error ? `<div class="error">${esc(error)}</div>` : ""}</div><span class="when">${when || ""}</span>`;
+  }
+
+  function renderDetail() {
+    const e = report.events.find(x => x.messageId === selected);
+    if (!e) {
+      $("detail").innerHTML = `<div class="empty">{{Elige un evento para ver su recorrido: del servicio que lo publica al broker y a cada servicio que lo escucha.::Pick an event to follow it: from the service that publishes it to the broker and to every service that listens to it.}}</div>`;
+      return;
+    }
+    const publisher = report.services.find(s => s.name === e.publisher);
+    const broker = BROKER[publisher?.broker] || "{{el broker::the broker}}";
+    const s = e.sent;
+    let steps = "";
+    if (s) {
+      steps += step("ok", `{{Publicado por::Published by}} <b>${esc(e.publisher)}</b>`, `{{guardado en su outbox (msg_outbox) con el cambio que lo produjo::saved in its outbox (msg_outbox) with the change that raised it}}`, time(s.occurredAt));
+      if (s.status === "sent") steps += step("ok", `{{Aceptado por::Accepted by}} ${esc(broker)}`, `topic <span class="mono">${esc(e.topic)}</span>${s.attempts > 0 ? ` · ${s.attempts + 1} {{intentos::attempts}}` : ""}`, since(s.occurredAt, s.sentAt));
+      else if (s.status === "pending") steps += step("wait", `{{Esperando en el outbox::Waiting in the outbox}}`, `{{el dispatcher lo enviará a::the dispatcher will send it to}} ${esc(broker)}`, "");
+      else if (s.status === "retrying") steps += step("warn", `${esc(broker)} {{no lo acepta todavía::doesn't accept it yet}}`, `${s.attempts} {{intento(s); el siguiente a las::attempt(s); next one at}} ${time(s.nextAttemptAt)}`, "", s.lastError);
+      else steps += step("err", `{{No se pudo enviar a::Couldn't send it to}} ${esc(broker)}`, `{{se dejó de intentar tras::gave up after}} ${s.attempts} {{intentos: está en msg_outbox con su error::attempts: it's in msg_outbox with its error}}`, "", s.lastError);
+    } else {
+      steps += step("unknown", `{{Publicado por::Published by}} <b>${esc(e.publisher || "?")}</b>`, `{{no se ve su outbox: el servicio no está arrancado, o el evento es anterior a la ventana de tiempo::its outbox isn't visible: the service isn't running, or the event is older than the time window}}`, time(e.at));
+    }
+    for (const d of e.deliveries) {
+      const who = `<b>${esc(d.service)}</b>${d.handler ? ` <span class="muted">· ${esc(d.handler)}</span>` : ""}`;
+      const when = d.receivedAt ? (s ? since(s.occurredAt, d.receivedAt) : time(d.receivedAt)) : "";
+      const tries = d.attempts > 1 ? ` · ${d.attempts} {{intentos::attempts}}` : "";
+      switch (d.status) {
+        case "processed": steps += step("ok", `${who} {{lo procesa::handles it}}`, `${ms(d.durationMs)}${tries}`, when); break;
+        case "retrying": steps += step("warn", `${who} {{falla y lo reintenta::fails and retries it}}`, `{{intento::attempt}} ${d.attempts}`, when, d.lastError); break;
+        case "deadLettered": steps += step("err", `${who} {{falla::fails}} ${d.attempts} {{veces → dead-letter::times → dead-letter}}`, `{{el mensaje está en la cola de dead-letter de::the message is in the dead-letter queue of}} ${esc(broker)}`, when, d.lastError); break;
+        case "unreadable": steps += step("err", `${who} {{no puede leerlo → dead-letter::can't read it → dead-letter}}`, `{{el contrato del evento no coincide (¿falta stratum subscribe --sync?)::the event's contract doesn't match (run stratum subscribe --sync?)}}`, when, d.lastError); break;
+        case "waiting": steps += step("wait", `${who} {{aún no lo ha recibido::hasn't received it yet}}`, "", ""); break;
+        case "missing": steps += step("warn", `${who} {{no lo ha recibido::hasn't received it}}`, `{{está arrancado y lo escucha, pero no le ha llegado: revisa que use el mismo broker y su log::it's running and listens to it, but it didn't arrive: check that it uses the same broker, and its log}}`, ""); break;
+        case "notSubscribed": steps += step("warn", `${who} {{no tiene handler para este topic::has no handler for this topic}}`, `{{stratum.json dice que lo escucha: ¿falta recompilarlo y arrancarlo de nuevo?::stratum.json says it listens: does it need a rebuild and restart?}}`, ""); break;
+        default: steps += step("unknown", `${who}`, `{{no está arrancado: no se sabe si lo ha recibido::not running: can't tell whether it received it}}`, ""); break;
+      }
+    }
+    if (e.deliveries.length === 0) steps += step("unknown", `{{Ningún servicio del sistema lo escucha::No service of the system listens to it}}`, "", "");
+
+    const links = report.links || {};
+    $("detail").innerHTML = `
+      <h2>${esc(e.event)} <span class="muted" style="font-weight:400;font-size:14px">${esc(e.publisher || "")} → <span class="mono">${esc(e.topic)}</span></span></h2>
+      <div class="ids mono">
+        <span>message id</span><span class="copy" data-copy="${esc(e.messageId)}">${esc(e.messageId)}</span>
+        ${e.correlationId ? `<span>correlation id</span><span class="copy" data-copy="${esc(e.correlationId)}">${esc(e.correlationId)}</span>` : ""}
+        ${e.traceId ? `<span>trace id</span><span class="copy" data-copy="${esc(e.traceId)}">${esc(e.traceId)}</span>` : ""}
+      </div>
+      <div class="steps">${steps}</div>
+      <div class="actions">
+        ${e.payload ? `<button class="btn small" id="toggle-payload">${showPayload ? "{{Ocultar payload::Hide payload}}" : "{{Ver payload::Show payload}}"}</button>` : ""}
+        ${e.traceId && links.dashboard ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(links.dashboard)}/traces/detail/${esc(e.traceId)}">{{Ver la traza en Aspire::Open the trace in Aspire}} ↗</a>` : ""}
+        ${links.kafkaUi ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(links.kafkaUi)}/ui/clusters/kafka/all-topics/${encodeURIComponent(e.topic)}/messages">{{Ver el topic en Kafka UI::Open the topic in Kafka UI}} ↗</a>` : ""}
+      </div>
+      ${e.payload && showPayload ? `<pre class="mono">${esc(pretty(e.payload))}</pre>` : ""}
+      ${e.traceId && links.dashboard ? `<p class="muted" style="font-size:12.5px">{{La traza de Aspire (con aspire run y la telemetría activada) añade el detalle de cada paso: la petición HTTP, el SQL y el tiempo de cada handler.::The Aspire trace (with aspire run and telemetry on) adds the detail of each step: the HTTP request, the SQL and each handler's time.}}</p>` : ""}`;
+    $("toggle-payload")?.addEventListener("click", () => { showPayload = !showPayload; renderDetail(); });
+  }
+
+  const pretty = json => { try { return JSON.stringify(JSON.parse(json), null, 2); } catch { return json; } };
+
+  $("list").addEventListener("click", ev => {
+    const row = ev.target.closest(".row");
+    if (!row) return;
+    selected = row.dataset.id; showPayload = false;
+    renderList(); renderDetail();
+  });
+  $("detail").addEventListener("click", ev => {
+    const el = ev.target.closest("[data-copy]");
+    if (el) navigator.clipboard?.writeText(el.dataset.copy).then(() => { el.style.color = "var(--ok)"; setTimeout(() => (el.style.color = ""), 600); }).catch(() => {});
+  });
+  for (const id of ["search", "service", "outcome"]) $(id).addEventListener("input", () => report && renderList());
+  $("window").addEventListener("change", load);
+  $("pause").addEventListener("click", () => {
+    live = !live;
+    $("pause").textContent = live ? "{{Pausar::Pause}}" : "{{Reanudar::Resume}}";
+    $("live").textContent = live ? "● {{En vivo::Live}}" : "{{En pausa::Paused}}";
+    $("live").classList.toggle("paused", !live);
+    if (live) load();
+  });
+  timer = setInterval(() => { if (live && !document.hidden) load(); }, 2000);
+  load();
+})();
+</script>
+</body>
+</html>

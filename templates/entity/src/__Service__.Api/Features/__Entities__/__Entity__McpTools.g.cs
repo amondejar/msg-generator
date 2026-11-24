@@ -21,8 +21,8 @@ public static partial class {{Entity}}Endpoints
 {
     [McpServerTool(Name = "list_{{entities_snake}}", Title = "List {{Entities}}", ReadOnly = true, Idempotent = true, OpenWorld = false)]
     [Description("Lists {{Entities}} (paged, oldest first).")]
-    public static async Task<string> ListTool({{Service}}DbContext db, [Description("Page, from 1.")] int? page, [Description("Items per page.")] int? pageSize, CancellationToken cancellationToken) =>
-        McpResults.ToJson(await List(db, page, pageSize, cancellationToken));
+    public static async Task<string> ListTool({{Service}}DbContext db, [Description("Page, from 1.")] int? page, [Description("Items per page.")] int? pageSize, {{McpListFilterParameters}}CancellationToken cancellationToken) =>
+        McpResults.ToJson(await List(db, page, pageSize{{ListFilterArguments}}, cancellationToken));
 
     [McpServerTool(Name = "get_{{entity_snake}}", Title = "Get a {{Entity}}", ReadOnly = true, Idempotent = true, OpenWorld = false)]
     [Description("Gets one {{Entity}} by id.")]
@@ -34,13 +34,13 @@ public static partial class {{Entity}}Endpoints
     public static async Task<string> CreateTool(
         {{Entity}}Request request,
         {{Service}}DbContext db,
-        // @stratum:if publishEvents
+        // @stratum:if publishCreated
         IEventBus bus,
         // @stratum:end
         CancellationToken cancellationToken)
     {
         McpResults.Validate(request);
-        // @stratum:if publishEvents
+        // @stratum:if publishCreated
         return McpResults.ToJson(await Create(request, db, bus, cancellationToken));
         // @stratum:else
         return McpResults.ToJson(await Create(request, db, cancellationToken));
@@ -53,13 +53,13 @@ public static partial class {{Entity}}Endpoints
         Guid id,
         {{Entity}}Request request,
         {{Service}}DbContext db,
-        // @stratum:if publishEvents
+        // @stratum:if publishUpdated
         IEventBus bus,
         // @stratum:end
         CancellationToken cancellationToken)
     {
         McpResults.Validate(request);
-        // @stratum:if publishEvents
+        // @stratum:if publishUpdated
         return McpResults.ToJson(await Update(id, request, db, bus, cancellationToken));
         // @stratum:else
         return McpResults.ToJson(await Update(id, request, db, cancellationToken));
@@ -71,11 +71,11 @@ public static partial class {{Entity}}Endpoints
     public static async Task<string> DeleteTool(
         Guid id,
         {{Service}}DbContext db,
-        // @stratum:if publishEvents
+        // @stratum:if publishDeleted
         IEventBus bus,
         // @stratum:end
         CancellationToken cancellationToken) =>
-        // @stratum:if publishEvents
+        // @stratum:if publishDeleted
         McpResults.ToJson(await Delete(id, db, bus, cancellationToken));
         // @stratum:else
         McpResults.ToJson(await Delete(id, db, cancellationToken));

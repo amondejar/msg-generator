@@ -26,7 +26,7 @@ public enum ChangeKind
 
 public sealed record FileChange(string Path, ChangeKind Kind, string Content, string? Previous)
 {
-    public bool IsGenerated => Path.EndsWith(".g.cs", StringComparison.Ordinal) || Path == ServiceGenerator.DefinitionFileName;
+    public bool IsGenerated => Path.EndsWith(".g.cs", StringComparison.Ordinal) || Path.EndsWith(".g.md", StringComparison.Ordinal) || Path == ServiceGenerator.DefinitionFileName;
 
     /// <summary>A generated file the user edited by hand (its stratum-hash doesn't match): regenerating loses those edits.</summary>
     public bool HandEdited { get; init; }

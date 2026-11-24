@@ -1,0 +1,530 @@
+using System.Security.Cryptography;
+using System.Text;
+using Stratum.Core.Model;
+
+namespace Stratum.Core.Generation;
+
+/// <summary>An Stratum service found under the system root.</summary>
+public sealed record AspireService(string RelativeDirectory, ServiceDefinition Definition)
+{
+    public string Name => Definition.Service.Name;
+
+    public string ResourceName => ServiceName.ToKebab(Name);
+
+    public string ApiProject => $"{RelativeDirectory}/src/{Name}.Api/{Name}.Api.csproj";
+}
+
+public sealed record AspireResult(string AppHostName, IReadOnlyList<AspireService> Services, IReadOnlyList<string> Created, IReadOnlyList<string> Updated);
+
+/// <summary>
+/// Generates an Aspire AppHost that runs every Stratum service under a folder, with their databases.
+/// <list type="bullet">
+/// <item><c>StratumServices.g.cs</c> and the system <c>.slnx</c> are regenerated on every run (Stratum owns them).</item>
+/// <item><c>AppHost.cs</c>, settings and launch profile are created once: they are yours.</item>
+/// <item>The AppHost .csproj only gets the missing references added.</item>
+/// </list>
+/// </summary>
+public static class AspireGenerator
+{
+    /// <summary>Latest 13.x: the line validated with .NET 10. Bump with "aspire update" when you want to.</summary>
+    public const string AspireVersion = "13.6.5";
+
+    private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bin", "obj", "node_modules", ".git", ".vs", ".idea", "artifacts", "TestResults",
+    };
+
+    /// <param name="skipped">Receives the stratum.json files that could not be read (another tool's file, or broken):
+    /// they are left out instead of failing the whole discovery.</param>
+    public static IReadOnlyList<AspireService> Discover(string root, int maxDepth = 5, ICollection<string>? skipped = null)
+    {
+        var rootFull = Path.GetFullPath(root);
+        var found = new List<AspireService>();
+        Walk(rootFull, 0);
+
+        // Services in other folders, listed in stratum.workspace.json.
+        foreach (var directory in WorkspaceFile.ExternalServices(rootFull))
+        {
+            if (ServiceGenerator.FindDefinition(directory) is not { } definitionFile || TryRead(definitionFile) is not { } definition)
+            {
+                continue;
+            }
+
+            var relative = Path.GetRelativePath(rootFull, directory).Replace('\\', '/');
+            var service = new AspireService(relative, definition);
+            if (File.Exists(Path.Combine(rootFull, service.ApiProject)) && !found.Any(f => f.RelativeDirectory == relative))
+            {
+                found.Add(service);
+            }
+        }
+
+        return [.. found.OrderBy(s => s.RelativeDirectory, StringComparer.Ordinal)];
+
+        void Walk(string directory, int depth)
+        {
+            if (directory != rootFull && ServiceGenerator.FindDefinition(directory) is { } definitionPath)
+            {
+                if (TryRead(definitionPath) is not { } definition)
+                {
+                    return;
+                }
+
+                var relative = Path.GetRelativePath(rootFull, directory).Replace('\\', '/');
+                var service = new AspireService(relative, definition);
+
+                if (File.Exists(Path.Combine(rootFull, service.ApiProject)))
+                {
+                    found.Add(service);
+                }
+
+                return; // services don't contain other services
+            }
+
+            if (depth >= maxDepth)
+            {
+                return;
+            }
+
+            foreach (var child in Directory.EnumerateDirectories(directory))
+            {
+                if (!SkippedFolders.Contains(Path.GetFileName(child)) && !Path.GetFileName(child).StartsWith('.') && !child.EndsWith(".AppHost", StringComparison.Ordinal))
+                {
+                    Walk(child, depth + 1);
+                }
+            }
+        }
+
+        ServiceDefinition? TryRead(string path)
+        {
+            try
+            {
+                return ServiceGenerator.Deserialize(File.ReadAllText(path));
+            }
+            catch (Exception ex) when (ex is StratumException or IOException or UnauthorizedAccessException)
+            {
+                skipped?.Add($"{path}: {ex.Message}");
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Name for the system's AppHost: the existing one ("Shop" for Shop.AppHost) so it is updated instead of
+    /// creating a second one; otherwise the folder name.
+    /// </summary>
+    public static string DefaultSystemName(string root)
+    {
+        var full = Path.GetFullPath(root);
+        var existing = Directory.Exists(full)
+            ? Directory.EnumerateDirectories(full, "*.AppHost").Select(Path.GetFileName).Order(StringComparer.Ordinal).FirstOrDefault()
+            : null;
+        if (existing is not null)
+        {
+            return existing[..^".AppHost".Length];
+        }
+
+        try
+        {
+            return ServiceName.Normalize(Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar)));
+        }
+        catch (StratumException)
+        {
+            return "System";
+        }
+    }
+
+    public static AspireResult Generate(string root, string appHostName, IReadOnlyList<AspireService> services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ServiceName.Validate(appHostName);
+
+        if (services.Count == 0)
+        {
+            throw new StratumException($"No se encontró ningún servicio Stratum (stratum.json) bajo '{Path.GetFullPath(root)}'.");
+        }
+
+        var duplicated = services.GroupBy(s => s.ResourceName).FirstOrDefault(g => g.Count() > 1);
+        if (duplicated is not null)
+        {
+            throw new StratumException($"Hay varios servicios llamados '{duplicated.Key}': {string.Join(", ", duplicated.Select(s => s.RelativeDirectory))}.");
+        }
+
+        var appHost = $"{appHostName}.AppHost";
+        var created = new List<string>();
+        var updated = new List<string>();
+
+        void CreateOnce(string relative, string content)
+        {
+            var path = Path.Combine(root, relative);
+            if (!File.Exists(path))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, content);
+                created.Add(relative);
+            }
+        }
+
+        void Overwrite(string relative, string content)
+        {
+            var path = Path.Combine(root, relative);
+            var existed = File.Exists(path);
+            if (!existed || File.ReadAllText(path) != content)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, content);
+                (existed ? updated : created).Add(relative);
+            }
+        }
+
+        var csprojPath = $"{appHost}/{appHost}.csproj";
+        var csproj = Csproj(root, appHostName, services);
+        if (File.Exists(Path.Combine(root, csprojPath)))
+        {
+            // Services that left the system (removed or moved): their *.Api project references go too.
+            // Other references the user added to the AppHost are kept.
+            var full = Path.Combine(root, csprojPath);
+            var existing = File.ReadAllText(full);
+            var current = System.Text.RegularExpressions.Regex.Matches(csproj, "<ProjectReference Include=\"(?<p>[^\"]+)\"")
+                .Select(m => m.Groups["p"].Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var cleaned = System.Text.RegularExpressions.Regex.Replace(
+                existing,
+                "[ \t]*<ProjectReference Include=\"(?<p>[^\"]+\\.Api\\.csproj)\"\\s*/>[ \t]*\r?\n?",
+                m => current.Contains(m.Groups["p"].Value) ? m.Value : string.Empty);
+            if (cleaned != existing)
+            {
+                File.WriteAllText(full, cleaned);
+            }
+
+            if (ProjectFileMerger.Merge(full, csproj) || cleaned != existing)
+            {
+                updated.Add(csprojPath);
+            }
+        }
+        else
+        {
+            CreateOnce(csprojPath, csproj);
+        }
+
+        CreateOnce($"{appHost}/AppHost.cs", AppHostProgram(services));
+        CreateOnce($"{appHost}/appsettings.json", AppSettings);
+        CreateOnce($"{appHost}/Properties/launchSettings.json", LaunchSettings(appHostName));
+        CreateOnce(".aspire/settings.json", $$"""
+            {
+              "appHostPath": "../{{appHost}}/{{appHost}}.csproj"
+            }
+
+            """);
+        // The AppHost restores every service from the system root: NuGet only sees nuget.config files from there
+        // upwards, so a service's local Stratum.* source ("stratum new --package-source") must also exist at the root.
+        var serviceConfig = services
+            .Select(s => Path.Combine(root, s.RelativeDirectory, "nuget.config"))
+            .FirstOrDefault(File.Exists);
+        if (serviceConfig is not null)
+        {
+            CreateOnce("nuget.config", File.ReadAllText(serviceConfig));
+        }
+
+        Overwrite($"{appHost}/StratumServices.g.cs", StratumServices(services));
+        Overwrite($"{appHostName}.slnx", Solution(root, appHost, services));
+
+        return new AspireResult(appHost, services, created, updated);
+    }
+
+    private static string Csproj(string root, string name, IReadOnlyList<AspireService> services)
+    {
+        var providers = services.Select(s => s.Definition.Persistence?.Provider).Where(p => p is not null).Distinct().ToList();
+        var packages = new StringBuilder();
+        if (providers.Contains(PersistenceSettings.Postgres))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.PostgreSQL\" Version=\"{AspireVersion}\" />\n");
+        }
+
+        if (providers.Contains(PersistenceSettings.SqlServer))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.SqlServer\" Version=\"{AspireVersion}\" />\n");
+        }
+
+        if (UsesKafka(services))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Kafka\" Version=\"{AspireVersion}\" />\n");
+        }
+
+        if (UsesServiceBus(services))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Azure.ServiceBus\" Version=\"{AspireVersion}\" />\n");
+        }
+
+        // Relative to the AppHost folder; absolute for a service on another drive.
+        var projects = string.Concat(services.Select(s =>
+            $"    <ProjectReference Include=\"{Path.GetRelativePath(Path.GetFullPath(Path.Combine(root, $"{name}.AppHost")), Path.GetFullPath(Path.Combine(root, s.ApiProject))).Replace('/', '\\')}\" />\n"));
+
+        return $"""
+            <Project Sdk="Aspire.AppHost.Sdk/{AspireVersion}">
+
+              <!-- Generated by "stratum aspire". Runs every Stratum service of this folder with its dependencies. -->
+
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+                <UserSecretsId>{StableGuid(name)}</UserSecretsId>
+                <!-- ASPIRE010: "dotnet run" works without the Aspire CLI bundle; opt in with AspireUseCliBundle=true if you use the CLI. -->
+                <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
+              </PropertyGroup>
+
+              <ItemGroup>
+            {packages}  </ItemGroup>
+
+              <ItemGroup>
+            {projects}  </ItemGroup>
+
+            </Project>
+
+            """;
+    }
+
+    private static string AppHostProgram(IReadOnlyList<AspireService> services)
+    {
+        var example = services.Count > 1
+            ? $"// services.{Property(services[1])}.WithReference(services.{Property(services[0])}).WaitFor(services.{Property(services[0])});"
+            : "// services.Orders.WithReference(services.Billing).WaitFor(services.Billing);";
+
+        return $"""
+            // Aspire AppHost. "aspire run" (or dotnet run) starts every service, its database and the dashboard.
+            // This file is yours: Stratum creates it once and never touches it again.
+            var builder = DistributedApplication.CreateBuilder(args);
+
+            // Generated from the stratum.json of each service (StratumServices.g.cs, regenerated by "stratum aspire").
+            var services = builder.AddStratumServices();
+
+            // Let a service call another by name (http://<name>) with service discovery, e.g.:
+            {example}
+
+            // Add your own resources here: Redis, RabbitMQ, a frontend...
+
+            builder.Build().Run();
+
+            """;
+    }
+
+    private static string StratumServices(IReadOnlyList<AspireService> services)
+    {
+        var body = new StringBuilder();
+        var providers = services.Select(s => s.Definition.Persistence?.Provider).Where(p => p is not null).Distinct().ToList();
+
+        if (providers.Contains(PersistenceSettings.Postgres))
+        {
+            body.Append("        var postgres = builder.AddPostgres(\"postgres\")\n")
+                .Append("            .WithDataVolume()\n")
+                .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+        }
+
+        if (providers.Contains(PersistenceSettings.SqlServer))
+        {
+            body.Append("        var sqlserver = builder.AddSqlServer(\"sqlserver\")\n")
+                .Append("            .WithDataVolume()\n")
+                .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+        }
+
+        if (UsesKafka(services))
+        {
+            // One broker for the whole system; Kafka UI (link in the dashboard) shows topics and messages.
+            body.Append("        var kafka = builder.AddKafka(\"kafka\")\n")
+                .Append("            .WithKafkaUI()\n")
+                .Append("            .WithDataVolume()\n")
+                .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+        }
+
+        if (UsesServiceBus(services))
+        {
+            // Local emulator (no Azure subscription). It only knows the topics and subscriptions declared here, so
+            // they come from stratum.json: every event published, and one subscription per service that listens to it.
+            body.Append("        var serviceBus = builder.AddAzureServiceBus(\"servicebus\")\n")
+                .Append("            .RunAsEmulator();\n");
+
+            var onServiceBus = services.Where(s => s.Definition.Messaging?.Broker == MessagingSettings.AzureServiceBus).Select(s => s.Definition).ToList();
+            var topics = onServiceBus
+                .SelectMany(d => IntegrationEvents.Of(d).Select(e => e.Topic))
+                .Concat(onServiceBus.SelectMany(d => (d.Subscriptions ?? []).Select(s => s.Topic)))
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal);
+
+            foreach (var topic in topics)
+            {
+                var resource = topic.Replace('.', '-');
+                var consumers = onServiceBus.Where(d => (d.Subscriptions ?? []).Any(s => s.Topic == topic)).ToList();
+                body.Append($"        var {TopicVariable(topic)} = serviceBus.AddServiceBusTopic(\"{resource}\", \"{topic}\");\n");
+                if (consumers.Count == 0)
+                {
+                    // The emulator needs a subscription on every topic. Nobody listens to this event yet: its filter
+                    // never matches (Subject is always the topic), so what is published is discarded, not piled up.
+                    body.Append($"        {TopicVariable(topic)}.AddServiceBusSubscription(\"{resource}-none\", \"stratum-no-consumers\")\n")
+                        .Append("            .WithProperties(subscription => subscription.Rules.Add(\n")
+                        .Append("                new global::Aspire.Hosting.Azure.AzureServiceBusRule(\"none\") { CorrelationFilter = new() { Subject = \"stratum:no-consumers\" } }));\n");
+                }
+
+                foreach (var consumer in consumers)
+                {
+                    var subscription = ServiceName.ToKebab(consumer.Service.Name);
+                    body.Append($"        {TopicVariable(topic)}.AddServiceBusSubscription(\"{subscription}-{resource}\", \"{subscription}\");\n");
+                }
+            }
+
+            body.Append('\n');
+        }
+
+        foreach (var service in services)
+        {
+            var variable = Variable(service);
+            var provider = service.Definition.Persistence?.Provider;
+
+            if (provider is not null)
+            {
+                var server = provider == PersistenceSettings.Postgres ? "postgres" : "sqlserver";
+                body.Append($"        var {variable}Db = {server}.AddDatabase(\"{service.ResourceName}-db\");\n");
+            }
+
+            body.Append($"        var {variable} = builder.AddProject<Projects.{service.Name}_Api>(\"{service.ResourceName}\")\n");
+            if (provider is not null)
+            {
+                body.Append($"            .WithReference({variable}Db, connectionName: \"Database\")\n")
+                    .Append($"            .WaitFor({variable}Db)\n")
+                    .Append("            .WithEnvironment(\"Database__MigrateOnStartup\", \"true\")\n");
+            }
+
+            if (service.Definition.Messaging?.Broker == MessagingSettings.Kafka)
+            {
+                body.Append("            .WithReference(kafka)\n")       // ConnectionStrings__kafka
+                    .Append("            .WaitFor(kafka)\n");
+            }
+
+            if (service.Definition.Messaging?.Broker == MessagingSettings.AzureServiceBus)
+            {
+                body.Append("            .WithReference(serviceBus)\n")  // ConnectionStrings__servicebus
+                    .Append("            .WaitFor(serviceBus)\n");
+            }
+
+            if (service.Definition.Features.OpenApi)
+            {
+                body.Append("            .WithUrlForEndpoint(\"http\", endpoint => new() { Url = \"/scalar\", DisplayText = \"Scalar\" })\n");
+            }
+
+            body.Append("            .WithHttpHealthCheck(\"/health/ready\");\n\n");
+        }
+
+        var properties = string.Join("\n\n", services.Select(s =>
+            $"    public required IResourceBuilder<ProjectResource> {Property(s)} {{ get; init; }}"));
+        var assignments = string.Join("\n", services.Select(s => $"            {Property(s)} = {Variable(s)},"));
+
+        return $$"""
+            // <auto-generated>
+            //   Generated by "stratum aspire" from the stratum.json of each service. Do not edit: it is regenerated.
+            //   Customize in AppHost.cs using the returned resources.
+            // </auto-generated>
+            #nullable enable
+
+            internal static class StratumServices
+            {
+                public static StratumServiceResources AddStratumServices(this IDistributedApplicationBuilder builder)
+                {
+                    ArgumentNullException.ThrowIfNull(builder);
+
+            {{body}}        return new StratumServiceResources
+                    {
+            {{assignments}}
+                    };
+                }
+            }
+
+            internal sealed class StratumServiceResources
+            {
+            {{properties}}
+            }
+
+            """;
+    }
+
+    private static string Solution(string root, string appHost, IReadOnlyList<AspireService> services)
+    {
+        var sb = new StringBuilder("<Solution>\n");
+        sb.Append($"  <Project Path=\"{appHost}/{appHost}.csproj\" />\n");
+
+        foreach (var service in services)
+        {
+            var projects = Directory.EnumerateFiles(Path.Combine(root, service.RelativeDirectory), "*.csproj", SearchOption.AllDirectories)
+                .Select(p => Path.GetRelativePath(root, p).Replace('\\', '/'))
+                .Where(p => !p.Contains("/bin/", StringComparison.Ordinal) && !p.Contains("/obj/", StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal);
+
+            sb.Append($"  <Folder Name=\"/{service.ResourceName}/\">\n");
+            foreach (var project in projects)
+            {
+                sb.Append($"    <Project Path=\"{project}\" />\n");
+            }
+
+            sb.Append("  </Folder>\n");
+        }
+
+        return sb.Append("</Solution>\n").ToString();
+    }
+
+    private const string AppSettings = """
+        {
+          "Logging": {
+            "LogLevel": {
+              "Default": "Information",
+              "Microsoft.AspNetCore": "Warning",
+              "Aspire.Hosting.Dcp": "Warning"
+            }
+          }
+        }
+
+        """;
+
+    private static string LaunchSettings(string name)
+    {
+        var port = ServiceName.DevPort(name + "AppHost") + 10000; // 15100-15999: away from the services' ports
+        return $$"""
+            {
+              "$schema": "https://json.schemastore.org/launchsettings.json",
+              "profiles": {
+                "http": {
+                  "commandName": "Project",
+                  "dotnetRunMessages": true,
+                  "launchBrowser": true,
+                  "applicationUrl": "http://localhost:{{port}}",
+                  "environmentVariables": {
+                    "ASPNETCORE_ENVIRONMENT": "Development",
+                    "DOTNET_ENVIRONMENT": "Development",
+                    "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:{{port + 1000}}",
+                    "ASPIRE_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:{{port + 2000}}",
+                    "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
+                  }
+                }
+              }
+            }
+
+            """;
+    }
+
+    private static bool UsesServiceBus(IReadOnlyList<AspireService> services) =>
+        services.Any(s => s.Definition.Messaging?.Broker == MessagingSettings.AzureServiceBus);
+
+    private static string TopicVariable(string topic)
+    {
+        var parts = topic.Split('.', '-');
+        return "topic" + string.Concat(parts.Select(p => p.Length == 0 ? p : char.ToUpperInvariant(p[0]) + p[1..]));
+    }
+
+    private static bool UsesKafka(IReadOnlyList<AspireService> services) =>
+        services.Any(s => s.Definition.Messaging?.Broker == MessagingSettings.Kafka);
+
+    private static string Variable(AspireService service) => EntityCodeGen.Camel(service.Name);
+
+    private static string Property(AspireService service) => service.Name;
+
+    private static Guid StableGuid(string name) =>
+        new(SHA256.HashData(Encoding.UTF8.GetBytes("msg-apphost:" + name)).AsSpan(0, 16));
+}

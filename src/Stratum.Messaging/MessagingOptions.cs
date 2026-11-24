@@ -33,5 +33,17 @@ public sealed class MessagingOptions
 
     public bool OutboxDispatcherEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Keep a journal of received messages (msg_received), failures included: what Stratum Studio's "Event traces"
+    /// shows. Turn off to save the extra write per message.
+    /// </summary>
+    public bool JournalEnabled { get; set; } = true;
+
+    /// <summary>Sent outbox messages and journal rows older than this are deleted (pending messages are kept).</summary>
+    public TimeSpan TraceRetention { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>How often old messages are deleted.</summary>
+    public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromHours(1);
+
     internal TimeSpan BackoffFor(int attempt) => RetryDelay * Math.Pow(2, Math.Max(0, attempt - 1));
 }

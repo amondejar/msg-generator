@@ -10,10 +10,10 @@ namespace Stratum.Core.Generation;
 /// </summary>
 internal static partial class ProjectFileMerger
 {
-    [GeneratedRegex("""<(?<item>PackageVersion|PackageReference|ProjectReference)\s+Include="(?<id>[^"]+)"[^>]*/>""")]
+    [GeneratedRegex("""<(?<item>PackageVersion|PackageReference|ProjectReference|Using)\s+Include="(?<id>[^"]+)"[^>]*/>""")]
     private static partial Regex Item();
 
-    /// <summary>MSBuild items (PackageVersion / PackageReference / ProjectReference).</summary>
+    /// <summary>MSBuild items (PackageVersion / PackageReference / ProjectReference / Using).</summary>
     /// <returns>The merged text, or null when nothing is missing.</returns>
     public static string? MergeItems(string text, string rendered)
     {
@@ -74,11 +74,25 @@ internal static partial class ProjectFileMerger
             return null;
         }
 
-        var result = Regex.Replace(text, """[ \t]*<(?<item>PackageVersion|PackageReference|ProjectReference)\s+Include="(?<id>[^"]+)"[^>]*/>[ \t]*\r?\n?""", m =>
+        var result = Regex.Replace(text, """[ \t]*<(?<item>PackageVersion|PackageReference|ProjectReference|Using)\s+Include="(?<id>[^"]+)"[^>]*/>[ \t]*\r?\n?""", m =>
             obsolete.Contains($"{m.Groups["item"].Value}|{Normalize(m.Groups["id"].Value)}") ? string.Empty : m.Value);
 
         // ItemGroups left empty.
         result = Regex.Replace(result, @"[ \t]*<ItemGroup>\s*</ItemGroup>[ \t]*\r?\n(?:[ \t]*\r?\n)?", string.Empty);
+        return result == text ? null : result;
+    }
+
+    [GeneratedRegex("""(?<prefix><PackageVersion\s+Include="Stratum\.[^"]+"\s+Version=")(?<version>[^"]+)(?<suffix>")""")]
+    private static partial Regex StratumVersion();
+
+    /// <summary>
+    /// Every Stratum.* package of Directory.Packages.props at <paramref name="version"/>: the generated code goes with the
+    /// packages of its own version (and mixing versions of Stratum.* packages fails the restore).
+    /// </summary>
+    /// <returns>The new text, or null when they already are.</returns>
+    public static string? AlignStratumVersions(string text, string version)
+    {
+        var result = StratumVersion().Replace(text, m => m.Groups["prefix"].Value + version + m.Groups["suffix"].Value);
         return result == text ? null : result;
     }
 

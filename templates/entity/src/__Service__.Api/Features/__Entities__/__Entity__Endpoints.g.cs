@@ -23,11 +23,23 @@ public static partial class {{Entity}}Endpoints
 
         var group = api.MapGroup("/{{entities-kebab}}").WithTags("{{Entities}}");
 
-        group.MapGet(string.Empty, List).WithName("List{{Entities}}");
-        group.MapGet("/{id:guid}", Get).WithName("Get{{Entity}}");
-        group.MapPost(string.Empty, Create).WithName("Create{{Entity}}");
-        group.MapPut("/{id:guid}", Update).WithName("Update{{Entity}}");
-        group.MapDelete("/{id:guid}", Delete).WithName("Delete{{Entity}}");
+        group.MapGet(string.Empty, List).WithName("List{{Entities}}")
+            .WithSummary("List {{Entities}}")
+            .WithDescription("Pages of {{Entities}}, oldest first (page from 1, pageSize up to 100).");
+        group.MapGet("/{id:guid}", Get).WithName("Get{{Entity}}")
+            .WithSummary("Get a {{Entity}}")
+            .WithDescription("Returns the {{Entity}} with that id, or 404.");
+        group.MapPost(string.Empty, Create).WithName("Create{{Entity}}")
+            .WithSummary("Create a {{Entity}}")
+            .WithDescription("Creates a {{Entity}}: 201 with its Location, or 400 with the validation errors.")
+            .ProducesValidationProblem();
+        group.MapPut("/{id:guid}", Update).WithName("Update{{Entity}}")
+            .WithSummary("Replace a {{Entity}}")
+            .WithDescription("Replaces all the data of the {{Entity}} (lists included): 204, 400 or 404.")
+            .ProducesValidationProblem();
+        group.MapDelete("/{id:guid}", Delete).WithName("Delete{{Entity}}")
+            .WithSummary("Delete a {{Entity}}")
+            .WithDescription("Deletes the {{Entity}}: 204, or 404 when it doesn't exist.");
 
         MapCustomEndpoints(group);
         return api;
@@ -36,12 +48,12 @@ public static partial class {{Entity}}Endpoints
     static partial void MapCustomEndpoints(RouteGroupBuilder group);
 
     private static async Task<Ok<PagedResponse<{{Entity}}Response>>> List(
-        {{Service}}DbContext db, int? page, int? pageSize, CancellationToken cancellationToken)
+        {{Service}}DbContext db, int? page, int? pageSize, {{ListFilterParameters}}CancellationToken cancellationToken)
     {
         var (p, size) = PagedResponse<{{Entity}}Response>.Normalize(page, pageSize);
 
-        var total = await db.{{Entities}}.CountAsync(cancellationToken);
-        var items = await db.{{Entities}}
+        var total = await db.{{Entities}}{{ListFilters}}.CountAsync(cancellationToken);
+        var items = await db.{{Entities}}{{ListFilters}}
             .AsNoTracking()
             .OrderBy(e => e.Id)   // UUID v7 → creation order, stable pagination
             .Skip((p - 1) * size)
@@ -66,7 +78,7 @@ public static partial class {{Entity}}Endpoints
     // @stratum:end
         {{Entity}}Request request,
         {{Service}}DbContext db,
-        // @stratum:if publishEvents
+        // @stratum:if publishCreated
         IEventBus bus,
         // @stratum:end
         CancellationToken cancellationToken)
@@ -78,11 +90,18 @@ public static partial class {{Entity}}Endpoints
         }
 
         // @stratum:end
+        // @stratum:if hasUnique
+        if (await DuplicateReferencesAsync(null, request, db, cancellationToken) is { } duplicate)
+        {
+            return duplicate;
+        }
+
+        // @stratum:end
         var entity = request.ToEntity();
 
         db.{{Entities}}.Add(entity);
-        // @stratum:if publishEvents
-        await bus.PublishAsync(new {{Entity}}Created(entity.Id, {{EntityArguments}}), cancellationToken);   // saved with the entity (outbox)
+        // @stratum:if publishCreated
+        await bus.PublishAsync(new {{Entity}}Created(entity.Id, {{CreatedEventArguments}}), cancellationToken);   // saved with the entity (outbox)
         // @stratum:end
         await db.SaveChangesAsync(cancellationToken);
 
@@ -97,7 +116,7 @@ public static partial class {{Entity}}Endpoints
         Guid id,
         {{Entity}}Request request,
         {{Service}}DbContext db,
-        // @stratum:if publishEvents
+        // @stratum:if publishUpdated
         IEventBus bus,
         // @stratum:end
         CancellationToken cancellationToken)
@@ -115,10 +134,17 @@ public static partial class {{Entity}}Endpoints
         }
 
         // @stratum:end
+        // @stratum:if hasUnique
+        if (await DuplicateReferencesAsync(id, request, db, cancellationToken) is { } duplicate)
+        {
+            return duplicate;
+        }
+
+        // @stratum:end
         request.ApplyTo(entity);
         entity.UpdatedAt = DateTimeOffset.UtcNow;
-        // @stratum:if publishEvents
-        await bus.PublishAsync(new {{Entity}}Updated(entity.Id, {{EntityArguments}}), cancellationToken);
+        // @stratum:if publishUpdated
+        await bus.PublishAsync(new {{Entity}}Updated(entity.Id, {{UpdatedEventArguments}}), cancellationToken);
         // @stratum:end
 
         await db.SaveChangesAsync(cancellationToken);
@@ -132,7 +158,7 @@ public static partial class {{Entity}}Endpoints
     // @stratum:end
         Guid id,
         {{Service}}DbContext db,
-        // @stratum:if publishEvents
+        // @stratum:if publishDeleted
         IEventBus bus,
         // @stratum:end
         CancellationToken cancellationToken)
@@ -145,7 +171,7 @@ public static partial class {{Entity}}Endpoints
         }
 
         // @stratum:end
-        // @stratum:if publishEvents
+        // @stratum:if publishDeleted
         // The delete and its event in one transaction (ExecuteDelete doesn't go through SaveChanges).
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var deleted = await db.{{Entities}}.Where(e => e.Id == id).ExecuteDeleteAsync(cancellationToken);
@@ -169,6 +195,18 @@ public static partial class {{Entity}}Endpoints
     {
         var errors = new Dictionary<string, string[]>();
 {{ReferenceChecks}}
+
+        return errors.Count == 0 ? null : TypedResults.ValidationProblem(errors);
+    }
+    // @stratum:end
+    // @stratum:if hasUnique
+
+    /// <summary>400 when a 1–1 relation is already taken by another row (instead of a unique index error).</summary>
+    private static async Task<ValidationProblem?> DuplicateReferencesAsync(
+        Guid? id, {{Entity}}Request request, {{Service}}DbContext db, CancellationToken cancellationToken)
+    {
+        var errors = new Dictionary<string, string[]>();
+{{UniqueChecks}}
 
         return errors.Count == 0 ? null : TypedResults.ValidationProblem(errors);
     }

@@ -27,6 +27,21 @@ public sealed record ServiceDefinition
     /// <summary>Events of other services this one reacts to. Null when there are none.</summary>
     public IReadOnlyList<Subscription>? Subscriptions { get; init; }
 
+    /// <summary>Enumerations entities can use as property types.</summary>
+    public IReadOnlyList<EnumDefinition>? Enums { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyCollection<string> EnumNames => [.. (Enums ?? []).Select(e => e.Name)];
+
+    /// <summary>
+    /// Types of the items of a list property ("Items:OrderItem[]"): part of the entity that owns the list, stored in
+    /// a table of their own and replaced with the list.
+    /// </summary>
+    public IReadOnlyList<ItemTypeDefinition>? Types { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyCollection<string> TypeNames => [.. (Types ?? []).Select(t => t.Name)];
+
     /// <summary>
     /// Property renames not yet captured by a migration. Without them EF Core would drop the column and
     /// create a new one (losing data); Stratum turns them into <c>RenameColumn</c>. Null when there are none.

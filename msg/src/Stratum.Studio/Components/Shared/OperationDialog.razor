@@ -1,0 +1,74 @@
+@* Add or change a business operation of an aggregate (clean-ddd). *@
+<Modal Title="@(Editor.Original is null ? $"Nueva operación de {Entity.Name}" : $"Operación {Editor.Original.Name}")"
+       Subtitle="Una acción de negocio: Stratum genera el comando, su handler, el evento de dominio y el endpoint. La regla la escribes tú."
+       Error="@(attempted ? Error : null)" Width="700" OnSave="Save" OnClose="OnClose">
+    <div class="row">
+        <label class="field">
+            Nombre
+            <input type="text" @bind="Editor.Name" placeholder="Confirm" autocomplete="off" />
+        </label>
+        <label class="field">
+            Evento de dominio
+            <input type="text" @bind="Editor.Event" placeholder="@DefaultEvent" autocomplete="off" />
+        </label>
+    </div>
+    <div class="stack" style="gap: 6px">
+        <span class="hint" style="font-weight: 600">Parámetros <span style="font-weight: 400">(opcionales: lo que hay que pedir para hacerla, p. ej. el motivo de una cancelación)</span></span>
+        <FieldRowsEditor Rows="Editor.Parameters" Enums="Enums" Types="Types" AddLabel="+ Añadir parámetro" NamePlaceholder="Reason" />
+    </div>
+    <label class="row" style="gap: 10px; flex-wrap: nowrap; align-items: flex-start">
+        <input type="checkbox" @bind="Editor.Publish" style="flex: none; margin-top: 2px" />
+        <span style="flex: 1">Publicar <span class="mono">@EventName</span> para otros servicios <span class="hint">(evento de integración; activa la mensajería si hace falta)</span></span>
+    </label>
+    <div class="sig">POST /api/v1/@Route/{id}/@Kebab · @(Entity.Name).@(Pascal)(@Editor.ParameterSpec) → @EventName</div>
+    @if (Editor.Original is null)
+    {
+        <span class="hint">Tu regla va en <span class="mono">@(Entity.Name).@(Pascal).cs</span>: Stratum la crea una vez y no la vuelve a tocar.</span>
+    }
+</Modal>
+
+@code {
+    private bool attempted;
+
+    [Parameter, EditorRequired] public EntityEditors.OperationEditor Editor { get; set; } = default!;
+
+    [Parameter, EditorRequired] public EntityDraft Entity { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ServiceDraft Draft { get; set; } = default!;
+
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private IReadOnlyList<string> Enums => [.. Draft.Enums.Where(e => !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name.Trim())];
+
+    private IReadOnlyList<string> Types => [.. Draft.Types.Where(t => !string.IsNullOrWhiteSpace(t.Name)).Select(t => t.Name.Trim())];
+
+    private string? Error => Editor.Validate(Entity, Enums, Types);
+
+    private string Pascal => Safe(() => ServiceName.Normalize(Editor.Name), string.IsNullOrWhiteSpace(Editor.Name) ? "Operation" : Editor.Name.Trim());
+
+    private string Kebab => ServiceName.ToKebab(Pascal);
+
+    private string DefaultEvent => string.IsNullOrWhiteSpace(Editor.Name) ? Entity.Name + "Confirmed" : ModelRules.DefaultEvent(Entity.Name, Pascal);
+
+    private string EventName => string.IsNullOrWhiteSpace(Editor.Event) ? DefaultEvent : Editor.Event.Trim();
+
+    private string Route => ServiceName.ToKebab(Safe(() => ServiceName.Normalize(Entity.EffectivePlural), Entity.EffectivePlural));
+
+    private static string Safe(Func<string> f, string fallback)
+    {
+        try { return f(); }
+        catch (StratumException) { return fallback; }
+    }
+
+    private async Task Save()
+    {
+        attempted = true;
+        if (Error is null)
+        {
+            Editor.ApplyTo(Entity);
+            await OnSaved.InvokeAsync();
+        }
+    }
+}

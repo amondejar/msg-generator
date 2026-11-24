@@ -1,0 +1,63 @@
+name: release
+
+# Publishes Stratum to nuget.org when a version tag is pushed (git tag v0.36.0 && git push origin v0.36.0).
+# Uses nuget.org Trusted Publishing: no API key stored here. One-time setup (see README, "Publicar una versión"):
+#   - nuget.org → your user → Trusted Publishing → policy for this repository and the workflow file release.yml
+#   - GitHub → Settings → Secrets and variables → Actions → secret NUGET_USER = your nuget.org user name (not a key)
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write   # GitHub release with the packages
+  id-token: write   # OIDC token for nuget.org Trusted Publishing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: The tag matches the version in Directory.Build.props
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props)"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::The tag is v$tag but Directory.Build.props says $version. Change one of them and tag again."
+            exit 1
+          fi
+
+      # Same checks as ci.yml: nothing is published unless every generated variant builds, runs and passes its tests.
+      - name: Smoke test
+        run: bash ./scripts/smoke-test.sh
+
+      # StratumPublished: the CLI knows its packages are on nuget.org (no local package folder, no bundled packages).
+      - name: Pack
+        run: dotnet pack Stratum.slnx -c Release -p:StratumPublished=true -o artifacts/release -nologo
+
+      - name: NuGet login (Trusted Publishing)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      # Symbols (.snupkg) next to each package are pushed with it. --skip-duplicate: re-running the job is safe.
+      - name: Push to nuget.org
+        run: >
+          dotnet nuget push "artifacts/release/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/release/*.nupkg
+            artifacts/release/*.snupkg
+          generate_release_notes: true

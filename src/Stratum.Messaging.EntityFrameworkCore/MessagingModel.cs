@@ -3,15 +3,16 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Stratum.Messaging.EntityFrameworkCore;
 
-/// <summary>Tables msg_outbox and msg_inbox. "dotnet ef migrations add" creates them.</summary>
+/// <summary>Tables msg_outbox, msg_inbox and msg_received. "dotnet ef migrations add" creates them.</summary>
 public static class MessagingModel
 {
-    /// <summary>Both tables, from OnModelCreating. (Stratum generates IEntityTypeConfiguration classes instead.)</summary>
+    /// <summary>The three tables, from OnModelCreating. (Stratum generates IEntityTypeConfiguration classes instead.)</summary>
     public static ModelBuilder AddStratumMessaging(this ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.Entity<OutboxMessage>(ConfigureOutbox);
         modelBuilder.Entity<InboxMessage>(ConfigureInbox);
+        modelBuilder.Entity<ReceivedMessage>(ConfigureReceived);
         return modelBuilder;
     }
 
@@ -36,5 +37,22 @@ public static class MessagingModel
         builder.HasKey(m => new { m.MessageId, m.Consumer });
         builder.Property(m => m.MessageId).HasMaxLength(100);
         builder.Property(m => m.Consumer).HasMaxLength(500);
+    }
+
+    /// <summary>Journal of received messages, failures included (Stratum Studio → Event traces).</summary>
+    public static void ConfigureReceived(EntityTypeBuilder<ReceivedMessage> builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.ToTable("msg_received");
+        builder.HasKey(m => new { m.MessageId, m.Consumer });
+        builder.Property(m => m.MessageId).HasMaxLength(100);
+        builder.Property(m => m.Consumer).HasMaxLength(500);
+        builder.Property(m => m.Topic).HasMaxLength(250).IsRequired();
+        builder.Property(m => m.Source).HasMaxLength(250).IsRequired();
+        builder.Property(m => m.CorrelationId).HasMaxLength(100);
+        builder.Property(m => m.TraceId).HasMaxLength(32);
+        builder.Property(m => m.Status).HasMaxLength(20).IsRequired();
+        builder.Property(m => m.LastError).HasMaxLength(2000);
+        builder.HasIndex(m => m.UpdatedAt);
     }
 }

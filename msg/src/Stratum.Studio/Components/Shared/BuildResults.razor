@@ -1,0 +1,74 @@
+@* Summary and output of the last build / test run of a folder (a service or the system). *@
+@implements IDisposable
+@inject BuildRunner Builds
+@inject ProcessRunner Runner
+
+@foreach (var kind in new[] { BuildRunner.Test, BuildRunner.Build })
+{
+    if (Builds.Report(kind, Directory) is not { } report || Runner.Get(BuildRunner.JobKey(kind, Directory)) is not { } job)
+    {
+        continue;
+    }
+
+    <section class="stack" aria-label="@(kind == BuildRunner.Test ? "Tests" : "Compilación")">
+        <h2 class="section">@(kind == BuildRunner.Test ? "Tests" : "Compilación")</h2>
+        @if (job.Status != JobStatus.Running)
+        {
+            <div class="stats">
+                @if (kind == BuildRunner.Test && report.Passed is not null)
+                {
+                    <div class="card"><b style="color: var(--ok)">@report.Passed</b>pasan</div>
+                    <div class="card"><b style="color: @(report.Failed > 0 ? "var(--err)" : "inherit")">@report.Failed</b>fallan</div>
+                    @if (report.Skipped > 0)
+                    {
+                        <div class="card"><b>@report.Skipped</b>omitidos</div>
+                    }
+                }
+                <div class="card"><b style="color: @(report.Errors.Count > 0 ? "var(--err)" : "inherit")">@report.Errors.Count</b>errores de compilación</div>
+                <div class="card"><b>@report.Warnings.Count</b>avisos</div>
+            </div>
+        }
+        @if (report.Errors.Count > 0)
+        {
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 90px 2.6fr 1.6fr 110px"><span>Error</span><span>Mensaje</span><span>Archivo</span><span></span></div>
+                @foreach (var error in report.Errors.Take(50))
+                {
+                    <div class="tr" style="grid-template-columns: 90px 2.6fr 1.6fr 110px">
+                        <span class="mono" style="color: var(--err)">@error.Code</span>
+                        <span>@error.Message</span>
+                        <span class="mono hint" title="@error.File">@Path.GetFileName(error.File)@(error.Line is { } l ? $":{l}" : string.Empty)</span>
+                        <OpenInEditor Path="@error.File" Line="@error.Line" Label="Abrir" Compact="true" />
+                    </div>
+                }
+            </div>
+        }
+        @if (report.Failures.Count > 0)
+        {
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 2fr 3fr"><span>Test que falla</span><span>Motivo</span></div>
+                @foreach (var failure in report.Failures.Take(50))
+                {
+                    <div class="tr" style="grid-template-columns: 2fr 3fr">
+                        <span class="mono">@failure.Name.Split('.').TakeLast(2).Aggregate((a, b) => $"{a}.{b}")</span>
+                        <span class="hint">@failure.Message</span>
+                    </div>
+                }
+            </div>
+        }
+        <details open="@(job.Status == JobStatus.Running)">
+            <summary class="hint">Salida completa</summary>
+            <JobOutput Key="@BuildRunner.JobKey(kind, Directory)" Lines="18" />
+        </details>
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Directory { get; set; } = string.Empty;
+
+    protected override void OnInitialized() => Runner.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Runner.Changed -= OnChanged;
+}

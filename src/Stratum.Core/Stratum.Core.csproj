@@ -14,4 +14,10 @@
                       LogicalName="templates/$([System.String]::Copy('%(RecursiveDir)').Replace('\', '/'))%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!-- Sin plantillas la CLI compila pero no sabe generar nada: mejor que falle aquí, diciendo por qué. -->
+  <Target Name="StratumCheckTemplates" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)..\..\templates\service') Or !Exists('$(MSBuildThisFileDirectory)..\..\templates\entity')"
+           Text="Falta la carpeta templates del repositorio de Stratum (templates\service, templates\entity...). Vuelve a copiarla del zip de esta versión y recompila." />
+  </Target>
+
 </Project>

@@ -2,11 +2,11 @@
 @implements IDisposable
 @inject StudioState State
 
-<PageTitle>Revisar y aplicar · Stratum Studio</PageTitle>
+<PageTitle>@L("Revisar y aplicar", "Review and apply") · Stratum Studio</PageTitle>
 
 @if (State.Current is not { } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
 }
 else
 {
@@ -15,25 +15,24 @@ else
     <main class="content">
         <div class="row" style="justify-content: space-between; align-items: flex-end">
             <div>
-                <h1>Revisar y aplicar</h1>
+                <h1>@L("Revisar y aplicar", "Review and apply")</h1>
                 <p class="lead">
-                    @(draft.IsNew ? $"Servicio nuevo {draft.Name} en la carpeta {draft.Directory}." : $"Cambios en {draft.Name}.")
-                    Revisa qué va a escribir Stratum en tu repositorio.
+                    @(draft.IsNew ? L($"Servicio nuevo {draft.Name} en la carpeta {draft.Directory}.", $"New service {draft.Name} in the folder {draft.Directory}.") : L($"Cambios en {draft.Name}.", $"Changes in {draft.Name}."))
+                    @L("Revisa qué va a escribir Stratum en tu repositorio.", "Review what Stratum is going to write in your repository.")
                 </p>
             </div>
-            <div class="stack" style="gap: 4px; align-items: flex-end">
-                <button type="button" class="btn btn-primary" style="min-height: 44px" disabled="@(plan is null || changes.Count == 0)" @onclick="Apply">
-                    Aplicar al repositorio
-                </button>
-                @if (plan is null)
-                {
-                    <span class="hint" style="color: var(--err)">Corrige los problemas de abajo para poder aplicar.</span>
-                }
-                else if (changes.Count == 0)
-                {
-                    <span class="hint">Nada que aplicar: todo está escrito.</span>
-                }
-            </div>
+            @if (plan is null || changes.Count > 0)
+            {
+                <div class="stack" style="gap: 4px; align-items: flex-end">
+                    <button type="button" class="btn btn-primary" style="min-height: 44px" disabled="@(plan is null)" @onclick="Apply">
+                        @L("Aplicar al repositorio", "Apply to the repository")
+                    </button>
+                    @if (plan is null)
+                    {
+                        <span class="hint" style="color: var(--err)">@L("Corrige los problemas de abajo para poder aplicar.", "Fix the problems below to be able to apply.")</span>
+                    }
+                </div>
+            }
         </div>
 
         @if (State.LastMessage is { } message)
@@ -43,29 +42,31 @@ else
                 <div class="row" style="margin-top: 10px">
                     @if (draft.Entities.Count > 0)
                     {
-                        <a class="btn" href="service/data">Crear la migración →</a>
+                        <a class="btn" href="service/data">@L("Crear la migración →", "Create the migration →")</a>
                     }
-                    <a class="btn" href="run">Ejecutar el sistema →</a>
-                    <span class="mono hint">o: dotnet test @(draft.Directory)</span>
+                    <a class="btn" href="run">@L("Ejecutar el sistema →", "Run the system →")</a>
+                    <span class="mono hint">@L("o:", "or:") dotnet test @(draft.Directory)</span>
                 </div>
             </div>
         }
 
         <ProblemList />
 
-        @if (plan is not null)
+        @if (plan is not null && changes.Count == 0)
+        {
+            <div class="card stack" style="gap: 6px">
+                <b>@L("✔ Todo está escrito", "✔ Everything is written")</b>
+                <span class="hint">@L(@<text>El código de @draft.Name coincide con su stratum.json. Cambia algo en <a href="service">General</a>, <a href="entities">Entidades</a> o <a href="service/messaging">Mensajería</a> y vuelve aquí para ver qué escribiría Stratum.</text>, @<text>The code of @draft.Name matches its stratum.json. Change something in <a href="service">General</a>, <a href="entities">Entities</a> or <a href="service/messaging">Messaging</a> and come back here to see what Stratum would write.</text>)</span>
+            </div>
+        }
+        else if (plan is not null)
         {
             <div class="stats">
-                <div class="card"><b style="color: var(--ok)">@Count(changes, ChangeKind.Create)</b>archivos nuevos</div>
-                <div class="card"><b style="color: var(--warn)">@Count(changes, ChangeKind.Regenerate)</b>regenerados por Stratum</div>
-                <div class="card"><b style="color: #67E8F9">@Count(changes, ChangeKind.Merge)</b>completados (solo se añade)</div>
-                <div class="card"><b style="@(changes.Any(c => c.TouchesUserCode) ? "color: var(--err)" : "")">@changes.Count(c => c.TouchesUserCode)</b>archivos tuyos reemplazados o borrados</div>
+                <div class="card"><b style="color: var(--ok)">@Count(changes, ChangeKind.Create)</b>@L("archivos nuevos", "new files")</div>
+                <div class="card"><b style="color: var(--warn)">@Count(changes, ChangeKind.Regenerate)</b>@L("regenerados por Stratum", "regenerated by Stratum")</div>
+                <div class="card"><b style="color: #67E8F9">@Count(changes, ChangeKind.Merge)</b>@L("completados (solo se añade)", "completed (only added to)")</div>
+                <div class="card"><b style="@(changes.Any(c => c.TouchesUserCode) ? "color: var(--err)" : "")">@changes.Count(c => c.TouchesUserCode)</b>@L("archivos tuyos reemplazados o borrados", "of your files replaced or deleted")</div>
             </div>
-
-            @if (changes.Count == 0)
-            {
-                <p class="lead">No hay cambios pendientes: el código del servicio coincide con su stratum.json. Cambia algo en <a href="service">General</a>, <a href="entities">Entidades</a> o <a href="service/messaging">Mensajería</a> y vuelve aquí.</p>
-            }
 
             @foreach (var (kind, title, css, symbol) in Groups)
             {
@@ -77,7 +78,7 @@ else
                         @foreach (var change in group)
                         {
                             <button type="button" class="@(change.Path == selected?.Path ? "sel" : "")" @onclick="() => selectedPath = change.Path">
-                                <span class="@css">@symbol</span> @change.Path @if (change.TouchesUserCode) { <small style="color: var(--err)">· tuyo</small> }
+                                <span class="@css">@symbol</span> @change.Path @if (change.TouchesUserCode) { <small style="color: var(--err)">· @L("tuyo", "yours")</small> }
                             </button>
                         }
                     </div>
@@ -91,7 +92,7 @@ else
         }
     </main>
 
-    <aside class="preview" aria-label="Diferencias">
+    <aside class="preview" aria-label="@L("Diferencias", "Differences")">
         @if (selected is { } current)
         {
             <div class="hint mono" style="padding: 12px 20px; border-bottom: 1px solid var(--line)">@current.Path</div>
@@ -100,19 +101,19 @@ else
         }
         else
         {
-            <p class="hint" style="padding: 16px 20px">Selecciona un archivo para ver qué cambia.</p>
+            <p class="hint" style="padding: 16px 20px">@L("Selecciona un archivo para ver qué cambia.", "Select a file to see what changes.")</p>
         }
     </aside>
 }
 
 @code {
-    private static readonly (ChangeKind Kind, string Title, string Css, string Symbol)[] Groups =
+    private static (ChangeKind Kind, string Title, string Css, string Symbol)[] Groups =>
     [
-        (ChangeKind.Create, "Nuevos · a partir de ahora son tuyos", "k-create", "+"),
-        (ChangeKind.Regenerate, "Regenerados · gestionados por Stratum (*.g.cs, stratum.json)", "k-regen", "~"),
-        (ChangeKind.Merge, "Completados · solo se añade lo que falta", "k-merge", "±"),
-        (ChangeKind.Replace, "Reemplazados · archivos tuyos de la entidad que conviertes al formato editable", "k-del", "!"),
-        (ChangeKind.Delete, "Eliminados", "k-del", "−"),
+        (ChangeKind.Create, L("Nuevos · a partir de ahora son tuyos", "New · from now on they are yours"), "k-create", "+"),
+        (ChangeKind.Regenerate, L("Regenerados · gestionados por Stratum (*.g.cs, stratum.json)", "Regenerated · managed by Stratum (*.g.cs, stratum.json)"), "k-regen", "~"),
+        (ChangeKind.Merge, L("Completados · solo se añade lo que falta", "Completed · only what's missing is added"), "k-merge", "±"),
+        (ChangeKind.Replace, L("Reemplazados · archivos tuyos de la entidad que conviertes al formato editable", "Replaced · your files of the entity you convert to the editable format"), "k-del", "!"),
+        (ChangeKind.Delete, L("Eliminados", "Deleted"), "k-del", "−"),
     ];
 
     private string? selectedPath;

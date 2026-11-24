@@ -40,7 +40,7 @@ public sealed record Subscription
     public string Topic => TopicFor(Service, Entity, Event);
 
     public static string TopicFor(string service, string entity, string eventName) =>
-        $"{ServiceName.ToKebab(service)}.{Generation.EntityCodeGen.Kebab(entity)}-{eventName.ToLowerInvariant()}";
+        $"{ServiceName.ToKebab(service)}.{Generation.EntityCodeGen.Kebab(entity)}-{Generation.EntityCodeGen.Kebab(eventName)}";
 
     public bool Matches(Subscription other) =>
         other is not null && other.Service == Service && other.Entity == Entity && other.Event == Event;
@@ -92,7 +92,17 @@ public sealed record EntityDefinition
     public bool? PublishEvents { get; init; }
 
     [System.Text.Json.Serialization.JsonIgnore]
-    public bool Publishes => PublishEvents == true;
+    public bool Publishes => PublishEvents == true && (PublishedEvents is null || PublishedEvents.Count > 0);
+
+    /// <summary>
+    /// Which of Created / Updated / Deleted it publishes, when not all three (e.g. ["Created"]). Null = the three
+    /// (as before this option existed).
+    /// </summary>
+    public IReadOnlyList<string>? PublishedEvents { get; init; }
+
+    /// <summary>Whether it publishes {Entity}{eventName} (Created, Updated or Deleted).</summary>
+    public bool PublishesEvent(string eventName) =>
+        PublishEvents == true && (PublishedEvents is null || PublishedEvents.Contains(eventName, StringComparer.OrdinalIgnoreCase));
 
     /// <summary>Business operations of the aggregate (clean-ddd only).</summary>
     public IReadOnlyList<EntityOperation>? Operations { get; init; }
@@ -118,6 +128,100 @@ public sealed record PropertyDefinition
     /// Type is then "guid". Null for plain properties.
     /// </summary>
     public string? References { get; init; }
+
+    /// <summary>
+    /// Only for a reference: at most one row may point to the same target (a 1–1 relation, e.g. Profile.CustomerId:
+    /// a customer has one profile). A unique index in the database. Null = false (1–N).
+    /// </summary>
+    public bool? Unique { get; init; }
+
+    /// <summary>
+    /// Only for a reference: what deleting the target does to this row (<see cref="DeleteBehaviors"/>): restrict
+    /// (409, the default: null), cascade (deleted too) or setNull (the reference is emptied; only optional ones).
+    /// </summary>
+    public string? OnDelete { get; init; }
+
+    /// <summary>Enumeration of the service this property uses ("Status:OrderStatus"); Type is then "enum".</summary>
+    public string? Enum { get; init; }
+
+    /// <summary>
+    /// A list: "Tags:string[]" (Type string), "Statuses:OrderStatus[]" (Type enum) or "Items:OrderItem[]" (Type
+    /// object, <see cref="Of"/> OrderItem). Never null in the code: no items is an empty list. Null = false.
+    /// </summary>
+    public bool? List { get; init; }
+
+    /// <summary>Item type of the service (<see cref="ServiceDefinition.Types"/>) of an "object" list.</summary>
+    public string? Of { get; init; }
+
+    /// <summary>
+    /// Only in the contracts of integration events (subscriptions): the fields of the items of an "object" list, so
+    /// the subscriber doesn't need the publisher's item type.
+    /// </summary>
+    public IReadOnlyList<PropertyDefinition>? Fields { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsList => List == true;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsObjectList => IsList && Type == PropertyTypes.ObjectType;
+
+    /// <summary>One item of an item type inside the entity ("ShippingAddress:Address"): its columns in the same table.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsObject => !IsList && Type == PropertyTypes.ObjectType;
+
+    /// <summary>A reference that allows one row per target (1–1).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsOneToOne => References is not null && Unique == true;
+
+    /// <summary>What deleting the target of this reference does (restrict when not set).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DeleteBehavior => OnDelete ?? DeleteBehaviors.Restrict;
+}
+
+/// <summary>What happens to the rows that point to an entity when it is deleted.</summary>
+public static class DeleteBehaviors
+{
+    /// <summary>The delete is refused while rows point to it (409 with who uses it).</summary>
+    public const string Restrict = "restrict";
+
+    /// <summary>The rows that point to it are deleted too (in the database).</summary>
+    public const string Cascade = "cascade";
+
+    /// <summary>The reference of the rows that point to it is emptied (optional references only).</summary>
+    public const string SetNull = "setNull";
+
+    public static readonly string[] All = [Restrict, Cascade, SetNull];
+
+    /// <summary>"cascade", "set-null", "SetNull"… → the stored name, or null when it isn't one.</summary>
+    public static string? Normalize(string? value) => value?.Replace("-", string.Empty, StringComparison.Ordinal).ToLowerInvariant() switch
+    {
+        "restrict" => Restrict,
+        "cascade" => Cascade,
+        "setnull" or "null" => SetNull,
+        _ => null,
+    };
+}
+
+/// <summary>
+/// The type of the items of a list ("Items:OrderItem[]"), e.g. OrderItem: ProductId, Quantity, UnitPrice. Its properties
+/// are basic types or enumerations (no references, no lists).
+/// </summary>
+public sealed record ItemTypeDefinition
+{
+    public required string Name { get; init; }
+
+    public required IReadOnlyList<PropertyDefinition> Properties { get; init; }
+}
+
+/// <summary>
+/// An enumeration of the service (e.g. OrderStatus: Draft, Confirmed, Shipped). Stored as text in the database and in
+/// the JSON of the API, so values can be added or reordered without touching existing data.
+/// </summary>
+public sealed record EnumDefinition
+{
+    public required string Name { get; init; }
+
+    public required IReadOnlyList<string> Values { get; init; }
 }
 
 /// <summary>
@@ -134,4 +238,13 @@ public sealed record EntityOperation
 
     /// <summary>Domain event raised by the operation (e.g. "OrderConfirmed"). Defaults to entity + past tense.</summary>
     public required string Event { get; init; }
+
+    /// <summary>
+    /// Also an integration event for other services, with its own topic (OrderShipped → orders.order-shipped): the id,
+    /// the data of the entity after the operation and the operation's parameters. Null = false.
+    /// </summary>
+    public bool? Publish { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Publishes => Publish == true;
 }

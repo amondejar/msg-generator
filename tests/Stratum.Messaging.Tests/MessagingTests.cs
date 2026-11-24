@@ -175,6 +175,63 @@ public sealed class MessagingTests
         Assert.Contains("UseInMemory", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task TheJournalRecordsWhatHappenedInEachHandler()
+    {
+        using var host = TestHosts.Create(m => m.Configure(o => o.MaxHandlerAttempts = 3));
+        var probe = host.Services.GetRequiredService<Probe>();
+        var consumer = host.Services.GetRequiredService<IntegrationEventConsumer>();
+        var journal = host.Services.GetRequiredService<InMemoryJournal>();
+
+        probe.FailFirst(1);
+        var retried = Envelope(new OrderCreated(Guid.NewGuid(), 1m));
+        await consumer.HandleAsync(retried, CancellationToken.None);
+
+        probe.FailFirst(int.MaxValue);
+        var failed = Envelope(new OrderCreated(Guid.NewGuid(), 2m));
+        await consumer.HandleAsync(failed, CancellationToken.None);
+
+        var unreadable = Envelope(new OrderCreated(Guid.NewGuid(), 3m)) with { Payload = "{ not json" };
+        await consumer.HandleAsync(unreadable, CancellationToken.None);
+
+        var rows = journal.Received.ToDictionary(r => r.MessageId);
+        Assert.Equal(ReceivedStatus.Processed, rows[retried.MessageId].Status);
+        Assert.Equal(2, rows[retried.MessageId].Attempts);
+        Assert.Null(rows[retried.MessageId].LastError);
+        Assert.Equal(ReceivedStatus.DeadLettered, rows[failed.MessageId].Status);
+        Assert.Equal(3, rows[failed.MessageId].Attempts);
+        Assert.Contains("simulated failure", rows[failed.MessageId].LastError, StringComparison.Ordinal);
+        Assert.Equal(ReceivedStatus.Unreadable, rows[unreadable.MessageId].Status);
+    }
+
+    [Fact]
+    public async Task TheDiagnosticsShowWhatWasSentAndReceived()
+    {
+        using var host = TestHosts.Create();
+        await host.PublishAsync(new OrderCreated(Guid.NewGuid(), 10m));
+        await host.Services.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync();
+        var sent = Assert.Single(host.Services.GetRequiredService<InMemoryTransport>().Sent);
+        await host.Services.GetRequiredService<IntegrationEventConsumer>().HandleAsync(sent, CancellationToken.None);
+
+        var snapshot = await host.Services.GetRequiredService<MessagingDiagnostics>().SnapshotAsync(TimeSpan.FromMinutes(5), 50, CancellationToken.None);
+
+        Assert.Equal("orders", snapshot.Service);
+        Assert.Equal("inMemory", snapshot.Broker);
+        var outbox = Assert.Single(snapshot.Sent);
+        Assert.Equal(SentStatus.Sent, outbox.Status);
+        Assert.Equal(sent.MessageId, outbox.MessageId);
+        Assert.Equal(sent.MessageId, Assert.Single(snapshot.Received).MessageId);
+        Assert.Contains(snapshot.Handles, h => h.Topic == "orders.order-created");
+    }
+
+    [Fact]
+    public void TheTraceIdComesFromTheTraceparent()
+    {
+        Assert.Equal("4bf92f3577b34da6a3ce929d0e0e4736", MessagingTelemetry.TraceIdOf("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"));
+        Assert.Null(MessagingTelemetry.TraceIdOf(null));
+        Assert.Null(MessagingTelemetry.TraceIdOf("nonsense"));
+    }
+
     private static MessageEnvelope Envelope(OrderCreated e) => new()
     {
         MessageId = e.EventId.ToString(),

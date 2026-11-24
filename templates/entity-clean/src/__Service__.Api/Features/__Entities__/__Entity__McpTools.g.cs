@@ -23,9 +23,9 @@ public static partial class {{Entity}}Endpoints
     public static async Task<string> ListTool(
         IQueryHandler<List{{Entities}}, PagedResult<{{Entity}}Dto>> handler,
         [Description("Page, from 1.")] int? page,
-        [Description("Items per page.")] int? pageSize,
+        [Description("Items per page.")] int? pageSize,{{McpListFilterParameterLines}}
         CancellationToken cancellationToken) =>
-        McpResults.ToJson(await List(handler, page, pageSize, cancellationToken));
+        McpResults.ToJson(await List(handler, page, pageSize{{ListFilterArguments}}, cancellationToken));
 
     [McpServerTool(Name = "get_{{entity_snake}}", Title = "Get a {{Entity}}", ReadOnly = true, Idempotent = true, OpenWorld = false)]
     [Description("Gets one {{Entity}} by id.")]

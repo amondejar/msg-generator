@@ -1,0 +1,126 @@
+@page "/"
+@implements IDisposable
+@inject StudioState State
+@inject NavigationManager Nav
+@inject ProcessRunner Runner
+
+<PageTitle>Resumen · Stratum Studio</PageTitle>
+
+<main class="content">
+    <div>
+        <h1>Resumen del sistema</h1>
+        <p class="lead">Cada servicio se describe en su <span class="mono">stratum.json</span> y Stratum genera el código. Desde aquí lo diseñas, ves cómo se comunican y lo ejecutas.</p>
+    </div>
+
+    @if (State.LastMessage is { } message)
+    {
+        <div class="msg ok" role="status">@message</div>
+    }
+
+    @{
+        var services = State.Services;
+        var routes = State.EventRoutes();
+        var entities = services.Sum(s => s.Definition.Entities.Count);
+        var listening = services.Sum(s => s.Definition.Subscriptions?.Count ?? 0);
+        var running = Runner.IsRunning(ServiceCommands.DashboardJob);
+        var problems = routes.Count(r => r.Problem is not null);
+    }
+
+    <section class="kpis" aria-label="Cifras del sistema">
+        <a class="kpi" href="services"><b>@services.Count</b><span>servicio(s)</span></a>
+        <div class="kpi"><b>@entities</b><span>entidad(es)</span></div>
+        <a class="kpi" href="events"><b>@routes.Count</b><span>evento(s) · @listening suscripción(es)</span></a>
+        <a class="kpi" href="run"><b style="color: @(running ? "var(--ok)" : "var(--muted)")">@(running ? "En marcha" : "Parado")</b><span>sistema con Aspire</span></a>
+        @if (problems > 0)
+        {
+            <a class="kpi" href="events" style="border-color: #5C4410"><b style="color: var(--warn)">@problems</b><span>aviso(s) en el mapa de eventos</span></a>
+        }
+    </section>
+
+    @if (problems > 0)
+    {
+        <section class="card stack" style="border-color: #5C4410; gap: 6px" aria-labelledby="h-warnings">
+            <h2 class="section" id="h-warnings" style="margin: 0; color: var(--warn)">Avisos del mapa de eventos</h2>
+            @foreach (var route in routes.Where(r => r.Problem is not null))
+            {
+                <span><span class="mono">@route.EventClass</span> <small class="hint mono">@route.Topic</small> · @route.Problem</span>
+            }
+            <a href="events" style="font-weight: 600; text-decoration: none">Resolverlos en el mapa de eventos →</a>
+        </section>
+    }
+
+    <section class="stack" aria-labelledby="h-start">
+        <h2 class="section" id="h-start">Qué quieres hacer</h2>
+        <div class="actions">
+            <a class="action" href="services"><Icon Name="plus" Size="20" /><span><b>Crear un servicio</b><small>Vertical slice o Clean + DDD, en esta carpeta o en otra.</small></span></a>
+            <a class="action" href="events"><Icon Name="events" Size="20" /><span><b>Conectar servicios</b><small>Quién publica cada evento y quién lo escucha.</small></span></a>
+            <a class="action" href="run"><Icon Name="run" Size="20" /><span><b>Ejecutar el sistema</b><small>Aspire con bases de datos, Kafka y dashboard.</small></span></a>
+            <a class="action" href="templates"><Icon Name="templates" Size="20" /><span><b>Convenciones del equipo</b><small>Plantillas y tokens propios para todos los servicios.</small></span></a>
+        </div>
+    </section>
+
+    <section class="stack" aria-labelledby="h-list">
+        <div class="row" style="justify-content: space-between">
+            <h2 class="section" id="h-list">Servicios</h2>
+            <a href="services" style="font-weight: 600; text-decoration: none">Gestionar →</a>
+        </div>
+        @if (services.Count == 0)
+        {
+            <div class="card stack">
+                <b>El sistema está vacío.</b>
+                <span class="hint">Crea el primer servicio en <a href="services">Servicios</a>.</span>
+            </div>
+        }
+        else
+        {
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 1.4fr 1.2fr 1fr .8fr 1.4fr"><span>Servicio</span><span>Arquitectura</span><span>Base de datos</span><span>Entidades</span><span>Mensajería</span></div>
+                @foreach (var service in services)
+                {
+                    var d = service.Definition;
+                    var publishes = d.Entities.Count(e => e.Publishes);
+                    <div class="tr" style="grid-template-columns: 1.4fr 1.2fr 1fr .8fr 1.4fr; cursor: pointer" @onclick="() => Open(service)" role="button" tabindex="0">
+                        <span><b>@d.Service.Name</b>@if (State.IsExternal(service)) { <br /><small class="hint mono">@State.FullPath(service.Directory)</small> }</span>
+                        <span>@(d.Architecture == Architectures.CleanDdd ? "Clean + DDD" : "Vertical slice")</span>
+                        <span class="hint">@(d.Persistence?.Provider ?? "—")</span>
+                        <span>@d.Entities.Count</span>
+                        <span class="hint">
+                            @if (d.Messaging is null)
+                            {
+                                <span>—</span>
+                            }
+                            else
+                            {
+                                <span>@d.Messaging.Broker · publica @publishes · escucha @(d.Subscriptions?.Count ?? 0)</span>
+                            }
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+</main>
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+        Runner.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        State.Changed -= OnChanged;
+        Runner.Changed -= OnChanged;
+    }
+
+    private void Open(WorkspaceService service)
+    {
+        State.LastMessage = null;
+        State.Open(service);
+        Nav.NavigateTo("service");
+    }
+}

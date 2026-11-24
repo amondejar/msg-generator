@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <!-- @stratum:if cleanDdd -->
+    <Project Path="src/{{Service}}.Domain/{{Service}}.Domain.csproj" />
+    <Project Path="src/{{Service}}.Application/{{Service}}.Application.csproj" />
+    <Project Path="src/{{Service}}.Infrastructure/{{Service}}.Infrastructure.csproj" />
+    <!-- @stratum:end -->
+    <Project Path="src/{{Service}}.Api/{{Service}}.Api.csproj" />
+  </Folder>
+  <!-- @stratum:if tests -->
+  <Folder Name="/tests/">
+    <Project Path="tests/{{Service}}.Api.Tests/{{Service}}.Api.Tests.csproj" />
+  </Folder>
+  <!-- @stratum:end -->
+</Solution>

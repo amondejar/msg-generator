@@ -11,6 +11,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The events designer: one self-contained page served by the Studio (DesignerApi). -->
+    <EmbeddedResource Include="Designer\designer.html" LogicalName="Stratum.Studio.Designer.designer.html" />
+    <EmbeddedResource Include="Designer\entity-designer.html" LogicalName="Stratum.Studio.Designer.entity-designer.html" />
+    <EmbeddedResource Include="Designer\traces.html" LogicalName="Stratum.Studio.Designer.traces.html" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Stratum.Core\Stratum.Core.csproj" />
   </ItemGroup>
 

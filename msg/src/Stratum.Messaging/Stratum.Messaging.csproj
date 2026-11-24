@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Stratum.Messaging</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <Description>Stratum messaging between services: integration events through an outbox (no event lost if the broker is down), idempotent consumers (inbox), retries and dead-letter, tracing across services. Broker-agnostic: add Stratum.Messaging.Kafka or Stratum.Messaging.AzureServiceBus. Framework-only.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Stratum.Messaging.Tests" />
+    <InternalsVisibleTo Include="Stratum.Messaging.EntityFrameworkCore" />
+  </ItemGroup>
+
+</Project>

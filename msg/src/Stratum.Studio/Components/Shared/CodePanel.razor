@@ -1,0 +1,74 @@
+@* Right-hand panel: tabs over a set of generated files, with syntax highlighting. *@
+
+<aside class="preview" aria-label="@Label" style="@(Wide ? "max-width: none; border-left: 0; flex: 1 1 100%" : null)">
+    @{
+        var groups = Tabs.GroupBy(t => Layer(t.Path)).OrderBy(g => LayerOrder(g.Key)).ToList();
+    }
+    <div class="tabs" role="toolbar" aria-label="Archivos">
+        @foreach (var group in groups)
+        {
+            @if (groups.Count > 1)
+            {
+                <span class="tab-group">@group.Key</span>
+            }
+            @foreach (var tab in group)
+            {
+                <button type="button" aria-pressed="@(tab.Path == Selected?.Path ? "true" : "false")" title="@tab.Path" @onclick="() => selectedPath = tab.Path">@tab.Title</button>
+            }
+        }
+    </div>
+    @if (Selected is { } file)
+    {
+        <div class="row hint mono" style="padding: 8px 20px 0; gap: 12px; justify-content: space-between">
+            <span>@file.Path</span>
+            @if (Root is not null && File.Exists(Path.Combine(Root, file.Path)))
+            {
+                <OpenInEditor Path="@Path.Combine(Root, file.Path)" Label="Abrir en el editor" Compact="true" />
+            }
+        </div>
+        <pre class="code">@((MarkupString)CodeView.Highlight(file.Content))</pre>
+    }
+    else
+    {
+        <p class="hint" style="padding: 16px 20px">@Empty</p>
+    }
+    @ChildContent
+</aside>
+
+@code {
+    public sealed record Tab(string Title, string Path, string Content);
+
+    [Parameter, EditorRequired] public IReadOnlyList<Tab> Tabs { get; set; } = [];
+
+    [Parameter] public string Label { get; set; } = "Vista previa";
+
+    [Parameter] public string Empty { get; set; } = "Nada que mostrar todavía.";
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Fills the page (Código generado) instead of being a side panel.</summary>
+    [Parameter] public bool Wide { get; set; }
+
+    /// <summary>Folder of the service: when the file of a tab exists there, it can be opened in the editor.</summary>
+    [Parameter] public string? Root { get; set; }
+
+    private string? selectedPath;
+
+    private static readonly string[] Layers = ["Domain", "Application", "Infrastructure", "Api", "Tests", "Otros"];
+
+    /// <summary>"src/Billing.Domain/…" → Domain, "tests/…" → Tests: the tabs of a clean-ddd entity grouped by layer.</summary>
+    private static string Layer(string path)
+    {
+        if (path.StartsWith("tests/", StringComparison.Ordinal))
+        {
+            return "Tests";
+        }
+
+        var project = path.Split('/') is { Length: > 1 } parts && parts[0] == "src" ? parts[1] : string.Empty;
+        return Layers.FirstOrDefault(l => project.EndsWith("." + l, StringComparison.Ordinal)) ?? "Otros";
+    }
+
+    private static int LayerOrder(string layer) => Array.IndexOf(Layers, layer);
+
+    private Tab? Selected => Tabs.FirstOrDefault(t => t.Path == selectedPath) ?? Tabs.FirstOrDefault();
+}

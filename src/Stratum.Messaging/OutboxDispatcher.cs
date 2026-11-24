@@ -36,9 +36,10 @@ public sealed partial class OutboxDispatcher(
         }
 
         var sent = 0;
+        var broker = MessagingServices.BrokerOf(transport);
         foreach (var message in pending)
         {
-            using var activity = MessagingTelemetry.StartSend(message);
+            using var activity = MessagingTelemetry.StartSend(message, broker);
             try
             {
                 await transport.SendAsync(
@@ -56,6 +57,7 @@ public sealed partial class OutboxDispatcher(
 
                 message.SentAt = time.GetUtcNow().UtcDateTime;
                 message.LastError = null;
+                MessagingTelemetry.Sent(message.Topic, ok: true);
                 sent++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -63,6 +65,7 @@ public sealed partial class OutboxDispatcher(
                 message.Attempts++;
                 message.LastError = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
                 activity?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, ex.Message);
+                MessagingTelemetry.Sent(message.Topic, ok: false);
 
                 if (message.Attempts >= settings.OutboxMaxAttempts)
                 {
@@ -91,8 +94,15 @@ public sealed partial class OutboxDispatcher(
             return;
         }
 
+        var nextCleanup = time.GetUtcNow() + TimeSpan.FromMinutes(1);
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (time.GetUtcNow() >= nextCleanup)
+            {
+                nextCleanup = time.GetUtcNow() + options.Value.CleanupInterval;
+                await CleanupAsync(stoppingToken).ConfigureAwait(false);
+            }
+
             var sent = 0;
             try
             {
@@ -121,6 +131,42 @@ public sealed partial class OutboxDispatcher(
             }
         }
     }
+
+    /// <summary>
+    /// Deletes sent outbox messages and journal rows older than <see cref="MessagingOptions.TraceRetention"/>.
+    /// Public so tests can run it without waiting.
+    /// </summary>
+    /// <returns>How many rows were deleted.</returns>
+    public async Task<int> CleanupAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            if (scope.ServiceProvider.GetService<IMessageJournal>() is not { } journal)
+            {
+                return 0;
+            }
+
+            var removed = await journal.PurgeAsync(time.GetUtcNow().UtcDateTime - options.Value.TraceRetention, cancellationToken).ConfigureAwait(false);
+            if (removed > 0)
+            {
+                LogCleaned(logger, removed);
+            }
+
+            return removed;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            LogCleanupFailed(logger, ex);
+            return 0;
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Deleted {Count} old messages (sent outbox and msg_received)")]
+    private static partial void LogCleaned(ILogger logger, int count);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not delete old messages; trying again later")]
+    private static partial void LogCleanupFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not send {Topic} {MessageId} (attempt {Attempts}); it will be retried")]
     private static partial void LogSendFailed(ILogger logger, Exception exception, string topic, Guid messageId, int attempts);

@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 
+using static Stratum.Studio.Localization.I18n;
+
 namespace Stratum.Studio.State;
 
 public enum JobStatus
@@ -80,13 +82,16 @@ public sealed partial class ProcessRunner : IDisposable
 
     public bool IsRunning(string key) => Get(key)?.Status == JobStatus.Running;
 
-    public ProcessJob Start(string key, string title, string workingDirectory, string fileName, IReadOnlyList<string> arguments, Regex? urlDetector = null)
+    /// <param name="environment">Extra environment variables (e.g. DOTNET_CLI_UI_LANGUAGE=en for parseable output).</param>
+    /// <param name="onLine">Called with every line of output, besides keeping the last lines in the job.</param>
+    public ProcessJob Start(string key, string title, string workingDirectory, string fileName, IReadOnlyList<string> arguments, Regex? urlDetector = null,
+        IReadOnlyDictionary<string, string>? environment = null, Action<string>? onLine = null)
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
         if (IsRunning(key))
         {
-            throw new InvalidOperationException($"'{title}' ya se está ejecutando.");
+            throw new InvalidOperationException(L($"'{title}' ya se está ejecutando.", $"'{title}' is already running."));
         }
 
         var start = new ProcessStartInfo(fileName)
@@ -102,6 +107,11 @@ public sealed partial class ProcessRunner : IDisposable
         foreach (var argument in arguments)
         {
             start.ArgumentList.Add(argument);
+        }
+
+        foreach (var (name, value) in environment ?? new Dictionary<string, string>())
+        {
+            start.Environment[name] = value;
         }
 
         var job = new ProcessJob
@@ -122,6 +132,7 @@ public sealed partial class ProcessRunner : IDisposable
 
             var line = StripAnsi(e.Data);
             job.Append(line);
+            onLine?.Invoke(line);
             if (job.DetectedUrl is null && urlDetector?.Match(line) is { Success: true } match)
             {
                 job.DetectedUrl = match.Value;
@@ -141,7 +152,7 @@ public sealed partial class ProcessRunner : IDisposable
                 job.Status = job.ExitCode == 0 ? JobStatus.Succeeded : JobStatus.Failed;
             }
 
-            job.Append(job.Status == JobStatus.Stopped ? "■ Detenido." : $"■ Terminó con código {job.ExitCode}.");
+            job.Append(job.Status == JobStatus.Stopped ? L("■ Detenido.", "■ Stopped.") : L($"■ Terminó con código {job.ExitCode}.", $"■ Exited with code {job.ExitCode}."));
             job.Done.TrySetResult();
             Changed?.Invoke();
         };
@@ -153,7 +164,7 @@ public sealed partial class ProcessRunner : IDisposable
         catch (System.ComponentModel.Win32Exception ex)
         {
             job.Status = JobStatus.Failed;
-            job.Append($"No se pudo arrancar '{fileName}': {ex.Message}");
+            job.Append(L($"No se pudo arrancar '{fileName}': {ex.Message}", $"Couldn't start '{fileName}': {ex.Message}"));
             job.Done.TrySetResult();
             _jobs[key] = job;
             Changed?.Invoke();

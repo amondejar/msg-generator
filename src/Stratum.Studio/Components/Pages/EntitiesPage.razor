@@ -1,12 +1,13 @@
 @page "/entities"
 @implements IDisposable
 @inject StudioState State
+@inject NavigationManager Nav
 
-<PageTitle>Entidades · Stratum Studio</PageTitle>
+<PageTitle>@L("Entidades", "Entities") · Stratum Studio</PageTitle>
 
 @if (State.Current is not { } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
 }
 else
 {
@@ -14,40 +15,46 @@ else
     <main class="content">
         <div>
             <div class="row" style="justify-content: space-between; align-items: center">
-                <h1>Entidades</h1>
-                @if (!draft.IsNew && State.Plan is { Changes.Count: > 0 })
-                {
-                    <div class="row" style="gap: 8px">
-                        <button type="button" class="btn" @onclick="State.Discard">Descartar cambios</button>
-                        <a class="btn btn-primary" href="apply">Revisar y aplicar →</a>
-                    </div>
-                }
+                <h1>@L("Entidades", "Entities")</h1>
+                <div class="row" style="gap: 8px">
+                    @if (!draft.IsNew && State.Plan is { Changes.Count: > 0 })
+                    {
+                        <button type="button" class="btn" @onclick="State.Discard">@L("Descartar cambios", "Discard changes")</button>
+                        <a class="btn btn-primary" href="apply">@L("Revisar y aplicar →", "Review and apply →")</a>
+                    }
+                    else if (!draft.IsNew)
+                    {
+                        <a class="btn" href="@($"/entity-designer?service={Uri.EscapeDataString(draft.Directory)}")" target="stratum-entities" style="text-decoration: none"
+                           title="@L("Las entidades y sus relaciones (1–N, 1–1, composición) en un lienzo, en una ventana aparte", "The entities and their relations (1–N, 1–1, composition) on a canvas, in a separate window")"
+                           onclick="window.open(this.href, 'stratum-entities', 'popup,width=1440,height=900'); return false;"><Icon Name="entities" /> @L("Diseñador de entidades", "Entity designer")</a>
+                    }
+                </div>
             </div>
-            <p class="lead">Crea entidades o cambia las que ya existen: Stratum regenera sus archivos <span class="mono">.g.cs</span> y nunca toca tu código (las clases <span class="mono">partial</span> sin <span class="mono">.g</span>). Nada se escribe hasta que revisas y aplicas.</p>
+            <p class="lead">@L(@<text>Crea entidades o cambia las que ya existen: Stratum regenera sus archivos <span class="mono">.g.cs</span> y nunca toca tu código (las clases <span class="mono">partial</span> sin <span class="mono">.g</span>). Nada se escribe hasta que revisas y aplicas.</text>, @<text>Create entities or change the ones that exist: Stratum regenerates their <span class="mono">.g.cs</span> files and never touches your code (the <span class="mono">partial</span> classes without <span class="mono">.g</span>). Nothing is written until you review and apply.</text>)</p>
         </div>
 
-        <div class="row" role="tablist" aria-label="Entidades">
+        <div class="row" role="tablist" aria-label="@L("Entidades", "Entities")">
             @foreach (var e in draft.Entities)
             {
                 <button type="button" role="tab" aria-selected="@(e == entity ? "true" : "false")"
                         class="card @(e == entity ? "selected" : e.IsNew ? "new" : "")" style="padding: 10px 14px"
                         @onclick="() => State.SelectedEntity = e.Name">
-                    <b style="@(e.Removed ? "text-decoration: line-through" : "")">@e.Name @if (e.IsNew) { <small style="color: var(--warn)">NUEVA</small> } else if (e.Removed) { <small style="color: var(--err)">ELIMINAR</small> } else if (e.IsLegacy && !e.Convert) { <small class="hint">ANTERIOR A 0.10</small> } else if (e.Convert) { <small style="color: var(--warn)">CONVERTIR</small> }</b>
-                    <small>@e.Properties.Count propiedad(es)</small>
+                    <b style="@(e.Removed ? "text-decoration: line-through" : "")">@e.Name @if (e.IsNew) { <small style="color: var(--warn)">@L("NUEVA", "NEW")</small> } else if (e.Removed) { <small style="color: var(--err)">@L("ELIMINAR", "REMOVE")</small> } else if (e.IsLegacy && !e.Convert) { <small class="hint">@L("ANTERIOR A 0.10", "BEFORE 0.10")</small> } else if (e.Convert) { <small style="color: var(--warn)">@L("CONVERTIR", "CONVERT")</small> }</b>
+                    <small>@e.Properties.Count @L("propiedad(es)", "property(ies)")</small>
                 </button>
             }
-            <button type="button" class="btn btn-dashed" @onclick="() => State.AddEntity()">+ Nueva entidad</button>
+            <button type="button" class="btn btn-dashed" @onclick="() => State.AddEntity()">@L("+ Nueva entidad", "+ New entity")</button>
         </div>
 
         @if (entity is null)
         {
-            <p class="lead">Este servicio aún no tiene entidades. Crea la primera: Stratum generará la persistencia, los endpoints CRUD y sus tests.</p>
+            <p class="lead">@L("Este servicio aún no tiene entidades. Crea la primera: Stratum generará la persistencia, los endpoints CRUD y sus tests.", "This service has no entities yet. Create the first one: Stratum will generate the persistence, the CRUD endpoints and their tests.")</p>
         }
         else
         {
             <div class="row" style="align-items: flex-end">
                 <label class="field">
-                    Nombre (singular)
+                    @L("Nombre (singular)", "Name (singular)")
                     <input type="text" value="@entity.Name" disabled="@(!entity.IsNew)" style="font-size: 18px; font-weight: 600"
                            @onchange="e => Rename(entity, e.Value?.ToString())" />
                 </label>
@@ -62,112 +69,111 @@ else
                 </div>
                 @if (!entity.Removed)
                 {
-                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => State.RemoveEntity(entity)">@(entity.IsNew ? "Quitar entidad" : "Eliminar entidad")</button>
+                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => State.RemoveEntity(entity)">@(entity.IsNew ? L("Quitar entidad", "Remove entity") : L("Eliminar entidad", "Delete entity"))</button>
                 }
             </div>
 
             @if (entity.Removed)
             {
                 <div class="msg warn" role="status">
-                    <b>@entity.Name se eliminará al aplicar.</b> Stratum borra sus archivos <span class="mono">.g.cs</span> y la quita de stratum.json; la próxima migración borrará su tabla.
+                    @L(@<text><b>@entity.Name se eliminará al aplicar.</b> Stratum borra sus archivos <span class="mono">.g.cs</span> y la quita de stratum.json; la próxima migración borrará su tabla.</text>, @<text><b>@entity.Name will be deleted when applying.</b> Stratum deletes its <span class="mono">.g.cs</span> files and removes it from stratum.json; the next migration will drop its table.</text>)
                     @if (State.ConsumersOf(draft, entity.Name) is { Count: > 0 } consumers)
                     {
-                        <br /><span>Escuchan sus eventos: <b>@string.Join(", ", consumers)</b>. Después, quítales esas suscripciones en su <em>Mensajería</em> (aparecerán marcadas) o con <span class="mono">stratum subscribe --sync --prune</span>.</span>
+                        <br /><span>@L(@<text>Escuchan sus eventos: <b>@string.Join(", ", consumers)</b>. Después, quítales esas suscripciones en su <em>Mensajería</em> (aparecerán marcadas) o con <span class="mono">stratum subscribe --sync --prune</span>.</text>, @<text>Its events are listened to by <b>@string.Join(", ", consumers)</b>. Then remove those subscriptions in their <em>Messaging</em> (they'll be flagged) or with <span class="mono">stratum subscribe --sync --prune</span>.</text>)</span>
                     }
                     <div class="row" style="margin-top: 10px">
-                        <label class="row" style="gap: 8px"><input type="checkbox" checked="@draft.DeleteOwnFiles" @onchange="e => { draft.DeleteOwnFiles = e.Value is true; State.Recompute(); }" /> Borrar también mis archivos de esta entidad (handlers, repositorio, endpoints propios…)</label>
-                        <button type="button" class="btn" @onclick="() => State.RemoveEntity(entity)">Restaurar</button>
+                        <label class="row" style="gap: 8px"><input type="checkbox" checked="@draft.DeleteOwnFiles" @onchange="e => { draft.DeleteOwnFiles = e.Value is true; State.Recompute(); }" /> @L("Borrar también mis archivos de esta entidad (handlers, repositorio, endpoints propios…)", "Also delete my files of this entity (handlers, repository, own endpoints…)")</label>
+                        <button type="button" class="btn" @onclick="() => State.RemoveEntity(entity)">@L("Restaurar", "Restore")</button>
                     </div>
                 </div>
             }
             else if (entity.IsLegacy && !entity.Convert)
             {
                 <div class="msg warn" role="status">
-                    <b>Creada con una versión de Stratum anterior a la 0.10.</b> Su código está en archivos tuyos, así que Stratum no puede cambiar sus propiedades sin pisarlos.
+                    @L(@<text><b>Creada con una versión de Stratum anterior a la 0.10.</b> Su código está en archivos tuyos, así que Stratum no puede cambiar sus propiedades sin pisarlos.
                     Al convertirla, Stratum mueve propiedades, contratos y CRUD a archivos <span class="mono">.g.cs</span> y deja clases <span class="mono">partial</span> vacías para tu código.
-                    Verás qué archivos se reemplazan o borran antes de aplicar; si los habías personalizado, pasa esos cambios a las clases partial.
+                    Verás qué archivos se reemplazan o borran antes de aplicar; si los habías personalizado, pasa esos cambios a las clases partial.</text>, @<text><b>Created with a Stratum version before 0.10.</b> Its code is in your files, so Stratum can't change its properties without overwriting them.
+                    Converting it moves properties, contracts and CRUD to <span class="mono">.g.cs</span> files and leaves empty <span class="mono">partial</span> classes for your code.
+                    You'll see which files are replaced or deleted before applying; if you had customized them, move those changes to the partial classes.</text>)
                     <div class="row" style="margin-top: 10px">
-                        <button type="button" class="btn btn-primary" @onclick="() => { entity.Convert = true; State.Recompute(); }">Convertir al formato editable</button>
+                        <button type="button" class="btn btn-primary" @onclick="() => { entity.Convert = true; State.Recompute(); }">@L("Convertir al formato editable", "Convert to the editable format")</button>
                     </div>
                 </div>
             }
 
             <section class="stack" aria-labelledby="h-props">
-                <h2 class="section" id="h-props">Propiedades</h2>
+                <div class="row" style="justify-content: space-between; align-items: center">
+                    <h2 class="section" id="h-props" style="margin: 0">@L("Propiedades", "Properties")</h2>
+                    @if (entity.CanEdit)
+                    {
+                        <button type="button" class="btn btn-dashed" @onclick="() => propertyEditor = EntityEditors.PropertyEditor.New(entity)">@L("+ Añadir propiedad", "+ Add property")</button>
+                    }
+                </div>
                 <div class="table">
-                    <div class="tr head"><span>Nombre</span><span>Tipo</span><span>Opcional</span><span>Genera</span><span></span></div>
-                    <div class="tr"><span class="auto">Id</span><span class="auto">guid</span><span class="hint">—</span><span class="hint">UUID v7 · clave primaria</span><span class="hint">auto</span></div>
+                    <div class="tr head" style="@PropColumns"><span>@L("Nombre", "Name")</span><span>@L("Tipo", "Type")</span><span>@L("Valor", "Value")</span><span>@L("Genera", "Generates")</span><span></span></div>
+                    <div class="tr" style="@PropColumns"><span class="auto">Id</span><span class="auto">guid</span><span class="hint">—</span><span class="hint">@L("UUID v7 · clave primaria", "UUID v7 · primary key")</span><span class="hint">auto</span></div>
                     @foreach (var p in entity.Properties)
                     {
-                        <div class="tr">
+                        <div class="tr" style="@PropColumns">
+                            <span class="stack" style="gap: 2px">
+                                @if (entity.CanEdit)
+                                {
+                                    <button type="button" class="link-row mono" title="@L("Editar", "Edit")" @onclick="() => propertyEditor = EntityEditors.PropertyEditor.For(p)">@p.Name</button>
+                                }
+                                else
+                                {
+                                    <span class="mono">@p.Name</span>
+                                }
+                                @if (p.IsRenamed)
+                                {
+                                    <small class="hint" style="color: var(--warn)">@L("renombrada · antes", "renamed · was") @p.OriginalName</small>
+                                }
+                                else if (p.OriginalName is null && !entity.IsNew)
+                                {
+                                    <small class="hint" style="color: var(--ok)">@L("nueva", "new")</small>
+                                }
+                            </span>
+                            <span class="mono">@(p.References is { } t ? $"→ {t}{(p.OneToOne ? " (1–1)" : string.Empty)}" : p.Item is { } it ? $"▤ {it}{(p.IsList ? "[]" : string.Empty)}" : p.Enum is { } en ? "# " + en : p.Type)</span>
+                            <span>@(p.IsList ? L("Lista", "List") : p.Nullable ? L("Opcional", "Optional") : L("Obligatorio", "Required"))</span>
+                            <span class="hint">@EntityEditors.Generates(p)</span>
                             @if (entity.CanEdit)
                             {
-                                <span class="stack" style="gap: 2px">
-                                    <input type="text" value="@p.Name" aria-label="Nombre de la propiedad" @onchange="e => { p.Name = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
-                                    @if (p.IsRenamed)
-                                    {
-                                        <small class="hint" style="color: var(--warn)">renombrada · antes @p.OriginalName (se conservan los datos)</small>
-                                    }
-                                    else if (p.OriginalName is null && !entity.IsNew)
-                                    {
-                                        <small class="hint" style="color: var(--ok)">nueva</small>
-                                    }
+                                <span class="row-actions">
+                                    <button type="button" class="icon-btn edit" aria-label="@L($"Editar {p.Name}", $"Edit {p.Name}")" title="@L("Editar", "Edit")" @onclick="() => propertyEditor = EntityEditors.PropertyEditor.For(p)">✎</button>
+                                    <button type="button" class="icon-btn" aria-label="@L($"Eliminar {p.Name}", $"Delete {p.Name}")" title="@L("Eliminar", "Delete")" @onclick="() => { entity.Properties.Remove(p); State.Recompute(); }">×</button>
                                 </span>
-                                <select aria-label="@($"Tipo de {p.Name}")" value="@p.Type" @onchange="e => SetType(p, e)">
-                                    @foreach (var type in Types)
-                                    {
-                                        <option value="@type">@type</option>
-                                    }
-                                    @if (ReferenceTargets(draft).Count > 0)
-                                    {
-                                        <optgroup label="Referencia a otra entidad">
-                                            @foreach (var target in ReferenceTargets(draft))
-                                            {
-                                                <option value="@(PropertyDraft.ReferencePrefix + target)">→ @target</option>
-                                            }
-                                        </optgroup>
-                                    }
-                                </select>
-                                <label class="row" style="gap: 8px"><input type="checkbox" checked="@p.Nullable" @onchange="e => { p.Nullable = e.Value is true; State.Recompute(); }" /> @(p.Nullable ? "Sí" : "No")</label>
-                                <span class="hint">@Generates(p)</span>
-                                <button type="button" class="icon-btn" aria-label="@($"Eliminar {p.Name}")" @onclick="() => { entity.Properties.Remove(p); State.Recompute(); }">×</button>
                             }
                             else
                             {
-                                <span class="mono">@p.Name</span><span class="mono">@(p.References is { } t ? "→ " + t : p.Type)</span><span>@(p.Nullable ? "Sí" : "No")</span><span class="hint">@Generates(p)</span><span></span>
+                                <span></span>
                             }
                         </div>
                     }
-                    <div class="tr"><span class="auto">CreatedAt · UpdatedAt</span><span class="auto">datetime</span><span class="hint">—</span><span class="hint">Auditoría automática</span><span class="hint">auto</span></div>
+                    <div class="tr" style="@PropColumns"><span class="auto">CreatedAt · UpdatedAt</span><span class="auto">datetime</span><span class="hint">—</span><span class="hint">@L("Auditoría automática", "Automatic audit")</span><span class="hint">auto</span></div>
                 </div>
-                @if (entity.CanEdit)
+                @if (entity.CanEdit && !entity.IsNew)
                 {
-                    <button type="button" class="btn btn-dashed" style="align-self: flex-start" @onclick="() => AddProperty(entity)">+ Añadir propiedad</button>
-                    @if (!entity.IsNew)
-                    {
-                        <span class="hint">Para renombrar, cambia el nombre en su fila: Stratum lo trata como renombrado y la migración conserva los datos. Si borras la fila y creas otra, la columna se elimina.</span>
-                    }
+                    <span class="hint">@L("Para renombrar, edita la propiedad y cámbiale el nombre: la migración conserva los datos. Si la eliminas y creas otra, la columna se borra.", "To rename, edit the property and change its name: the migration keeps the data. If you delete it and create another, the column is dropped.")</span>
                 }
             </section>
 
             <section class="stack" aria-labelledby="h-events">
-                <h2 class="section" id="h-events">Eventos para otros servicios</h2>
-                @if (draft.Broker is null)
+                <h2 class="section" id="h-events">@L("Eventos para otros servicios", "Events for other services")</h2>
+                @if (draft.BrokerNote is { } brokerNote)
                 {
-                    <span class="hint">El servicio no tiene mensajería. Actívala en <a href="service/messaging">Mensajería</a> para publicar los eventos de @(entity.Name).</span>
+                    <span class="hint" style="color: var(--accent)">ℹ @brokerNote</span>
                 }
-                else
-                {
+                @{
                     <label class="row" style="gap: 8px">
                         <input type="checkbox" checked="@entity.PublishEvents" disabled="@(!entity.CanEdit)"
-                               @onchange="e => { entity.PublishEvents = e.Value is true; State.Recompute(); }" />
-                        Publicar <span class="mono">@(entity.Name)Created</span>, <span class="mono">@(entity.Name)Updated</span> y <span class="mono">@(entity.Name)Deleted</span> con sus datos
+                               @onchange="e => SetPublishEvents(draft, entity, e)" />
+                        @L(@<text>Publicar <span class="mono">@(entity.Name)Created</span>, <span class="mono">@(entity.Name)Updated</span> y <span class="mono">@(entity.Name)Deleted</span> con sus datos</text>, @<text>Publish <span class="mono">@(entity.Name)Created</span>, <span class="mono">@(entity.Name)Updated</span> and <span class="mono">@(entity.Name)Deleted</span> with their data</text>)
                     </label>
                     @if (entity.PublishEvents)
                     {
                         var service = ServiceName.ToKebab(draft.Name);
                         var name = System.Text.RegularExpressions.Regex.Replace(entity.Name, "(?<=[a-z0-9])([A-Z])", "-$1").ToLowerInvariant();
-                        <span class="hint">Topics: <span class="mono">@($"{service}.{name}-created")</span>, <span class="mono">-updated</span>, <span class="mono">-deleted</span>. Se guardan en el outbox en la misma transacción que el cambio y se envían después, con reintentos.</span>
+                        <span class="hint">Topics: <span class="mono">@($"{service}.{name}-created")</span>, <span class="mono">-updated</span>, <span class="mono">-deleted</span>. @L("Se guardan en el outbox en la misma transacción que el cambio y se envían después, con reintentos.", "They are stored in the outbox in the same transaction as the change and sent afterwards, with retries.")</span>
                     }
                 }
             </section>
@@ -175,54 +181,219 @@ else
             @if (draft.Architecture == Architectures.CleanDdd)
             {
                 <section class="stack" aria-labelledby="h-behavior">
-                    <h2 class="section" id="h-behavior">Comportamiento · Clean + DDD</h2>
+                    <h2 class="section" id="h-behavior">@L("Comportamiento", "Behavior") · Clean + DDD</h2>
                     <div class="table">
-                        <div class="tr head" style="grid-template-columns: 2fr 1.4fr 2fr"><span>Método del agregado</span><span>Modifica</span><span>Evento de dominio</span></div>
-                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">@(entity.Name).Create(…) <small class="hint">fábrica</small></span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Created</span></div>
-                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Update(…)</span><span class="hint">todas</span><span class="mono" style="color: #67E8F9">@(entity.Name)Updated</span></div>
+                        <div class="tr head" style="grid-template-columns: 2fr 1.4fr 2fr"><span>@L("Método del agregado", "Aggregate method")</span><span>@L("Modifica", "Changes")</span><span>@L("Evento de dominio", "Domain event")</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">@(entity.Name).Create(…) <small class="hint">@L("fábrica", "factory")</small></span><span class="hint">@L("todas", "all")</span><span class="mono" style="color: #67E8F9">@(entity.Name)Created</span></div>
+                        <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Update(…)</span><span class="hint">@L("todas", "all")</span><span class="mono" style="color: #67E8F9">@(entity.Name)Updated</span></div>
                         <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr"><span class="mono">Delete()</span><span class="hint">—</span><span class="mono" style="color: #67E8F9">@(entity.Name)Deleted</span></div>
+                        @foreach (var o in entity.Operations.Where(o => !string.IsNullOrWhiteSpace(o.Name)))
+                        {
+                            var name = SafePascal(o.Name);
+                            <div class="tr" style="grid-template-columns: 2fr 1.4fr 2fr">
+                                <span class="mono">@(name)(@o.Parameters) <small class="hint">@L("operación", "operation")</small></span>
+                                <span class="hint">@L("tu regla ·", "your rule ·")
+                                    @if (State.FindServiceFile($"{entity.Name}.{name}.cs") is { } ruleFile)
+                                    {
+                                        <OpenInEditor Path="@ruleFile" Label="@($"{entity.Name}.{name}.cs")" Compact="true" />
+                                    }
+                                    else
+                                    {
+                                        <span class="mono">@(entity.Name).@(name).cs</span>
+                                    }
+                                </span>
+                                <span class="mono" style="color: #67E8F9">@(string.IsNullOrWhiteSpace(o.Event) ? ModelRules.DefaultEvent(entity.Name, name) : o.Event)</span>
+                            </div>
+                        }
                     </div>
-                    <span class="hint">Las reglas de negocio van en <span class="mono">EnsureInvariants()</span> de <span class="mono">@(entity.Name).cs</span> (tu parte del agregado, Stratum la crea una vez y no la toca), y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>.</span>
+                    <span class="hint">@L(@<text>Las reglas de negocio van en <span class="mono">EnsureInvariants()</span> de <span class="mono">@(entity.Name).cs</span> (tu parte del agregado, Stratum la crea una vez y no la toca), y los efectos de cada evento en su handler de <span class="mono">@(draft.Name).Application/@Plural(entity)</span>.</text>, @<text>Business rules go in <span class="mono">EnsureInvariants()</span> of <span class="mono">@(entity.Name).cs</span> (your part of the aggregate: Stratum creates it once and doesn't touch it), and the effects of each event in its handler in <span class="mono">@(draft.Name).Application/@Plural(entity)</span>.</text>)</span>
                 </section>
 
                 <section class="stack" aria-labelledby="h-operations">
-                    <h2 class="section" id="h-operations">Operaciones del agregado</h2>
-                    <span class="hint">Acciones de negocio como <span class="mono">Confirm</span> o <span class="mono">Cancel(Reason)</span>. Stratum genera el evento de dominio, el comando, su handler y <span class="mono">POST /api/v1/@Route(entity)/{id}/&lt;operación&gt;</span>; la regla la escribes tú en <span class="mono">@(entity.Name).&lt;Operación&gt;.cs</span>, que se crea una vez y es tuyo.</span>
+                    <div class="row" style="justify-content: space-between; align-items: center">
+                        <h2 class="section" id="h-operations" style="margin: 0">@L("Operaciones del agregado", "Aggregate operations")</h2>
+                        @if (entity.CanEdit)
+                        {
+                            <button type="button" class="btn btn-dashed" @onclick="() => operationEditor = new EntityEditors.OperationEditor()">@L("+ Añadir operación", "+ Add operation")</button>
+                        }
+                    </div>
+                    <span class="hint">@L(@<text>Acciones de negocio como <span class="mono">Confirm</span> o <span class="mono">Cancel(Reason)</span>, cada una con su comando, su evento y <span class="mono">POST /api/v1/@Route(entity)/{id}/&lt;operación&gt;</span>. La regla la escribes tú en <span class="mono">@(entity.Name).&lt;Operación&gt;.cs</span>.</text>, @<text>Business actions like <span class="mono">Confirm</span> or <span class="mono">Cancel(Reason)</span>, each with its command, its event and <span class="mono">POST /api/v1/@Route(entity)/{id}/&lt;operation&gt;</span>. You write the rule in <span class="mono">@(entity.Name).&lt;Operation&gt;.cs</span>.</text>)</span>
                     @if (entity.Operations.Count > 0)
                     {
                         <div class="table">
-                            <div class="tr head" style="grid-template-columns: 1.2fr 2fr 1.6fr 40px"><span>Operación</span><span>Parámetros</span><span>Evento</span><span></span></div>
+                            <div class="tr head" style="@OpColumns"><span>@L("Operación", "Operation")</span><span>@L("Parámetros", "Parameters")</span><span>@L("Evento", "Event")</span><span>@L("Publica", "Publishes")</span><span></span></div>
                             @foreach (var o in entity.Operations)
                             {
-                                <div class="tr" style="grid-template-columns: 1.2fr 2fr 1.6fr 40px">
-                                    <input type="text" value="@o.Name" aria-label="Nombre de la operación" disabled="@(!entity.CanEdit)" placeholder="Confirm"
-                                           @onchange="e => { o.Name = e.Value?.ToString()?.Trim() ?? string.Empty; State.Recompute(); }" />
-                                    <input type="text" value="@o.Parameters" aria-label="@($"Parámetros de {o.Name}")" disabled="@(!entity.CanEdit)" placeholder="Reason:string, Amount:decimal?"
-                                           @onchange="e => { o.Parameters = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
-                                    <input type="text" value="@o.Event" aria-label="@($"Evento de {o.Name}")" disabled="@(!entity.CanEdit)"
-                                           placeholder="@(string.IsNullOrWhiteSpace(o.Name) ? entity.Name + "Done" : entity.Name + ModelRules.PastTense(SafePascal(o.Name)))"
-                                           @onchange="e => { o.Event = e.Value?.ToString()?.Trim() ?? string.Empty; State.Recompute(); }" />
-                                    <button type="button" class="icon-btn" aria-label="@($"Quitar {o.Name}")" disabled="@(!entity.CanEdit)" @onclick="() => { entity.Operations.Remove(o); State.Recompute(); }">×</button>
+                                <div class="tr" style="@OpColumns">
+                                    @if (entity.CanEdit)
+                                    {
+                                        <button type="button" class="link-row mono" title="@L("Editar", "Edit")" @onclick="() => operationEditor = EntityEditors.OperationEditor.For(o)">@o.Name</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="mono">@o.Name</span>
+                                    }
+                                    <span class="mono hint">@(string.IsNullOrWhiteSpace(o.Parameters) ? "—" : o.Parameters)</span>
+                                    <span class="mono" style="color: #67E8F9">@(string.IsNullOrWhiteSpace(o.Event) ? ModelRules.DefaultEvent(entity.Name, SafePascal(o.Name)) : o.Event)</span>
+                                    <span class="@(o.Publish ? null : "hint")">@(o.Publish ? L("Sí", "Yes") : "No")</span>
+                                    @if (entity.CanEdit)
+                                    {
+                                        <span class="row-actions">
+                                            <button type="button" class="icon-btn edit" aria-label="@L($"Editar {o.Name}", $"Edit {o.Name}")" title="@L("Editar", "Edit")" @onclick="() => operationEditor = EntityEditors.OperationEditor.For(o)">✎</button>
+                                            <button type="button" class="icon-btn" aria-label="@L($"Quitar {o.Name}", $"Remove {o.Name}")" title="@L("Quitar", "Remove")" @onclick="() => { entity.Operations.Remove(o); State.Recompute(); }">×</button>
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span></span>
+                                    }
                                 </div>
                             }
                         </div>
-                    }
-                    @if (entity.CanEdit)
-                    {
-                        <button type="button" class="btn btn-dashed" style="align-self: flex-start" @onclick="() => AddOperation(entity)">+ Añadir operación</button>
                     }
                 </section>
             }
         }
 
+        <section class="stack" aria-labelledby="h-enums">
+            <div class="row" style="justify-content: space-between; align-items: center">
+                <h2 class="section" id="h-enums" style="margin: 0">@L("Enumerados del servicio", "Enumerations of the service")</h2>
+                <button type="button" class="btn btn-dashed" @onclick="() => enumEditor = EntityEditors.EnumEditor.New()">@L("+ Nuevo enumerado", "+ New enumeration")</button>
+            </div>
+            @if (draft.Enums.Count == 0)
+            {
+                <span class="hint">@L("Listas de valores fijos, como el estado de un pedido. Se usan como tipo de una propiedad", "Lists of fixed values, like the status of an order. Used as the type of a property") (<span class="mono"># OrderStatus</span>).</span>
+            }
+            else
+            {
+                <div class="table">
+                    <div class="tr head" style="@ListColumns"><span>@L("Nombre", "Name")</span><span>@L("Valores", "Values")</span><span>@L("Lo usan", "Used by")</span><span></span></div>
+                    @foreach (var en in draft.Enums)
+                    {
+                        var usages = Usages(draft, en);
+                        <div class="tr" style="@ListColumns">
+                            <button type="button" class="link-row mono" title="@L("Editar", "Edit")" @onclick="() => enumEditor = EntityEditors.EnumEditor.For(en)">@en.Name</button>
+                            <span class="mono hint">@en.Values</span>
+                            <span class="hint mono">@(usages.Count == 0 ? "—" : string.Join(", ", usages))</span>
+                            <span class="row-actions">
+                                <button type="button" class="icon-btn edit" aria-label="@L($"Editar {en.Name}", $"Edit {en.Name}")" title="@L("Editar", "Edit")" @onclick="() => enumEditor = EntityEditors.EnumEditor.For(en)">✎</button>
+                                <button type="button" class="icon-btn" aria-label="@L($"Quitar {en.Name}", $"Remove {en.Name}")" disabled="@(usages.Count > 0)"
+                                        title="@(usages.Count > 0 ? L("Cambia antes el tipo de las propiedades que lo usan", "First change the type of the properties that use it") : L("Quitar", "Remove"))"
+                                        @onclick="() => { draft.Enums.Remove(en); State.Recompute(); }">×</button>
+                            </span>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="stack" aria-labelledby="h-types">
+            <div class="row" style="justify-content: space-between; align-items: center">
+                <h2 class="section" id="h-types" style="margin: 0">@L("Tipos de elemento (listas de objetos)", "Item types (lists of objects)")</h2>
+                <button type="button" class="btn btn-dashed" @onclick="() => typeEditor = EntityEditors.TypeEditor.New()">@L("+ Nuevo tipo de elemento", "+ New item type")</button>
+            </div>
+            @if (draft.Types.Count == 0)
+            {
+                <span class="hint">@L("Para listas cuyos elementos tienen varios campos, como las líneas de un pedido", "For lists whose items have several fields, like the lines of an order") (<span class="mono">▤ OrderLine[]</span>).</span>
+            }
+            else
+            {
+                <div class="table">
+                    <div class="tr head" style="@ListColumns"><span>@L("Nombre", "Name")</span><span>@L("Propiedades", "Properties")</span><span>@L("Lo usan", "Used by")</span><span></span></div>
+                    @foreach (var type in draft.Types)
+                    {
+                        var usages = Usages(draft, type);
+                        <div class="tr" style="@ListColumns">
+                            <button type="button" class="link-row mono" title="@L("Editar", "Edit")" @onclick="() => typeEditor = EntityEditors.TypeEditor.For(type)">@type.Name</button>
+                            <span class="mono hint">@type.Properties</span>
+                            <span class="hint mono">@(usages.Count == 0 ? "—" : string.Join(", ", usages))</span>
+                            <span class="row-actions">
+                                <button type="button" class="icon-btn edit" aria-label="@L($"Editar {type.Name}", $"Edit {type.Name}")" title="@L("Editar", "Edit")" @onclick="() => typeEditor = EntityEditors.TypeEditor.For(type)">✎</button>
+                                <button type="button" class="icon-btn" aria-label="@L($"Quitar {type.Name}", $"Remove {type.Name}")" disabled="@(usages.Count > 0)"
+                                        title="@(usages.Count > 0 ? L("Cambia antes el tipo de las propiedades que lo usan", "First change the type of the properties that use it") : L("Quitar", "Remove"))"
+                                        @onclick="() => { draft.Types.Remove(type); State.Recompute(); }">×</button>
+                            </span>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
         <ProblemList />
     </main>
 
-    <CodePanel Tabs="EntityTabs(entity)" Label="Código generado" Empty="Selecciona o crea una entidad." />
+    @if (entity is not null && propertyEditor is not null)
+    {
+        <PropertyDialog Editor="propertyEditor" Entity="entity" Draft="draft" OnSaved="Saved" OnClose="() => propertyEditor = null"
+                        OnNewEnum="() => enumEditor = EntityEditors.EnumEditor.New()" OnNewType="() => typeEditor = EntityEditors.TypeEditor.New()" />
+    }
+    @if (entity is not null && operationEditor is not null)
+    {
+        <OperationDialog Editor="operationEditor" Entity="entity" Draft="draft" OnSaved="() => OperationSaved(draft, entity)" OnClose="() => operationEditor = null" />
+    }
+    @if (enumEditor is not null)
+    {
+        <EnumDialog Editor="enumEditor" Draft="draft" OnSaved="EnumSaved" OnClose="() => enumEditor = null" />
+    }
+    @if (typeEditor is not null)
+    {
+        <TypeDialog Editor="typeEditor" Draft="draft" OnSaved="TypeSaved" OnClose="() => typeEditor = null" />
+    }
+
+    <CodePanel Tabs="EntityTabs(entity)" Label="@L("Código generado", "Generated code")" Empty="@L("Selecciona o crea una entidad.", "Select or create an entity.")" Root="@(draft.IsNew ? null : State.FullPath(draft.Directory))" />
 }
 
 @code {
-    private static readonly string[] Types = ["string", "int", "long", "decimal", "bool", "guid", "date", "datetime"];
+    private const string PropColumns = "grid-template-columns: 1.6fr 1.3fr 1fr 2fr 76px";
+    private const string OpColumns = "grid-template-columns: 1.2fr 2fr 1.6fr 70px 76px";
+    private const string ListColumns = "grid-template-columns: 1.1fr 2.6fr 1.4fr 76px";
+
+    // The open dialogs (at most one per kind; an enum or item type dialog can open on top of the property one).
+    private EntityEditors.PropertyEditor? propertyEditor;
+    private EntityEditors.OperationEditor? operationEditor;
+    private EntityEditors.EnumEditor? enumEditor;
+    private EntityEditors.TypeEditor? typeEditor;
+
+    private void Saved()
+    {
+        propertyEditor = null;
+        State.Recompute();
+    }
+
+    private void OperationSaved(ServiceDraft draft, EntityDraft entity)
+    {
+        if (operationEditor is { Publish: true } o)
+        {
+            State.EnsureBroker(draft, L($"publicar {entity.Name}.{o.Name.Trim()}", $"publish {entity.Name}.{o.Name.Trim()}"));
+        }
+
+        operationEditor = null;
+        State.Recompute();
+    }
+
+    /// <summary>A new enumeration created from the property dialog becomes that property's type.</summary>
+    private void EnumSaved(string name)
+    {
+        if (enumEditor is { Original: null } && propertyEditor is not null)
+        {
+            propertyEditor.Type = PropertyDraft.EnumPrefix + name;
+        }
+
+        enumEditor = null;
+        State.Recompute();
+    }
+
+    private void TypeSaved(string name)
+    {
+        if (typeEditor is { Original: null } && propertyEditor is not null)
+        {
+            propertyEditor.Type = PropertyDraft.ItemPrefix + name;
+            propertyEditor.Kind = EntityEditors.List;
+        }
+
+        typeEditor = null;
+        State.Recompute();
+    }
 
     private EntityDraft? Selected =>
         State.Current?.Entities.FirstOrDefault(e => e.Name == State.SelectedEntity) ?? State.Current?.Entities.FirstOrDefault();
@@ -231,6 +402,43 @@ else
     {
         State.Initialize();
         State.Changed += OnChanged;
+        OpenFromQuery();
+    }
+
+    /// <summary>"?dialog=property|property:Name|operation:Name|enum:Name|type:Name" opens that dialog (links and checks).</summary>
+    private void OpenFromQuery()
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        if (!query.TryGetValue("dialog", out var value) || State.Current is not { } draft)
+        {
+            return;
+        }
+
+        if (query.TryGetValue("entity", out var selected) && draft.Entities.Any(e => e.Name == selected.ToString()))
+        {
+            State.SelectedEntity = selected.ToString();
+        }
+
+        var parts = value.ToString().Split(':', 2);
+        var name = parts.Length > 1 ? parts[1] : null;
+        var entity = Selected;
+        switch (parts[0])
+        {
+            case "property" when entity is { CanEdit: true }:
+                propertyEditor = entity.Properties.FirstOrDefault(p => p.Name == name) is { } property
+                    ? EntityEditors.PropertyEditor.For(property) : EntityEditors.PropertyEditor.New(entity);
+                break;
+            case "operation" when entity is { CanEdit: true } && draft.Architecture == Architectures.CleanDdd:
+                operationEditor = entity.Operations.FirstOrDefault(o => o.Name == name) is { } operation
+                    ? EntityEditors.OperationEditor.For(operation) : new EntityEditors.OperationEditor();
+                break;
+            case "enum":
+                enumEditor = draft.Enums.FirstOrDefault(e => e.Name == name) is { } en ? EntityEditors.EnumEditor.For(en) : EntityEditors.EnumEditor.New();
+                break;
+            case "type":
+                typeEditor = draft.Types.FirstOrDefault(t => t.Name == name) is { } type ? EntityEditors.TypeEditor.For(type) : EntityEditors.TypeEditor.New();
+                break;
+        }
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
@@ -244,44 +452,30 @@ else
         State.Recompute();
     }
 
-    private void SetType(PropertyDraft property, ChangeEventArgs e)
-    {
-        property.Type = e.Value?.ToString() ?? "string";
-        State.Recompute();
-    }
-
-    private void AddOperation(EntityDraft entity)
-    {
-        entity.Operations.Add(new OperationDraft { Name = entity.Operations.Count == 0 ? "Confirm" : $"Operation{entity.Operations.Count + 1}" });
-        State.Recompute();
-    }
-
-    private void AddProperty(EntityDraft entity)
-    {
-        entity.Properties.Add(new PropertyDraft { Name = $"Field{entity.Properties.Count + 1}", Type = "string", Nullable = true });
-        State.Recompute();
-    }
-
-    /// <summary>Entities a property can point to: the others of the service and itself (by name, as typed).</summary>
-    private static IReadOnlyList<string> ReferenceTargets(ServiceDraft draft) =>
-        [.. draft.Entities.Where(e => !e.Removed && !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name)];
-
     private static string SafePascal(string name)
     {
         try { return ServiceName.Normalize(name); }
         catch (StratumException) { return name; }
     }
 
-    private static string Generates(PropertyDraft p) => p.References is { } target
-        ? $"Clave ajena a {target} · se comprueba que existe" + (p.Nullable ? " · opcional" : string.Empty)
-        : (p.Type, p.Nullable) switch
+    /// <summary>Properties (of the draft) that use the enumeration.</summary>
+    private static IReadOnlyList<string> Usages(ServiceDraft draft, EnumDraft en) =>
+        [.. draft.Entities.Where(e => !e.Removed).SelectMany(e => e.Properties.Where(p => p.Enum is { } n && (n == en.Name.Trim() || n == en.OriginalName)).Select(p => $"{e.Name}.{p.Name}"))];
+
+    /// <summary>Lists (of the draft) that use the item type.</summary>
+    private static IReadOnlyList<string> Usages(ServiceDraft draft, TypeDraft type) =>
+        [.. draft.Entities.Where(e => !e.Removed).SelectMany(e => e.Properties.Where(p => p.Item is { } n && (n == type.Name.Trim() || n == type.OriginalName)).Select(p => $"{e.Name}.{p.Name}"))];
+
+    private void SetPublishEvents(ServiceDraft draft, EntityDraft entity, ChangeEventArgs e)
     {
-        ("string", false) => $"Required · MaxLength({PropertyTypes.DefaultStringLength})",
-        ("string", true) => $"MaxLength({PropertyTypes.DefaultStringLength}) · columna nullable",
-        ("decimal", _) => "Precisión (18, 2)" + (p.Nullable ? " · nullable" : string.Empty),
-        (_, true) => "Columna nullable",
-        _ => "Columna obligatoria",
-    };
+        entity.PublishEvents = e.Value is true;
+        if (entity.PublishEvents)
+        {
+            State.EnsureBroker(draft, L($"publicar los eventos de {entity.Name}", $"publish the events of {entity.Name}"));
+        }
+
+        State.Recompute();
+    }
 
     private static string Plural(EntityDraft entity)
     {

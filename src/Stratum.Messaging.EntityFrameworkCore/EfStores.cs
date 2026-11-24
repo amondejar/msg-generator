@@ -66,3 +66,59 @@ internal sealed class EfInbox<TContext>(TContext context, TimeProvider time) : I
         return await context.Set<InboxMessage>().AnyAsync(m => m.MessageId == messageId && m.Consumer == consumer, CancellationToken.None).ConfigureAwait(false);
     }
 }
+
+/// <summary>
+/// Journal in msg_received and read access to msg_outbox for the diagnostics. Used in its own DI scope, outside the
+/// handler's transaction, so failures are recorded too.
+/// </summary>
+internal sealed class EfJournal<TContext>(TContext context) : IMessageJournal
+    where TContext : DbContext
+{
+    public async Task RecordAsync(ReceivedMessage entry, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        var set = context.Set<ReceivedMessage>();
+        var existing = await set.FindAsync([entry.MessageId, entry.Consumer], cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            set.Add(entry);
+        }
+        else
+        {
+            JournalRows.Merge(existing, entry);
+        }
+
+        try
+        {
+            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (DbUpdateException) when (existing is null)
+        {
+            // Another instance recorded the same message at the same moment: theirs is as good as ours.
+            context.ChangeTracker.Clear();
+        }
+    }
+
+    public async Task<IReadOnlyList<OutboxMessage>> SentSinceAsync(DateTime sinceUtc, int max, CancellationToken cancellationToken) =>
+        await context.Set<OutboxMessage>().AsNoTracking()
+            .Where(m => m.OccurredAt >= sinceUtc)
+            .OrderByDescending(m => m.OccurredAt)
+            .Take(max)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<ReceivedMessage>> ReceivedSinceAsync(DateTime sinceUtc, int max, CancellationToken cancellationToken) =>
+        await context.Set<ReceivedMessage>().AsNoTracking()
+            .Where(m => m.UpdatedAt >= sinceUtc)
+            .OrderByDescending(m => m.UpdatedAt)
+            .Take(max)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<int> PurgeAsync(DateTime beforeUtc, CancellationToken cancellationToken)
+    {
+        var received = await context.Set<ReceivedMessage>().Where(m => m.UpdatedAt < beforeUtc).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        var sent = await context.Set<OutboxMessage>().Where(m => m.SentAt != null && m.SentAt < beforeUtc).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        return received + sent;
+    }
+}

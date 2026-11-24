@@ -27,9 +27,15 @@ internal static partial class Cli
                                                  Cambia las propiedades (las que falten se eliminan)
           stratum entity remove <Entidad> [--delete-own-files] [--path] [--dry-run]
                                                  Elimina una entidad (tus archivos solo con --delete-own-files)
-          stratum entity operation add <Entidad> <Operación> [--params "..."] [--event <E>] [--path] [--dry-run]
+          stratum enum list | add <Nombre> --values "A, B" | update <Nombre> --values "..." | remove <Nombre> [--path] [--dry-run]
+                                                 Enumerados del servicio; úsalos como tipo: "Status:OrderStatus" (se guardan como texto)
+          stratum type list | add <Nombre> --props "..." | update <Nombre> --props "..." | remove <Nombre> [--path] [--dry-run]
+                                                 Tipos de elemento para listas de objetos: "Items:OrderItem[]" (tabla propia)
+          stratum entity operation add <Entidad> <Operación> [--params "..."] [--event <E>] [--publish] [--path] [--dry-run]
                                                  Operación de negocio del agregado (clean-ddd): evento, comando,
-                                                 POST /<entidades>/{id}/<operación>; la regla la escribes tú
+                                                 POST /<entidades>/{{id}}/<operación>; la regla la escribes tú.
+                                                 --publish: también evento de integración propio (OrderShipped)
+          stratum entity operation publish <Entidad> <Operación> [--off] [--path] [--dry-run]
           stratum entity operation remove <Entidad> <Operación> [--path] [--dry-run]
           stratum entity convert <Entidad> [--path] [--dry-run]
                                                  Pasa una entidad anterior a 0.10 al formato editable
@@ -74,6 +80,12 @@ internal static partial class Cli
                                                  Copia plantillas a .stratum/templates para personalizarlas
           stratum upgrade [--path <servicio o sistema>] [--to <versión>] [--dry-run]
                                                  Actualiza los paquetes Stratum.* de un servicio existente
+          stratum relation list | add <Entidad>[.<Propiedad>] <Destino> [--one-to-one] [--optional] [--on-delete restrict|cascade|set-null]
+                         | update <Entidad>.<Propiedad> [--one-to-one|--one-to-many] [--optional|--required] [--on-delete ...]
+                         | compose <Entidad>.<Propiedad> <TipoDeElemento> [--list] [--optional] | remove <Entidad>.<Propiedad>  [--path] [--dry-run]
+                                                 Relaciones entre entidades del servicio (1–N, 1–1, composición)
+          stratum spec [--path <servicio o sistema>] [--dry-run]
+                                                 Especificación e historias de usuario en docs/ (para personas y modelos)
           stratum --version
 
         Opciones:
@@ -101,6 +113,8 @@ internal static partial class Cli
 
         Tipos de --props: string, int, long, decimal, bool, guid, date, datetime. Añade ? si es opcional.
         Referencia a otra entidad del servicio (clave ajena): "CustomerId:Customer" (o "CustomerId:Customer?").
+        Enumerado del servicio (stratum enum add): "Status:OrderStatus".
+        Listas: "Tags:string[]", "Statuses:OrderStatus[]" o de objetos "Items:OrderItem[]" (stratum type add OrderItem --props "...").
           stratum add entity Product --props "Name:string, Price:decimal, Description:string?"
         """;
 
@@ -150,6 +164,10 @@ internal static partial class Cli
             "aspire" => Aspire(args[1..], output),
             "templates" => Templates(args[1..], output),
             "import" => Import(args[1..], output),
+            "enum" => Enums(args[1..], output),
+            "type" => Types(args[1..], output),
+            "spec" => Spec(args[1..], output),
+            "relation" => RelationCommand(args[1..], output),
             _ => throw new StratumException($"Comando desconocido '{args[0]}'. Usa 'stratum --help'."),
         };
     }
@@ -236,7 +254,7 @@ internal static partial class Cli
         var serviceName = definition.Service.Name;
         outputDir ??= serviceName;
         var team = TeamTemplates.Find(Path.GetDirectoryName(Path.GetFullPath(outputDir))!);
-        var files = ServiceGenerator.Generate(definition, new GenerationOptions { LocalPackageSource = packageSource, Team = team });
+        var files = ServiceGenerator.Generate(definition, new GenerationOptions { LocalPackageSource = packageSource ?? StratumPackages.LocalSource(), Team = team });
 
         if (dryRun)
         {
@@ -351,15 +369,12 @@ internal static partial class Cli
 
         output.WriteLine();
         output.WriteLine("Siguientes pasos:");
-        output.WriteLine("  dotnet test                                   # los tests usan SQLite en memoria");
-        output.WriteLine("  docker compose up -d                          # base de datos local");
         var definition = ServiceGenerator.Deserialize(File.ReadAllText(Path.Combine(path, ServiceGenerator.DefinitionFileName)));
-        var service = definition.Service.Name;
-        var efProjects = definition.Architecture == Architectures.CleanDdd
-            ? $"--project src/{service}.Infrastructure --startup-project src/{service}.Api"
-            : $"--project src/{service}.Api";
-        output.WriteLine($"  dotnet ef migrations add Add{entity.Name} {efProjects}");
-        output.WriteLine($"  dotnet ef database update {efProjects}");
+        foreach (var line in NextSteps.AfterModelChange(path, definition, $"Add{entity.Name}", path))
+        {
+            output.WriteLine("  " + line);
+        }
+
         return 0;
     }
 
@@ -414,28 +429,7 @@ internal static partial class Cli
             root = args[i] == "--path" ? Value(args, ref i, args[i]) : throw new StratumException($"Argumento inesperado '{args[i]}'. Uso: stratum mcp config [--path <sistema>]");
         }
 
-        root = Path.GetFullPath(root);
-
-        // Installed as a dotnet tool the process is "stratum"; run from source it is "dotnet stratum.dll".
-        var process = Environment.ProcessPath ?? "dotnet";
-        var installed = !Path.GetFileNameWithoutExtension(process).Equals("dotnet", StringComparison.OrdinalIgnoreCase);
-        var command = installed ? process : "dotnet";
-        string[] commandArgs = installed ? ["mcp", "--path", root] : [Path.Combine(AppContext.BaseDirectory, "stratum.dll"), "mcp", "--path", root];
-        var json = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-        string Quote(string value) => System.Text.Json.JsonSerializer.Serialize(value);
-
-        output.WriteLine("Claude Code (en la carpeta del sistema):");
-        output.WriteLine($"  claude mcp add stratum -- {(installed ? Quote(command) : "dotnet")} {string.Join(' ', commandArgs.Select(a => a.Contains(' ', StringComparison.Ordinal) ? Quote(a) : a))}");
-        output.WriteLine();
-        output.WriteLine("Claude Desktop (claude_desktop_config.json, dentro de \"mcpServers\"):");
-        output.WriteLine("  \"stratum\": " + System.Text.Json.JsonSerializer.Serialize(new { command, args = commandArgs }, json).Replace("\n", "\n  ", StringComparison.Ordinal));
-        output.WriteLine();
-        output.WriteLine("VS Code / GitHub Copilot (.vscode/mcp.json, dentro de \"servers\"):");
-        output.WriteLine("  \"stratum\": " + System.Text.Json.JsonSerializer.Serialize(new { type = "stdio", command, args = commandArgs }, json).Replace("\n", "\n  ", StringComparison.Ordinal));
-        output.WriteLine();
-        output.WriteLine("Cursor (.cursor/mcp.json, dentro de \"mcpServers\"): igual que Claude Desktop.");
-        output.WriteLine();
-        output.WriteLine("Las herramientas que cambian algo devuelven primero un plan; el asistente aplica con \"apply\": true cuando tú lo apruebas.");
+        output.Write(McpClientConfig.Text(Path.GetFullPath(root)));
         return 0;
     }
 
@@ -806,6 +800,11 @@ internal static partial class Cli
             output.WriteLine($"✔ {name}: Stratum {result.FromVersion} → {result.ToVersion} ({string.Join(", ", result.Packages)})");
         }
 
+        if (!migrated && result.Regenerated > 0)
+        {
+            output.WriteLine($"  ↻ {result.Regenerated} archivo(s) generados de nuevo con las plantillas de {result.ToVersion}");
+        }
+
         foreach (var hint in result.Hints)
         {
             output.WriteLine($"  ℹ {hint}");
@@ -884,7 +883,9 @@ internal static partial class Cli
         if (current is not null)
         {
             var provider = ServicePlanner.ResolveProvider(db, current.Persistence);
-            var plan = ServicePlanner.AddEntities(existing!, current, accepted, provider, new GenerationOptions { Team = TeamTemplates.Find(existing!) });
+            var withEnums = prepared.Enums.Count == 0 ? current : current with { Enums = [.. current.Enums ?? [], .. prepared.Enums] };
+            withEnums = prepared.Types.Count == 0 ? withEnums : withEnums with { Types = [.. withEnums.Types ?? [], .. prepared.Types] };
+            var plan = ServicePlanner.AddEntities(existing!, withEnums, accepted, provider, new GenerationOptions { Team = TeamTemplates.Find(existing!) });
             PrintPlan(output, plan, dryRun);
             if (!dryRun && plan.Changes.Count > 0)
             {
@@ -897,6 +898,8 @@ internal static partial class Cli
         var full = definition with
         {
             Entities = accepted,
+            Enums = prepared.Enums.Count == 0 ? null : prepared.Enums,
+            Types = prepared.Types.Count == 0 ? null : prepared.Types,
             Persistence = new PersistenceSettings { Provider = ServicePlanner.ResolveProvider(db, null) },
             StratumVersion = StratumInfo.Version,
         };
@@ -1013,7 +1016,7 @@ internal static partial class Cli
             "update" => ServicePlanner.UpdateEntity(
                 current,
                 entityName,
-                PropertyTypes.Parse(props ?? throw new StratumException("Falta --props con la lista completa de propiedades (las que no estén se eliminan).")),
+                PropertyTypes.Parse(props ?? throw new StratumException("Falta --props con la lista completa de propiedades (las que no estén se eliminan)."), current.EnumNames, current.TypeNames),
                 renames),
             "remove" => ServicePlanner.RemoveEntity(current, entityName),
             "convert" => ServicePlanner.ConvertEntity(current, entityName),
@@ -1034,14 +1037,222 @@ internal static partial class Cli
             }
             else if (current.Persistence is not null)
             {
-                var service = current.Service.Name;
-                var efProjects = current.Architecture == Architectures.CleanDdd
-                    ? $"--project src/{service}.Infrastructure --startup-project src/{service}.Api"
-                    : $"--project src/{service}.Api";
                 output.WriteLine();
-                output.WriteLine("Siguiente paso: crea la migración y revísala (o hazlo desde el Studio, que hace las dos cosas):");
-                output.WriteLine($"  dotnet ef migrations add <Nombre> {efProjects}");
-                output.WriteLine($"  stratum migration review{(path == "." ? string.Empty : $" --path {path}")}");
+                output.WriteLine("Siguientes pasos (o desde el Studio: Datos y migraciones):");
+                foreach (var line in NextSteps.AfterModelChange(path, current, "<Nombre>", path))
+                {
+                    output.WriteLine("  " + line);
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>"stratum enum list|add|update|remove": enumerations entities use as property types.</summary>
+    private static int Types(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum type list | add <Nombre> --props \"Campo:tipo, ...\" | update <Nombre> --props \"...\" | remove <Nombre>  [--path <servicio>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("list" or "add" or "update" or "remove"))
+        {
+            throw new StratumException(usage);
+        }
+
+        var action = args[0];
+        string? name = null, props = null;
+        var path = ".";
+        var dryRun = false;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--props":
+                    props = Value(args, ref i, args[i]);
+                    break;
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    if (name is null && !args[i].StartsWith('-'))
+                    {
+                        name = args[i];
+                        break;
+                    }
+
+                    throw new StratumException($"Argumento inesperado '{args[i]}'. {usage}");
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        if (action == "list")
+        {
+            if (current.Types is not { Count: > 0 })
+            {
+                output.WriteLine($"{current.Service.Name} no tiene tipos de elemento. Crea uno: stratum type add OrderItem --props \"ProductId:guid, Quantity:int\"");
+                return 0;
+            }
+
+            foreach (var t in current.Types)
+            {
+                var usages = ModelRules.TypeUsages(current, t.Name);
+                output.WriteLine($"{t.Name}: {PropertyTypes.Spec(t.Properties)}{(usages.Count == 0 ? "  (sin usar)" : $"  ← {string.Join(", ", usages)}")}");
+            }
+
+            return 0;
+        }
+
+        if (name is null)
+        {
+            throw new StratumException($"Falta el nombre del tipo. {usage}");
+        }
+
+        ServiceDefinition updated;
+        if (action == "remove")
+        {
+            updated = ServicePlanner.RemoveType(current, name);
+        }
+        else
+        {
+            var exists = current.TypeNames.Contains(name, StringComparer.OrdinalIgnoreCase);
+            if (action == "add" && exists)
+            {
+                throw new StratumException($"El tipo '{name}' ya existe: cámbialo con stratum type update {name} --props \"...\".");
+            }
+
+            if (action == "update" && !exists)
+            {
+                throw new StratumException($"No existe el tipo '{name}'. Créalo con stratum type add {name} --props \"...\".");
+            }
+
+            updated = ServicePlanner.SetType(current, name,
+                ServicePlanner.ParseTypeProperties(current, props ?? throw new StratumException($"Falta --props (la lista completa: las que no estén se eliminan). {usage}")));
+        }
+
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        PrintPlan(output, plan, dryRun);
+        var used = action == "remove" ? [] : ModelRules.TypeUsages(updated, ServiceName.Normalize(name));
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+            if (action == "add")
+            {
+                output.WriteLine();
+                output.WriteLine($"Úsalo como lista en una entidad: stratum entity update <Entidad> --props \"..., Items:{ServiceName.Normalize(name)}[]\"");
+            }
+            else if (used.Count > 0 && updated.Persistence is not null)
+            {
+                output.WriteLine();
+                output.WriteLine($"Cambia la tabla de {string.Join(", ", used)}. Siguientes pasos:");
+                foreach (var line in NextSteps.AfterModelChange(path, updated, $"Change{ServiceName.Normalize(name)}", path))
+                {
+                    output.WriteLine("  " + line);
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    private static int Enums(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum enum list | add <Nombre> --values \"A, B, C\" | update <Nombre> --values \"...\" | remove <Nombre>  [--path <servicio>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("list" or "add" or "update" or "remove"))
+        {
+            throw new StratumException(usage);
+        }
+
+        var action = args[0];
+        string? name = null, values = null;
+        var path = ".";
+        var dryRun = false;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--values":
+                    values = Value(args, ref i, args[i]);
+                    break;
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    if (name is null && !args[i].StartsWith('-'))
+                    {
+                        name = args[i];
+                        break;
+                    }
+
+                    throw new StratumException($"Argumento inesperado '{args[i]}'. {usage}");
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        if (action == "list")
+        {
+            if (current.Enums is not { Count: > 0 })
+            {
+                output.WriteLine($"{current.Service.Name} no tiene enumerados. Crea uno: stratum enum add OrderStatus --values \"Draft, Confirmed\"");
+                return 0;
+            }
+
+            foreach (var e in current.Enums)
+            {
+                var usages = ModelRules.EnumUsages(current, e.Name);
+                output.WriteLine($"{e.Name}: {string.Join(", ", e.Values)}{(usages.Count == 0 ? "  (sin usar)" : $"  ← {string.Join(", ", usages)}")}");
+            }
+
+            return 0;
+        }
+
+        if (name is null)
+        {
+            throw new StratumException($"Falta el nombre del enumerado. {usage}");
+        }
+
+        IReadOnlyList<string> removed = [];
+        ServiceDefinition updated;
+        if (action == "remove")
+        {
+            updated = ServicePlanner.RemoveEnum(current, name);
+        }
+        else
+        {
+            var exists = current.EnumNames.Contains(name, StringComparer.OrdinalIgnoreCase);
+            if (action == "add" && exists)
+            {
+                throw new StratumException($"El enumerado '{name}' ya existe: cámbialo con stratum enum update {name} --values \"...\".");
+            }
+
+            if (action == "update" && !exists)
+            {
+                throw new StratumException($"No existe el enumerado '{name}'. Créalo con stratum enum add {name} --values \"...\".");
+            }
+
+            updated = ServicePlanner.SetEnum(current, name, ModelRules.ParseEnumValues(values ?? throw new StratumException($"Falta --values. {usage}")), out removed);
+        }
+
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        PrintPlan(output, plan, dryRun);
+        var used = action == "remove" ? [] : ModelRules.EnumUsages(updated, ServiceName.Normalize(name));
+        if (removed.Count > 0 && used.Count > 0)
+        {
+            output.WriteLine($"⚠ Quitas {string.Join(", ", removed)}: si alguna fila de {string.Join(", ", used)} los tiene guardados, fallará al leerse. " +
+                             "Cámbialas antes (UPDATE … SET … = 'Otro') o añade ese paso a la migración.");
+        }
+
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+            if (action == "add")
+            {
+                output.WriteLine();
+                output.WriteLine($"Úsalo como tipo de una propiedad: stratum entity update <Entidad> --props \"..., Status:{ServiceName.Normalize(name)}\"");
             }
         }
 
@@ -1051,9 +1262,10 @@ internal static partial class Cli
     /// <summary>"stratum entity operation add|remove": business operations of an aggregate (clean-ddd).</summary>
     private static int EntityOperations(string[] args, TextWriter output)
     {
-        const string usage = "Uso: stratum entity operation add <Entidad> <Operación> [--params \"Campo:tipo, ...\"] [--event <Evento>] [--path] [--dry-run]\n" +
+        const string usage = "Uso: stratum entity operation add <Entidad> <Operación> [--params \"Campo:tipo, ...\"] [--event <Evento>] [--publish] [--path] [--dry-run]\n" +
+                             "     stratum entity operation publish <Entidad> <Operación> [--off] [--path] [--dry-run]\n" +
                              "     stratum entity operation remove <Entidad> <Operación> [--path] [--dry-run]";
-        if (args.Length == 0 || args[0] is not ("add" or "remove"))
+        if (args.Length == 0 || args[0] is not ("add" or "remove" or "publish"))
         {
             throw new StratumException(usage);
         }
@@ -1063,10 +1275,18 @@ internal static partial class Cli
         string? parameters = null, eventName = null;
         var path = ".";
         var dryRun = false;
+        var publish = false;
+        var off = false;
         for (var i = 1; i < args.Length; i++)
         {
             switch (args[i])
             {
+                case "--publish" when action == "add":
+                    publish = true;
+                    break;
+                case "--off" when action == "publish":
+                    off = true;
+                    break;
                 case "--params" when action == "add":
                     parameters = Value(args, ref i, args[i]);
                     break;
@@ -1097,21 +1317,41 @@ internal static partial class Cli
 
         var current = ServicePlanner.Load(path);
         var entity = ServicePlanner.FindEntity(current, positional[0]);
-        var updated = action == "add"
-            ? ServicePlanner.AddOperation(current, entity.Name, ModelRules.ParseOperation(entity.Name, positional[1], parameters, eventName))
-            : ServicePlanner.RemoveOperation(current, entity.Name, positional[1]);
+        string? messagingNote = null;
+        var start = (action == "add" && publish) || (action == "publish" && !off) ? ServicePlanner.EnsureMessaging(path, current, null, out messagingNote) : current;
+        var updated = action switch
+        {
+            "add" => ServicePlanner.AddOperation(start, entity.Name,
+                ModelRules.ParseOperation(entity.Name, positional[1], parameters, eventName, current.EnumNames, current.TypeNames) with { Publish = publish ? true : null }),
+            "publish" => ServicePlanner.PublishOperation(start, entity.Name, positional[1], !off),
+            _ => ServicePlanner.RemoveOperation(current, entity.Name, positional[1]),
+        };
 
         var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        if (messagingNote is not null)
+        {
+            output.WriteLine("ℹ " + messagingNote);
+        }
+
         PrintPlan(output, plan, dryRun);
         if (!dryRun && plan.Changes.Count > 0)
         {
             plan.Apply();
+            var published = IntegrationEvents.Of(updated, ServicePlanner.FindEntity(updated, entity.Name))
+                .FirstOrDefault(e => e.Operation?.Name == ServiceName.Normalize(positional[1]));
             if (action == "add")
             {
                 var operation = ServiceName.Normalize(positional[1]);
                 output.WriteLine();
                 output.WriteLine($"Escribe la regla en src/{current.Service.Name}.Domain/{entity.Plural}/{entity.Name}.{operation}.cs (es tuyo).");
                 output.WriteLine($"Endpoint: POST /api/v1/{EntityCodeGen.Kebab(entity.Plural)}/{{id}}/{EntityCodeGen.Kebab(operation)}");
+            }
+
+            if (action != "remove" && published is not null)
+            {
+                output.WriteLine($"Evento de integración: {published.EventClass} en el topic {published.Topic}. Otro servicio lo escucha con:");
+                output.WriteLine($"  stratum subscribe <carpeta de {current.Service.Name}> {entity.Name}.{published.Name} --path <servicio>");
+                output.WriteLine("Regenera el AppHost (stratum aspire) si usas Azure Service Bus: el emulador necesita el topic.");
             }
             else
             {
@@ -1304,8 +1544,15 @@ internal static partial class Cli
         }
 
         var current = ServicePlanner.Load(path);
-        var updated = names.Aggregate(current, (definition, name) => ServicePlanner.SetPublishEvents(definition, name, args[0] == "on"));
+        string? note = null;
+        var start = args[0] == "on" ? ServicePlanner.EnsureMessaging(path, current, null, out note) : current;
+        var updated = names.Aggregate(start, (definition, name) => ServicePlanner.SetPublishEvents(definition, name, args[0] == "on"));
         var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        if (note is not null)
+        {
+            output.WriteLine("ℹ " + note);
+        }
+
         PrintPlan(output, plan, dryRun);
         if (!dryRun && plan.Changes.Count > 0)
         {
@@ -1369,24 +1616,38 @@ internal static partial class Cli
             }
 
             var parts = positional[1].Split('.', 2);
-            var events = parts.Length == 2 ? [parts[1]] : Subscription.Events;
             updated = current;
             if (subscribe)
             {
                 var publisher = ServicePlanner.Load(positional[0]);
+                updated = ServicePlanner.EnsureMessaging(path, updated, publisher.Messaging?.Broker, out var note);
+                if (note is not null)
+                {
+                    output.WriteLine("ℹ " + note);
+                }
+
+                IReadOnlyList<string> events = parts.Length == 2 ? [parts[1]]
+                    : [.. IntegrationEvents.Of(publisher, ServicePlanner.FindEntity(publisher, parts[0])).Select(e => e.Name).DefaultIfEmpty(Subscription.Created)];
                 foreach (var name in events)
                 {
                     updated = ServicePlanner.Subscribe(updated, ServicePlanner.SubscriptionTo(publisher, parts[0], name));
                 }
 
-                if (publisher.Messaging?.Broker != current.Messaging?.Broker)
+                if (publisher.Messaging is not null && publisher.Messaging.Broker != updated.Messaging?.Broker)
                 {
-                    output.WriteLine($"⚠ {publisher.Service.Name} usa '{publisher.Messaging?.Broker}' y este servicio '{current.Messaging?.Broker}': " +
-                                     "para que los eventos lleguen, los dos deben usar el mismo broker (Kafka).");
+                    output.WriteLine($"⚠ {publisher.Service.Name} usa '{publisher.Messaging.Broker}' y este servicio '{updated.Messaging?.Broker}': " +
+                                     "para que los eventos lleguen, los dos deben usar el mismo broker.");
                 }
             }
             else
             {
+                IReadOnlyList<string> events = parts.Length == 2 ? [parts[1]]
+                    : [.. (current.Subscriptions ?? []).Where(x => x.Service.Equals(positional[0], StringComparison.OrdinalIgnoreCase) && x.Entity.Equals(parts[0], StringComparison.OrdinalIgnoreCase)).Select(x => x.Event)];
+                if (events.Count == 0)
+                {
+                    throw new StratumException($"{current.Service.Name} no escucha eventos de {positional[0]} {parts[0]}.");
+                }
+
                 foreach (var name in events)
                 {
                     updated = ServicePlanner.Unsubscribe(updated, positional[0], parts[0], name);
@@ -1699,7 +1960,9 @@ internal static partial class Cli
             output.WriteLine($"  --props \"{props}\"");
             foreach (var operation in entity.Operations ?? [])
             {
-                output.WriteLine($"  operación {operation.Name}({PropertyTypes.Spec(operation.Parameters)}) → {operation.Event}");
+                var published = IntegrationEvents.Of(definition, entity).FirstOrDefault(e => e.Operation == operation);
+                output.WriteLine($"  operación {operation.Name}({PropertyTypes.Spec(operation.Parameters)}) → {operation.Event}" +
+                                 (published is not null ? $"  · publicada en {published.Topic}" : operation.Publishes ? "  · marcada para publicar, pero sin mensajería" : string.Empty));
             }
 
             foreach (var (dependent, property) in ModelRules.Dependents(definition, entity.Name))
@@ -1712,6 +1975,178 @@ internal static partial class Cli
         {
             output.WriteLine($"  renombrado pendiente de migración: {rename.Entity}.{rename.From} → {rename.To}");
         }
+    }
+
+    /// <summary>
+    /// "stratum spec": the documentation of a service (docs/especificacion.g.md, contexto.md, historias/) or, in the
+    /// system folder, of every service plus docs/sistema.g.md. From then on every change keeps it up to date.
+    /// </summary>
+    private static int Spec(string[] args, TextWriter output)
+    {
+        var path = ".";
+        var dryRun = false;
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path":
+                    path = Value(args, ref i, args[i]);
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    throw new StratumException($"Argumento inesperado '{args[i]}'. Uso: stratum spec [--path <servicio o sistema>] [--dry-run]");
+            }
+        }
+
+        var full = Path.GetFullPath(path);
+        var plans = new List<(string Title, ChangePlan Plan)>();
+        if (File.Exists(Path.Combine(full, ServiceGenerator.DefinitionFileName)))
+        {
+            var definition = ServicePlanner.Load(full);
+            plans.Add((definition.Service.Name, SpecGenerator.Plan(full, definition)));
+        }
+        else
+        {
+            var services = AspireGenerator.Discover(full);
+            if (services.Count == 0)
+            {
+                throw new StratumException($"No hay servicios de Stratum en '{full}'.");
+            }
+
+            foreach (var service in services)
+            {
+                var directory = Path.GetFullPath(Path.Combine(full, service.RelativeDirectory));
+                plans.Add((service.Definition.Service.Name, SpecGenerator.Plan(directory, service.Definition)));
+            }
+
+            var system = SpecGenerator.ForSystem(AspireGenerator.DefaultSystemName(full), [.. services.Select(s => (s.RelativeDirectory, s.Definition))]);
+            plans.Add(("Sistema", new ChangePlan(full, SpecGenerator.Changes(full, [system]), [])));
+        }
+
+        output.WriteLine(dryRun ? "Documentación (--dry-run, no se escribe nada):" : "✔ Documentación:");
+        foreach (var (title, plan) in plans)
+        {
+            if (!dryRun)
+            {
+                plan.Apply();
+            }
+
+            output.WriteLine(plan.Changes.Count == 0 ? $"  {title}: al día" : $"  {title}:");
+            foreach (var change in plan.Changes)
+            {
+                output.WriteLine($"    {(change.Kind == ChangeKind.Create ? "+" : "~")} {Path.GetRelativePath(full, Path.Combine(plan.Directory, change.Path)).Replace('\\', '/')}");
+            }
+        }
+
+        output.WriteLine();
+        output.WriteLine("La especificación (especificacion.g.md) es de Stratum y se actualiza sola con cada cambio del modelo.");
+        output.WriteLine("Completa contexto.md (para qué sirve, roles, glosario) y lo marcado «por completar» en las historias:");
+        output.WriteLine("son tuyas y Stratum no las vuelve a tocar; las operaciones y suscripciones nuevas tendrán la suya.");
+        return 0;
+    }
+
+    /// <summary>"stratum relation": 1–N and 1–1 relations (references) and compositions (item types) of a service.</summary>
+    private static int RelationCommand(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum relation list | add <Entidad>[.<Propiedad>] <Destino> [--one-to-one] [--optional] [--on-delete restrict|cascade|set-null] " +
+                             "| update <Entidad>.<Propiedad> [--one-to-one|--one-to-many] [--optional|--required] [--on-delete ...] " +
+                             "| compose <Entidad>.<Propiedad> <TipoDeElemento> [--list] [--optional] | remove <Entidad>.<Propiedad>  [--path <servicio>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("list" or "add" or "update" or "compose" or "remove"))
+        {
+            throw new StratumException(usage);
+        }
+
+        var action = args[0];
+        var positional = new List<string>();
+        var path = ".";
+        bool dryRun = false, list = false;
+        bool? oneToOne = null, optional = null;
+        string? onDelete = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path": path = Value(args, ref i, args[i]); break;
+                case "--dry-run": dryRun = true; break;
+                case "--one-to-one": oneToOne = true; break;
+                case "--one-to-many": oneToOne = false; break;
+                case "--optional": optional = true; break;
+                case "--required": optional = false; break;
+                case "--list": list = true; break;
+                case "--on-delete": onDelete = Value(args, ref i, args[i]); break;
+                default:
+                    if (args[i].StartsWith('-'))
+                    {
+                        throw new StratumException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    positional.Add(args[i]);
+                    break;
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        if (action == "list")
+        {
+            var relations = Relations.Of(current);
+            var compositions = Relations.CompositionsOf(current);
+            if (relations.Count == 0 && compositions.Count == 0)
+            {
+                output.WriteLine($"{current.Service.Name} no tiene relaciones. Crea una: stratum relation add Address Customer   (Address.CustomerId → Customer, 1–N)");
+                return 0;
+            }
+
+            foreach (var r in relations)
+            {
+                output.WriteLine($"{r.Entity}.{r.Property} → {r.Target}   {(r.OneToOne ? "1–1" : "1–N")}{(r.Optional ? ", opcional" : string.Empty)}, al borrar {r.Target}: {r.OnDelete}");
+            }
+
+            foreach (var c in compositions)
+            {
+                output.WriteLine($"{c.Entity}.{c.Property} ◆ {c.Type}{(c.List ? "[]" : string.Empty)}   composición{(c.List ? " (tabla propia)" : " (columnas en la tabla de " + c.Entity + ")")}{(c.Optional ? ", opcional" : string.Empty)}");
+            }
+
+            return 0;
+        }
+
+        (string Entity, string? Property) Target(string value)
+        {
+            var dot = value.IndexOf('.', StringComparison.Ordinal);
+            return dot < 0 ? (value, null) : (value[..dot], value[(dot + 1)..]);
+        }
+
+        if (positional.Count == 0)
+        {
+            throw new StratumException(usage);
+        }
+
+        var (entity, property) = Target(positional[0]);
+        ServiceDefinition updated = action switch
+        {
+            "add" => Relations.Add(current, entity, property, positional.Count > 1 ? positional[1] : throw new StratumException($"Falta la entidad destino. {usage}"),
+                oneToOne ?? false, optional ?? false, onDelete),
+            "update" => Relations.Update(current, entity, property ?? throw new StratumException($"Indica la propiedad: {entity}.<Propiedad>. {usage}"), oneToOne, optional, onDelete),
+            "compose" => Relations.AddComposition(current, entity, property ?? throw new StratumException($"Indica la propiedad: {entity}.<Propiedad>. {usage}"),
+                positional.Count > 1 ? positional[1] : throw new StratumException($"Falta el tipo de elemento. {usage}"), list, optional ?? false),
+            _ => Relations.Remove(current, entity, property ?? throw new StratumException($"Indica la propiedad: {entity}.<Propiedad>. {usage}")),
+        };
+
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+        }
+
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            output.WriteLine();
+            output.WriteLine("Siguiente: crea la migración (en el Studio: Datos y migraciones; o dotnet ef migrations add … y stratum migration review).");
+        }
+
+        return 0;
     }
 
     private static void PrintPlan(TextWriter output, ChangePlan plan, bool dryRun)
@@ -1777,5 +2212,10 @@ internal static partial class Cli
         output.WriteLine($"  cd {outputDir}");
         output.WriteLine($"  dotnet run --project src/{name}.Api");
         output.WriteLine($"  curl http://localhost:{ServiceName.DevPort(name)}/api/v1/ping");
+        var system = Path.GetDirectoryName(Path.GetFullPath(outputDir));
+        if (system is not null && Directory.Exists(system) && Directory.EnumerateDirectories(system, "*.AppHost").Any())
+        {
+            output.WriteLine($"  stratum aspire --path {Path.GetRelativePath(Directory.GetCurrentDirectory(), system)}   # añádelo al AppHost del sistema");
+        }
     }
 }

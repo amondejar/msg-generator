@@ -71,15 +71,32 @@ Abre el editor visual en `http://localhost:5150`. Usa el mismo motor que la CLI,
 
 - **Sistema**: tus servicios, crear uno nuevo y generar o actualizar el AppHost de Aspire.
 - **Servicio**: arquitectura, features y base de datos, con vista previa en vivo de `Program.cs`, el árbol de archivos y `stratum.json`.
-- **Entidades**: propiedades con tipo y opcionalidad. En Clean + DDD muestra los métodos del agregado y sus eventos. A la derecha, el código generado de cada capa.
+- **Entidades**: propiedades, operaciones del agregado (Clean + DDD), enumerados y tipos de elemento, en tablas de lectura.
+  **+ Añadir…** o **✎** abre una ventana flotante (se mueve arrastrando su título) donde lo configuras con su vista previa;
+  **Guardar y cerrar** lo pasa a los cambios pendientes y **Cerrar** (o Esc) lo descarta. Desde la ventana de una propiedad
+  puedes crear el enumerado o el tipo de elemento que te falte, y queda elegido. A la derecha, el código generado de cada capa.
+- **Especificación** (del servicio y del sistema): `docs/` con la especificación, el contexto y las historias de usuario.
 - **Aplicar cambios**: qué archivos se crean, cuáles se regeneran y cuáles se completan, con el diff de cada uno. Nunca se sobrescribe un archivo tuyo.
 - **Ejecutar sistema** (en Sistema): genera o actualiza el AppHost y lo arranca con Aspire. Muestra la salida en vivo, el enlace al
   dashboard y los de Scalar y health de cada servicio. Avisa si falta Docker; al cerrar el Studio se detiene todo.
 - **Migraciones** (en Servicio): lista las migraciones y crea la siguiente con un nombre sugerido (`Initial`, `AddProduct`…),
   con los proyectos correctos según la arquitectura. Si falta `dotnet-ef`, ofrece instalarlo.
 
+**Idioma**: español o inglés, abajo a la izquierda (**Idioma / Language**). Cambia al momento sin perder lo que tengas sin
+aplicar y se recuerda para la próxima vez; la primera vez se usa el idioma del sistema. `STRATUM_STUDIO_LANGUAGE=es|en`
+lo fija (útil en scripts). Se traduce el Studio y el diseñador de eventos; los mensajes del motor (errores del modelo,
+avisos de los planes y de las migraciones), la CLI y la documentación generada (`stratum spec`) siguen en español.
+
 En un servicio que ya existe solo se pueden añadir entidades: las existentes, la arquitectura y las features ya son código tuyo.
 Opciones: `--port`, `--no-browser` y `--package-source` (igual que en `stratum new`).
+
+### Versiones de los paquetes Stratum.*
+
+Cada servicio fija la versión de sus paquetes `Stratum.*` en `Directory.Packages.props`. Al aplicar cualquier cambio con una
+versión nueva de Stratum, todos pasan a esa versión (el código generado va con sus paquetes, y mezclar versiones rompe la
+restauración). Si un servicio se queda con paquetes de otra versión, el Studio lo avisa en **Servicios**, **Compilar y probar**
+y **Ejecutar**, con el botón **Actualizar paquetes** (lo mismo que `stratum upgrade`: solo cambia `Directory.Packages.props` y
+`stratumVersion`).
 
 ## Plantillas del equipo (`.stratum`)
 
@@ -185,6 +202,131 @@ El tipo de una propiedad puede ser otra entidad del servicio (`Customer:Customer
 - En el Studio, el tipo de la propiedad ofrece `→ Customer`.
 - Entre servicios no hay claves ajenas: guarda el Id como `guid` y mantén los datos con [eventos](#escuchar-eventos-de-otro-servicio).
 
+### Relaciones: 1–N, 1–1 y composición (`stratum relation`)
+
+Una referencia es por defecto **1–N** (muchos `Order` para un `Customer`). Además se puede elegir:
+
+| Opción | Qué genera |
+| --- | --- |
+| `--one-to-one` (1–1) | `WithOne().HasForeignKey<T>()` con índice único; un segundo `Profile` para el mismo `Customer` se rechaza (400 en vertical slice, 422 en clean-ddd). |
+| `--on-delete restrict` (por defecto) | No se puede borrar el `Customer` mientras tenga dependientes (409 / 422). |
+| `--on-delete cascade` | Borrar el `Customer` borra sus `Profile`. |
+| `--on-delete set-null` | Borrar el `Customer` deja la referencia a `null` (solo en referencias opcionales). |
+| `--optional` | La clave ajena admite `null`. |
+
+Cada referencia añade un filtro al listado: `GET /api/v1/orders?customerId={id}` (también en las herramientas MCP).
+
+La **composición** mete un tipo de elemento dentro de la entidad: un solo elemento va en columnas de la misma tabla
+(`OwnsOne`, p. ej. `Address_Street`), una lista va en su propia tabla (`OwnsMany`, ver [Listas](#listas)).
+
+```bash
+stratum type add PostalAddress --props "Street:string, City:string, Zip:string?"
+stratum relation add Profile Customer --one-to-one --on-delete cascade      # Profile.CustomerId, 1–1
+stratum relation add Order.ReviewerId Customer --optional --on-delete set-null
+stratum relation update Order.CustomerId --on-delete cascade
+stratum relation compose Customer.Address PostalAddress                      # un elemento, obligatorio
+stratum relation compose Customer.Billing PostalAddress --optional
+stratum relation compose Customer.Others PostalAddress --list               # tabla propia
+stratum relation list
+stratum relation remove Order.ReviewerId
+```
+
+Todo pasa por el mismo plan que `stratum entity`: `--dry-run` enseña los ficheros, y los avisos advierten de lo que la
+base de datos puede rechazar (una clave obligatoria nueva en una tabla con filas, un índice único con datos repetidos,
+varios caminos de borrado en cascada en SQL Server…). Los cambios llegan a la base de datos con una migración:
+**Datos y migraciones** en el Studio, o `dotnet ef migrations add …` y `stratum migration review`. Los asistentes de IA
+tienen lo mismo en `stratum mcp`: `add_relation`, `update_relation`, `add_composition` y `remove_relation`.
+
+**Diseñador de entidades.** En el Studio, *Entidades → Diseñador de entidades* abre una ventana aparte, como el
+diseñador de eventos: tarjetas con las entidades y los tipos de elemento, se arrastra desde ⊕ para relacionar (o
+componer, si el destino es un tipo), se elige 1–N/1–1, opcional y qué pasa al borrar, y se pueden crear entidades
+con su nombre y propiedades básicas (los detalles, en los diálogos de *Entidades*). Nada se escribe hasta
+*Guardar y cerrar*, que aplica todo de una vez o nada. Las relaciones N–M llegarán en una segunda fase; mientras tanto,
+modélalas con una entidad intermedia (`OrderTag` con `OrderId` y `TagId`).
+
+### Enumerados
+
+```bash
+stratum enum add OrderStatus --values "Draft, Confirmed, Shipped"
+stratum entity update Order --props "Number:string, Status:OrderStatus, Previous:OrderStatus?"
+stratum enum update OrderStatus --values "Draft, Confirmed, Shipped, Cancelled"
+stratum enum list
+```
+
+- Stratum genera el `enum` de C# y lo puedes usar como tipo de propiedad o de parámetro de una operación.
+- Se guarda como **texto** en la base de datos (`HasConversion<string>()`) y en el JSON de la API, así que añadir o
+  reordenar valores no rompe datos. Un valor desconocido en una petición devuelve 400.
+- En los eventos de integración viaja como texto: quien escucha no depende del enum del que publica, y un valor nuevo no
+  le rompe nada. AsyncAPI documenta los valores posibles.
+- Quitar un valor avisa en el plan, porque las filas que ya lo tengan guardado fallarán al leerse. No se puede eliminar
+  un enumerado mientras alguna propiedad lo use.
+- En el Studio: **Entidades → Enumerados del servicio**, y en el selector de tipo aparecen como `# OrderStatus`.
+- `stratum import openapi` convierte los `enum` de texto de la especificación en enumerados, y la herramienta MCP
+  `set_enum` hace lo mismo desde un asistente.
+
+### Listas
+
+```bash
+# Listas de valores: tipo básico o enumerado con []
+stratum entity update Product --props "Name:string, Tags:string[], Sizes:Size[]"
+
+# Listas de objetos: primero el tipo de elemento, luego la lista
+stratum type add OrderItem --props "ProductId:guid, Quantity:int, UnitPrice:decimal, Status:LineStatus"
+stratum entity update Order --props "Number:string, Items:OrderItem[]"
+stratum type update OrderItem --props "ProductId:guid, Quantity:int, UnitPrice:decimal, Status:LineStatus, Notes:string?"
+stratum type list
+```
+
+- **Listas de valores** (`string[]`, `int[]`, `OrderStatus[]`…): una columna JSON en la tabla de la entidad (en
+  PostgreSQL, un array nativo). Los enumerados se guardan como texto.
+- **Listas de objetos** (`OrderItem[]`): cada elemento es una fila de una tabla propia (`order_items`, enlazada con
+  `OrderId`) y forma parte de la entidad: no tiene endpoints propios, se lee con ella y se borra con ella. El tipo de
+  elemento admite tipos básicos y enumerados (sin referencias ni listas dentro).
+- En la API la lista va dentro de la entidad: `"items": [{ "productId": "…", "quantity": 2, "unitPrice": 9.95 }]`. El
+  `PUT` **reemplaza la lista entera**; si el JSON no trae la lista, queda vacía. Los campos de texto de cada elemento se
+  validan como los de la entidad (400), y en clean-ddd además en el dominio (422).
+- Una lista nunca es opcional (`Tags:string[]?` no vale): sin elementos es una lista vacía.
+- En los eventos de integración la lista viaja con sus datos; los elementos de una lista de objetos van como un record
+  dentro del evento (`OrderCreated.OrderItem`), así que quien escucha no necesita el tipo del que publica.
+- Cambiar un tipo de elemento cambia la tabla de las listas que lo usan: crea una migración nueva. No se puede eliminar
+  un tipo mientras alguna lista lo use.
+- En el Studio: **Entidades → Tipos de elemento**, y en cada propiedad la columna **Valor** (Obligatorio, Opcional o
+  Lista); los tipos de elemento aparecen en el selector como `▤ OrderItem[]`. En MCP: `set_type` y `remove_type`.
+- `stratum import openapi` convierte los arrays: de valores, a listas; de objetos, a tipos de elemento.
+- En clean-ddd, las operaciones del agregado admiten un elemento o una lista como parámetro, para cambiar la lista con su
+  propia regla:
+
+  ```bash
+  stratum entity operation add Order AddItem --params "Item:OrderItem"          # evento OrderItemAdded
+  stratum entity operation add Order RemoveItem --params "ProductId:guid"         # evento OrderItemRemoved
+  stratum entity operation add Order ReplaceItems --params "Items:OrderItem[]"
+  ```
+
+  `Order.AddItem.cs` nace ya con `Items.Add(item);` (y `ReplaceItems` con `Items = [.. items];`); `RemoveItem` trae la
+  línea de ejemplo comentada. La regla («no se tocan las líneas de un pedido enviado») la añades tú.
+
+### Buenas prácticas y agentes de código
+
+Las plantillas siguen las skills oficiales del equipo de .NET ([dotnet/skills](https://github.com/dotnet/skills):
+`dotnet-webapi`, `optimizing-ef-core-queries`, `test-anti-patterns`, `msbuild`), con dos excepciones a propósito: en
+vertical slice los endpoints usan el `DbContext` sin capa de servicios, y el `PUT` responde 204.
+
+- **OpenAPI**: cada endpoint lleva nombre, resumen, descripción y sus respuestas (400 de validación incluido); los
+  comentarios `<summary>` de los contratos pasan al documento (`GenerateDocumentationFile`).
+- **JSON estricto** en los servicios nuevos (`Program.cs`): números como números, nombres de propiedad exactos y sin
+  propiedades repetidas.
+- **Contratos propios para los elementos de las listas** (`OrderItemContract`): la API nunca expone la clase que guarda EF.
+- **`<Servicio>.Api.http`** con las peticiones de cada entidad y operación, encadenadas (el pedido usa el cliente creado
+  antes). Stratum lo actualiza mientras no lo edites.
+- **Tests enfocados**: crear (201 y `Location`), leer lo creado, que el `PUT` reemplace los datos (con valores distintos y
+  los opcionales vacíos, comparando campo a campo), listar y borrar, cada uno por separado.
+- **`AGENTS.md`** (y `CLAUDE.md`, que lo importa) en cada servicio nuevo: qué archivos son de Stratum y no se editan, dónde
+  va tu código, los comandos y las convenciones, y qué skills de Microsoft instalar. Así Copilot o Claude Code escriben tu
+  parte siguiendo las mismas reglas.
+
+Los servicios que ya tenías no cambian de comportamiento: el `.http`, el `AGENTS.md` y el JSON estricto (en
+`Program.cs`) solo se crean en servicios nuevos; los endpoints y los tests (`.g.cs`) se actualizan en el siguiente cambio.
+
 ### Operaciones del agregado (clean-ddd)
 
 ```bash
@@ -197,6 +339,21 @@ Cada operación genera el evento de dominio (`OrderCancelled(OrderId, Reason)`),
 `POST /api/v1/orders/{id}/cancel`. La regla es tuya: Stratum crea una vez `Order.Cancel.cs` con el método vacío (lanza
 `DomainException` para responder 422) y no lo vuelve a tocar. Si la entidad publica eventos, la operación publica
 `OrderUpdated` con el estado nuevo. En el Studio: **Entidades → Operaciones del agregado**.
+
+#### Publicar una operación para otros servicios
+
+```bash
+stratum entity operation add Order Ship --params "Carrier:string" --publish   # o: stratum entity operation publish Order Ship
+stratum subscribe ../orders Order.Shipped --path ../notifications            # en el servicio que lo escucha
+```
+
+Con `--publish`, el evento de la operación es también un **evento de integración propio**: `OrderShipped` en el topic
+`orders.order-shipped`, con el id, los datos del pedido después de la operación y los parámetros (`Carrier`). Se publica
+por el outbox junto con `OrderUpdated` (si la entidad publica sus cambios), así que quien guarda una copia del pedido
+sigue al día y quien tiene que *reaccionar al envío* escucha solo `OrderShipped`, una vez por envío. Aparece en el mapa
+de eventos, en AsyncAPI y en los topics del AppHost (Service Bus incluido). Para publicarse, el evento tiene que empezar
+por el nombre de la entidad. En el Studio: columna **Publica** de las operaciones; en MCP: `add_operation` con
+`publish` o `publish_operation`.
 
 ### El servicio como servidor MCP (feature `mcp`)
 
@@ -224,7 +381,8 @@ OpenAPI 3.x o Swagger 2.0, en JSON o YAML:
   esquema (`allOf` incluido; `snake_case` pasa a PascalCase; `id`, `createdAt` y `updatedAt` ya los genera Stratum).
 - Una propiedad que apunta a otro recurso (`$ref` o `customer_id` con formato uuid) es una referencia.
 - `POST /orders/{id}/cancel` es la operación `Cancel` del agregado en clean-ddd (con los datos del cuerpo como parámetros).
-- Al final, la lista de lo que no se ha podido traducir (objetos anidados, listas…) y de los endpoints que no son CRUD,
+- Los arrays pasan a [listas](#listas): de valores, o de objetos con su tipo de elemento.
+- Al final, la lista de lo que no se ha podido traducir (objetos anidados fuera de una lista, listas de listas…) y de los endpoints que no son CRUD,
   para que sepas qué escribir a mano.
 - En el Studio: **Servicios → Crear un servicio desde OpenAPI** rellena el servicio nuevo para que lo revises antes de aplicar.
 - En un asistente de IA: la herramienta `import_openapi` del [servidor MCP](#asistentes-de-ia-stratum-mcp).
@@ -318,6 +476,31 @@ stratum aspire                             # añade Kafka y Kafka UI, o el emula
 
 En el Studio: **Servicio → Mensajería entre servicios** (broker) y **Entidades → Eventos para otros servicios** (qué entidad publica).
 
+**No hace falta activar la mensajería antes.** Publicar eventos (`events on`, `--publish` en una operación, la casilla
+**Publica**) o escuchar uno (`subscribe`, **+ Escuchar**, arrastrar en el mapa) la activa si el servicio no la tenía, con
+el broker que usa el resto del sistema (Kafka si no hay otro), y lo avisa. `messaging on` sigue sirviendo para elegir
+otro broker.
+
+Al crear un servicio en el Studio eliges su **carpeta** dentro del sistema: navegas por las carpetas (las que ya son
+servicios aparecen marcadas y no se pueden usar), y con **+ Nueva carpeta** creas las que quieras (`backend`,
+`backend/ventas`…). Stratum encuentra los servicios hasta 5 niveles por debajo de la carpeta del sistema, y el AppHost
+los incluye a todos. Una carpeta fuera del sistema sigue siendo posible («Usar una carpeta fuera del sistema…»). Por
+consola es lo mismo con `-o`: `stratum new Sales -o backend/ventas/sales`.
+
+**Abrir el código y compilar desde el Studio.** Abajo a la izquierda eliges tu editor (Visual Studio, VS Code o Rider, si
+están instalados, o la aplicación predeterminada). Con él:
+
+- **Abrir en Visual Studio** (barra superior): la solución del servicio; si hay AppHost, la del sistema, con todos los
+  servicios. En **Ejecutar → Código de todo el sistema**, la solución del sistema.
+- **Abrir el archivo que toca editar**: la regla de cada operación (`Order.Ship.cs`, en Entidades → Comportamiento), el
+  handler de cada evento escuchado (en Mensajería) y cualquier archivo de **Código generado**.
+- **Compilar y probar** (menú del servicio): `dotnet build` y `dotnet test` con la salida en directo y un resumen: tests
+  que pasan y fallan (con el motivo) y errores de compilación con archivo y línea, que se abren en el editor con un clic.
+  En **Ejecutar**, lo mismo para todo el sistema.
+
+El Studio se entera de los cambios hechos fuera (consola, asistente de IA, editor): recarga el servicio abierto, o, si
+tienes cambios sin aplicar, te avisa y te deja elegir.
+
 Qué genera:
 
 - `StratumWiring.g.cs`: `AddStratumMessaging("shop").UseKafka(...).UseEntityFramework<ShopDbContext>()`.
@@ -347,7 +530,34 @@ stratum events map                                         # quién publica y qu
 - El handler se ejecuta una vez por evento (inbox), con reintentos y dead-letter; lo que guardes en él se confirma junto con
   el registro del inbox.
 - En el Studio: **Servicio → Eventos que escucha** (elegir de los eventos que publican los demás servicios, actualizar el
-  contrato cuando cambia) y **Sistema → Mapa de eventos**, que avisa de contratos desactualizados.
+  contrato cuando cambia) y **Sistema → Mapa de eventos**.
+
+#### Mapa de eventos (Studio)
+
+Un resumen compacto del sistema, de solo lectura: una ficha pequeña por servicio (broker, cuántos eventos publica y escucha,
+avisos) y una tabla con cada evento, quién lo publica, quién lo escucha y si llega (en rojo si hay un problema: contrato
+desactualizado, nadie lo publica, brokers distintos). Desde ahí, **Abrir diseñador** para cambiar las conexiones y
+**Especificación AsyncAPI**.
+
+#### Diseñador de eventos (Studio)
+
+Cuando el sistema crece, **Mapa de eventos → Abrir diseñador** abre una ventana aparte (`/designer`) con un lienzo:
+
+- **Paleta de servicios** a la izquierda: arrastra un servicio al lienzo para trabajar con él; **✕** en su tarjeta lo quita
+  del lienzo (no borra nada). **+ Nuevo servicio…** y la papelera de cada tarjeta llevan al Studio (crear o eliminar un
+  servicio, con su plan); al volver, el diseñador se actualiza.
+- **Lienzo**: mueve las tarjetas por la cabecera, desplázate arrastrando el fondo y haz zoom con la rueda o con **−/+**;
+  **Ajustar** encuadra todo. Las posiciones se guardan en `stratum.designer.json`, en la carpeta del sistema.
+- **Conectar**: arrastra un evento hasta otro servicio. Cada entidad enseña sus eventos *posibles* en gris
+  (`Created/Updated/Deleted` y sus operaciones): si conectas uno gris, se publica en el mismo paso (solo ese evento:
+  `publishedEvents` en el `stratum.json`), y la mensajería se activa donde haga falta.
+- **Desconectar**: pulsa una flecha (o una fila de *Escucha*) y **Desconectar**, la tecla **Supr**, o **×** en la fila.
+  Tu handler se conserva.
+- **Publicar / dejar de publicar**: pulsa un evento. Si alguien lo escucha, te avisa.
+
+Los cambios se acumulan en **Cambios sin guardar** (cada uno con **↶** para deshacerlo) y debajo ves el plan de cada servicio
+afectado. **Guardar y cerrar** aplica todo a la vez y cierra la ventana; si algún cambio no es posible, no se escribe nada.
+**Descartar** cierra sin tocar nada. El Studio recoge los cambios solo.
 
 Paquetes:
 
@@ -357,6 +567,37 @@ Paquetes:
 | `Stratum.Messaging.EntityFrameworkCore` | Outbox e inbox en la base de datos del servicio: el evento se guarda en la misma transacción que tus cambios, y el handler y su registro en el inbox también. |
 | `Stratum.Messaging.Kafka` | Kafka con Confluent.Kafka: un topic por evento, un consumer group por servicio, commit tras procesar, topic `<topic>.dead-letter`, topics creados al primer uso. |
 | `Stratum.Messaging.AzureServiceBus` | Azure Service Bus: un topic por evento, una suscripción por servicio, complete tras procesar y dead-letter nativo; funciona con el emulador de Aspire. |
+
+#### Trazas de eventos (Studio)
+
+Para comprobar que los eventos llegan: **Mapa de eventos → Trazas de eventos** (o **Ejecutar**) abre una ventana aparte
+(`/traces`) que, cada 2 segundos, pregunta a los servicios arrancados qué han enviado y recibido, y lo junta por el id
+de cada mensaje:
+
+1. **Publicado** por el servicio (guardado en su outbox con el cambio que lo produjo).
+2. **Aceptado por el broker** (Kafka, Service Bus o el de memoria), con los reintentos y el error si no lo acepta.
+3. **Cada servicio que lo escucha**: procesado (con su handler y lo que tardó), reintentando, en dead-letter o ilegible,
+   con el error. Con el mapa de eventos del sistema dice también lo que **no ha llegado**: un servicio arrancado que lo
+   escucha y no lo ha recibido a los 30 segundos, o uno cuyo `stratum.json` lo escucha pero sin handler (sin recompilar).
+
+Cada evento enseña su message id, correlation id y trace id, el payload, y enlaces a su traza en el dashboard de Aspire
+(petición HTTP, SQL y tiempo de cada paso, con `aspire run` y la telemetría activada) y a su topic en Kafka UI. Se filtra
+por texto, servicio y estado.
+
+Cómo funciona:
+
+- Cada servicio con mensajería expone, **solo en Development**, `GET /_stratum/messaging` (lo mapea `StratumWiring.g.cs`):
+  sus últimos mensajes del outbox y de `msg_received`. El Studio los lee en el puerto de su `launchSettings.json`, el
+  mismo con `aspire run` que con `dotnet run`.
+- `msg_received` es el diario de lo que recibe cada handler, **también los fallos** (el inbox solo guarda lo procesado, para
+  no repetirlo). Se escribe aparte de la transacción del handler y, si falla, el mensaje se procesa igual.
+- Los mensajes enviados y las filas del diario se borran a los 7 días (`Messaging:TraceRetention`); el diario se apaga con
+  `Messaging:JournalEnabled=false`.
+- Las métricas `stratum.messaging.sent`, `stratum.messaging.processed` (por resultado) y `stratum.messaging.process.duration`
+  llegan al dashboard de Aspire con `Stratum.ServiceDefaults.OpenTelemetry`.
+
+Al pasar un servicio a 0.35 (`stratum upgrade` o *Actualizar paquetes*), Stratum regenera su código generado y te recuerda
+crear la migración de `msg_received` (**Datos y migraciones**, o `dotnet ef migrations add StratumMessagingJournal`).
 
 ### AsyncAPI
 
@@ -382,6 +623,32 @@ los reintentos con la misma clave reciben la misma respuesta con `Idempotent-Rep
   (`AddStackExchangeRedisCache`) para compartirlas.
 - Sin cabecera, nada cambia.
 
+## Especificación e historias de usuario (`stratum spec`)
+
+```bash
+stratum spec                 # en la carpeta de un servicio, o en la del sistema (todos + docs/sistema.g.md)
+stratum spec --dry-run
+```
+
+Cuenta el servicio para personas y para otros modelos, en español, en su carpeta `docs/`:
+
+- `especificacion.g.md` (de Stratum): lo que hace el servicio, sacado de `stratum.json`. Entidades con sus reglas
+  (obligatorio, longitudes, valores de los enumerados, referencias), API con sus respuestas y un ejemplo de cuerpo,
+  operaciones con su evento y dónde va su regla, eventos que publica (con sus datos) y que escucha, y dónde va cada cosa.
+- `contexto.md` (tuyo): para qué sirve, roles, glosario y decisiones. Lo que no está en el modelo.
+- `historias/ORD-01-order.md`, `ORD-06-order-ship.md`, `SHI-02-recibe-orders-order-shipped.md`… (tuyas): una por
+  entidad, operación y evento que escucha. Traen los criterios de aceptación en Gherkin (`# language: es`) de lo que el
+  código ya garantiza y dejan «por completar» el rol, el beneficio y las reglas de negocio.
+- En la carpeta del sistema, `docs/sistema.g.md`: los servicios y los eventos entre ellos, con un diagrama Mermaid.
+
+Una vez creada, **cada cambio del modelo la mantiene al día**: el plan regenera la especificación y crea la historia de
+las operaciones y suscripciones nuevas (con el siguiente número). Las historias y el contexto no se tocan nunca.
+
+En el Studio: **Especificación** (del servicio y del sistema), con la vista previa de cada archivo y un botón para
+generarla. Para los modelos: `AGENTS.md` les manda a `docs/`, y el servidor MCP tiene `get_specification`,
+`generate_docs` y el prompt **implement_story** (lee una historia, pregunta lo que falte, cambia el modelo si hace falta e
+implementa las reglas con sus tests).
+
 ## Asistentes de IA: `stratum mcp`
 
 Stratum es también un servidor [MCP](https://modelcontextprotocol.io): Claude, GitHub Copilot o Cursor cambian tus
@@ -392,7 +659,7 @@ stratum mcp config            # configuración lista para pegar en Claude Deskto
 ```
 
 - **Herramientas**: `list_services`, `get_service`, `event_map`, `get_asyncapi`, `create_service`, `add_entity`,
-  `update_entity`, `remove_entity`, `import_openapi`, `add_operation`, `remove_operation`, `set_features`, `set_messaging`, `set_event_publishing`, `subscribe`, `unsubscribe`,
+  `update_entity`, `remove_entity`, `import_openapi`, `set_enum`, `remove_enum`, `add_operation`, `remove_operation`, `set_features`, `set_messaging`, `set_event_publishing`, `subscribe`, `unsubscribe`,
   `sync_subscriptions`, `review_migration`, `generate_apphost`, `remove_service`.
 - **Plan primero**: las que cambian algo devuelven el plan (lo mismo que `--dry-run`) y solo escriben con
   `"apply": true`, que el asistente envía cuando tú apruebas el plan. Cada herramienta ejecuta el comando de la CLI
@@ -488,12 +755,53 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
 ./scripts/smoke-test.sh
 ```
 
-Para instalar `msg` como herramienta global:
+### Publicar una versión en nuget.org
+
+Los paquetes (`Stratum.Cli` y las librerías `Stratum.*`) se publican desde GitHub Actions al subir un tag de versión,
+con *Trusted Publishing* de nuget.org: no hay ninguna API key guardada en el repositorio.
+
+Una sola vez:
+
+1. En nuget.org, con tu usuario: **Trusted Publishing → Create policy**, para este repositorio de GitHub y el workflow
+   `release.yml`.
+2. En GitHub: **Settings → Secrets and variables → Actions → New repository secret** `NUGET_USER` con tu nombre de
+   usuario de nuget.org (no una clave).
+3. Opcional: pide a nuget.org la reserva del prefijo `Stratum.` (account@nuget.org) para que nadie más publique
+   paquetes con ese prefijo.
+
+En cada versión:
+
+```bash
+# <Version> de Directory.Build.props ya es la nueva (p. ej. 0.36.0)
+git tag v0.36.0
+git push origin v0.36.0
+```
+
+El workflow comprueba que el tag coincide con `<Version>`, pasa el smoke test, empaqueta con `-p:StratumPublished=true`,
+publica en nuget.org (con símbolos) y crea la release de GitHub con los paquetes. Una versión publicada no se puede
+volver a subir ni borrar (solo ocultar): si algo falla, se corrige con la siguiente.
+
+Con Stratum en nuget.org:
+
+```bash
+dotnet tool install -g Stratum.Cli     # o: dotnet tool update -g Stratum.Cli
+stratum upgrade --path <sistema>       # versiones al día; quita los nuget.config que solo servían para los paquetes locales
+stratum aspire --path <sistema>        # lo mismo en la raíz del sistema
+```
+
+Para instalar `stratum` como herramienta global desde el código (sin publicar):
 
 ```bash
 dotnet pack src/Stratum.Cli -c Release -o ./artifacts/packages
-dotnet tool install -g Stratum.Cli --add-source ./artifacts/packages
+dotnet tool update -g Stratum.Cli --add-source ./artifacts/packages
 ```
+
+Empaquetada así (en local), la herramienta lleva dentro los paquetes `Stratum.*` de su versión (`dotnet pack` de la CLI empaqueta también las
+librerías). Mientras no estén en nuget.org, `stratum` los copia a `~/.stratum/packages` (o a la carpeta de
+`STRATUM_PACKAGES`) y los servicios los restauran de ahí: `stratum new` les genera un `nuget.config` con esa carpeta,
+`stratum upgrade` (y *Actualizar paquetes*) se la añade a los que no la tienen y `stratum aspire` hace lo mismo en la raíz
+del sistema, desde donde el AppHost restaura todos los servicios. Una carpeta que no cambia entre versiones, así que
+actualizar la herramienta no deja a los servicios sin paquetes.
 
 ## Roadmap
 
@@ -501,7 +809,7 @@ dotnet tool install -g Stratum.Cli --add-source ./artifacts/packages
 2. **Fase 2**
    - ✅ 2a: lo común en paquetes `Stratum.ServiceDefaults.*` + `stratum upgrade`.
    - ✅ 2b: `stratum add entity` con CRUD, EF Core (PostgreSQL o SQL Server) y tests con SQLite en memoria.
-   - 2c: publicar los paquetes en nuget.org desde CI al crear un tag.
+   - ✅ 2c: publicar los paquetes en nuget.org desde CI al crear un tag (Trusted Publishing).
 3. ✅ `stratum aspire`: AppHost de Aspire para todos los servicios.
 4. ✅ **Fase 3**: editor visual `stratum studio` (Blazor Server sobre `Stratum.Core`).
 5. ✅ Entidades editables: cambiar, renombrar y eliminar propiedades y entidades sin pisar tu código (`stratum entity`, Studio).
@@ -510,5 +818,17 @@ dotnet tool install -g Stratum.Cli --add-source ./artifacts/packages
 8. En curso: mensajería entre servicios. ✅ `Stratum.Messaging`, outbox/inbox con EF Core, Kafka con Aspire, publicar eventos de entidades (CLI y Studio). ✅ Suscripciones y mapa de eventos. ✅ Azure Service Bus e `Idempotency-Key`.
 9. En curso: ✅ AsyncAPI, ✅ servidor MCP, ✅ referencias entre entidades y operaciones del agregado, ✅ importar OpenAPI, ✅ feature `mcp` en los servicios.
 10. ✅ Nombres de Stratum: paquetes `Stratum.*`, `stratum.json`, `.stratum`, con migración automática (`stratum upgrade`).
-11. Publicar en nuget.org (prefijo `Stratum.*`, la herramienta como `Stratum.Cli`).
+11. ✅ Enumerados (`stratum enum`, Studio, MCP, import de OpenAPI). ✅ Mapa de eventos gráfico y editable en el Studio.
+12. ✅ Listas: de valores (`Tags:string[]`) y de objetos con tipos de elemento (`Items:OrderItem[]`), en CLI, Studio, MCP, eventos e import de OpenAPI. ✅ Operaciones sobre listas (`AddItem`, `RemoveItem`).
+13. ✅ Buenas prácticas de dotnet/skills en las plantillas, `AGENTS.md`, `.http`, siguientes pasos con Aspire y mejoras del Studio.
+14. ✅ Operaciones publicadas como eventos de integración propios (`OrderShipped`).
+15. ✅ Sin dependencias de orden: la mensajería se activa al publicar o escuchar; el Studio recarga los cambios externos.
+16. ✅ Carpetas para los servicios dentro del sistema; abrir en Visual Studio / VS Code / Rider; compilar y probar desde el Studio.
+17. ✅ Diseñador de eventos en una ventana aparte: lienzo con paleta de servicios, conectar y desconectar arrastrando, publicar eventos sueltos.
+18. ✅ Ventanas flotantes en Entidades para propiedades, operaciones, enumerados y tipos de elemento.
+19. ✅ Especificación e historias de usuario (`stratum spec`) que se mantienen al día con el modelo.
+20. ✅ Studio en español e inglés.
+21. ✅ Relaciones 1–N y 1–1 con qué pasa al borrar, filtros por referencia y composición (`stratum relation`, diseñador de entidades). Siguiente: relaciones N–M.
+22. ✅ Trazas de eventos en el Studio: del outbox al broker y a cada servicio que escucha, con lo que no ha llegado, errores y enlaces a Aspire y Kafka UI.
+23. Publicar en nuget.org (prefijo `Stratum.*`, la herramienta como `Stratum.Cli`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

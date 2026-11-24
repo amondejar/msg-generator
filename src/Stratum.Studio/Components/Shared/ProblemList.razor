@@ -4,7 +4,7 @@
 @if (State.Errors.Count > 0)
 {
     <div class="msg err" role="alert">
-        <b>Hay que corregir esto antes de aplicar:</b>
+        <b>@L("Hay que corregir esto antes de aplicar:", "Fix this before applying:")</b>
         <ul>
             @foreach (var error in State.Errors)
             {

@@ -2,7 +2,8 @@ using System.Text.RegularExpressions;
 
 namespace Stratum.Core.Generation;
 
-public sealed record UpgradeResult(string FromVersion, string ToVersion, IReadOnlyList<string> Packages, IReadOnlyList<string> Hints);
+/// <param name="Regenerated">Generated files (.g.cs…) rewritten with the new version's templates.</param>
+public sealed record UpgradeResult(string FromVersion, string ToVersion, IReadOnlyList<string> Packages, IReadOnlyList<string> Hints, int Regenerated = 0);
 
 /// <summary>
 /// Upgrades an existing service to another Stratum version without touching its code:
@@ -14,6 +15,26 @@ public static partial class ServiceUpgrader
 
     [GeneratedRegex("""(?<prefix><PackageVersion\s+Include="(?<id>Stratum\.[^"]+)"\s+Version=")(?<version>[^"]+)(?<suffix>")""")]
     private static partial Regex StratumPackageVersion();
+
+    /// <summary>The versions of the Stratum.* packages a service uses (empty if it has none).</summary>
+    public static IReadOnlyList<string> PackageVersions(string serviceDirectory)
+    {
+        var packagesPath = Path.Combine(serviceDirectory, PackagesFileName);
+        try
+        {
+            return File.Exists(packagesPath)
+                ? [.. StratumPackageVersion().Matches(File.ReadAllText(packagesPath)).Select(m => m.Groups["version"].Value).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)]
+                : [];
+        }
+        catch (IOException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>True when some Stratum.* package of the service isn't at <paramref name="version"/>.</summary>
+    public static bool IsBehind(string serviceDirectory, string version) =>
+        PackageVersions(serviceDirectory) is { Count: > 0 } versions && versions.Any(v => v != version);
 
     public static UpgradeResult Upgrade(string serviceDirectory, string targetVersion)
     {
@@ -44,7 +65,49 @@ public static partial class ServiceUpgrader
         File.WriteAllText(packagesPath, updated);
         File.WriteAllText(definitionPath, ServiceGenerator.Serialize(definition with { StratumVersion = targetVersion }));
 
-        return new UpgradeResult(definition.StratumVersion, targetVersion, packages, Hints(serviceDirectory, definition));
+        // The new packages may come with new generated code (e.g. the msg_received table in 0.35): Stratum's own
+        // files are rewritten with this version's templates; the user's files aren't touched.
+        var hints = Hints(serviceDirectory, definition);
+        var regenerated = 0;
+
+        // Where to restore the new Stratum.* packages from (they come with the tool until they're on nuget.org).
+        var nugetConfig = Path.Combine(serviceDirectory, "nuget.config");
+        if (StratumPackages.LocalSource() is { } source)
+        {
+            if (StratumPackages.EnsureSource(nugetConfig, source))
+            {
+                hints.Add($"nuget.config: los paquetes Stratum.* se restauran de {source} (vienen con la herramienta stratum).");
+            }
+        }
+        else if (StratumInfo.IsPublished && StratumPackages.RemoveLocalOnlyConfig(nugetConfig))
+        {
+            hints.Add("nuget.config eliminado: solo servía para los paquetes Stratum.* locales y ya están en nuget.org.");
+        }
+
+        try
+        {
+            var current = ServicePlanner.Load(serviceDirectory);
+            if (targetVersion == StratumInfo.Version)   // the templates are this tool's
+            {
+                var plan = ServicePlanner.Plan(serviceDirectory, current, current, new GenerationOptions { Team = Templating.TeamTemplates.Find(serviceDirectory) });
+                if (plan.Changes.Where(c => c.HandEdited).Select(c => c.Path).ToList() is { Count: > 0 } edited)
+                {
+                    hints.Add($"El código generado no se ha regenerado porque hay .g.cs editados a mano ({string.Join(", ", edited)}). " +
+                              "Revísalos y aplica cualquier cambio en el Studio (o stratum entity …) para regenerarlos.");
+                }
+                else
+                {
+                    plan.Apply();
+                    regenerated = plan.Changes.Count(c => c.Path != ServiceGenerator.DefinitionFileName);
+                }
+            }
+        }
+        catch (StratumException e)
+        {
+            hints.Add($"No se ha regenerado el código generado con las plantillas de {targetVersion}: {e.Message}");
+        }
+
+        return new UpgradeResult(definition.StratumVersion, targetVersion, packages, hints, regenerated);
     }
 
     /// <summary>
@@ -84,6 +147,14 @@ public static partial class ServiceUpgrader
                 "      generated_code = true");
         }
 
+        if (definition.Messaging is not null && definition.Persistence is not null && !HasMigrationFor(directory, "msg_received"))
+        {
+            hints.Add(
+                "Stratum 0.35 añade la tabla msg_received (lo que recibe cada handler, también los fallos: las trazas de eventos del Studio). " +
+                "Crea su migración: en el Studio, Datos y migraciones; o dotnet ef migrations add StratumMessagingJournal. Sin ella los eventos se " +
+                "siguen procesando, pero las trazas no muestran lo que recibe este servicio.");
+        }
+
         var legacy = definition.Entities.Where(e => !e.IsEditable).Select(e => e.Name).ToList();
         if (legacy.Count > 0)
         {
@@ -93,5 +164,14 @@ public static partial class ServiceUpgrader
         }
 
         return hints;
+    }
+
+    /// <summary>Some migration of the service already mentions <paramref name="table"/>.</summary>
+    private static bool HasMigrationFor(string directory, string table)
+    {
+        var src = Path.Combine(directory, "src");
+        return Directory.Exists(src) && Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => f.Contains($"{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Any(f => File.ReadAllText(f).Contains($"\"{table}\"", StringComparison.Ordinal));
     }
 }

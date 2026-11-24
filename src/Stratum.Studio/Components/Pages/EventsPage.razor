@@ -2,59 +2,99 @@
 @implements IDisposable
 @inject StudioState State
 
-<PageTitle>Mapa de eventos · Stratum Studio</PageTitle>
+<PageTitle>@L("Mapa de eventos", "Event map") · Stratum Studio</PageTitle>
 
-<main class="content">
-    <div>
-        <h1>Mapa de eventos</h1>
-        <p class="lead">Qué servicio publica cada evento de integración y quién lo escucha. Los avisos señalan contratos copiados que el publicador ha cambiado o eventos que ya nadie publica.</p>
+@* A compact, read-only overview of the system's events. Editing happens in the events designer (/designer). *@
+<main class="content wide">
+    <div class="row" style="justify-content: space-between; align-items: flex-start; gap: 16px">
+        <div>
+            <h1>@L("Mapa de eventos", "Event map")</h1>
+            <p class="lead">@L(@<text>Qué publica cada servicio y quién lo escucha. Para conectar, desconectar o publicar eventos abre el <b>diseñador</b>: una ventana aparte con los servicios en un lienzo, que lo guarda todo de una vez.</text>, @<text>What each service publishes and who listens to it. To connect, disconnect or publish events open the <b>designer</b>: a separate window with the services on a canvas that saves everything at once.</text>)</p>
+        </div>
+        <div class="row" style="gap: 8px; flex-wrap: nowrap">
+            <a class="btn" href="/traces" target="stratum-traces" style="white-space: nowrap; text-decoration: none"
+               title="@L("Sigue cada evento en los servicios arrancados: del outbox al broker y a cada servicio que lo escucha", "Follow each event in the running services: from the outbox to the broker and to every service that listens to it")"
+               onclick="window.open(this.href, 'stratum-traces', 'popup,width=1440,height=900'); return false;">@L("Trazas de eventos", "Event traces")</a>
+            <a class="btn btn-primary" href="/designer" target="stratum-designer" style="white-space: nowrap; text-decoration: none"
+               onclick="window.open(this.href, 'stratum-designer', 'popup,width=1440,height=900'); return false;"><Icon Name="events" /> @L("Abrir diseñador", "Open designer")</a>
+        </div>
     </div>
     @{
         var routes = State.EventRoutes();
     }
-    @if (routes.Count == 0)
+    @if (State.Services.Count == 0)
     {
-        <div class="card stack"><b>Todavía no hay eventos entre servicios.</b><span class="hint">1. En un servicio, activa la mensajería (<em>Mensajería</em>). 2. En sus <em>Entidades</em>, marca <em>Publicar eventos</em>. 3. En otro servicio, en <em>Mensajería → Eventos que escucha</em>, elige el evento.</span></div>
+        <div class="card stack"><b>@L("No hay servicios en el sistema.", "There are no services in the system.")</b><span class="hint">@L(@<text>Crea uno en <a href="services">Servicios</a>.</text>, @<text>Create one in <a href="services">Services</a>.</text>)</span></div>
     }
     else
     {
-        <section class="stack" aria-labelledby="h-events-map">
-            <h2 class="section" id="h-events-map">@routes.Count evento(s)</h2>
-            <div class="table">
-                <div class="tr head" style="grid-template-columns: 1fr 2fr 1.6fr"><span>Publica</span><span>Evento (topic)</span><span>Lo escuchan</span></div>
-                @foreach (var route in routes)
+        <section class="stack" aria-labelledby="h-services">
+            <h2 class="section" id="h-services">@L("Servicios", "Services")</h2>
+            <div class="ev-grid">
+                @foreach (var service in State.Services.OrderBy(s => s.Definition.Service.Name, StringComparer.Ordinal))
                 {
-                    <div class="tr" style="grid-template-columns: 1fr 2fr 1.6fr; align-items: center">
-                        <span>@(route.Publisher ?? "¿?")</span>
-                        <span>
-                            <span class="mono">@route.EventClass</span> <small class="hint mono">@route.Topic</small>
-                            @if (route.Problem is { } problem)
-                            {
-                                <br /><small style="color: var(--warn)">⚠ @problem</small>
-                            }
-                        </span>
-                        <span>
-                            @if (route.Consumers.Count == 0)
-                            {
-                                <small class="hint">nadie todavía</small>
-                            }
-                            else
-                            {
-                                <span>→ @string.Join(", ", route.Consumers)</span>
-                            }
-                        </span>
+                    var d = service.Definition;
+                    var name = d.Service.Name;
+                    var publishes = IntegrationEvents.Of(d).Count;
+                    var listens = (d.Subscriptions ?? []).Count;
+                    var problems = routes.Count(r => r.Problem is not null && (r.Consumers.Contains(name) || r.Publisher == name));
+                    <div class="ev-mini @(problems > 0 ? "problem" : null)" title="@service.Directory">
+                        <div class="row" style="justify-content: space-between; gap: 6px">
+                            <b>@name</b>
+                            <span class="badge @(d.Messaging is null ? null : "live")">@(d.Messaging?.Broker switch { MessagingSettings.AzureServiceBus => "service bus", null => L("sin mensajería", "no messaging"), var b => b })</span>
+                        </div>
+                        <span class="hint">@L($"publica {publishes} · escucha {listens}", $"publishes {publishes} · listens {listens}")@(problems > 0 ? $" · ⚠ {problems}" : string.Empty)</span>
                     </div>
                 }
             </div>
-            <span class="hint">Un servicio publica los eventos de una entidad en <em>Entidades → Eventos para otros servicios</em>; otro los escucha en <em>Mensajería → Eventos que escucha</em>.</span>
+        </section>
+
+        <section class="stack" aria-labelledby="h-routes">
+            <h2 class="section" id="h-routes">@L("Eventos", "Events") <small class="hint">(@routes.Count)</small></h2>
+            @if (routes.Count == 0)
+            {
+                <div class="card hint">@L("Ningún servicio publica ni escucha eventos todavía. Ábrelo en el diseñador y arrastra un evento de un servicio a otro.", "No service publishes or listens to events yet. Open the designer and drag an event from one service to another.")</div>
+            }
+            else
+            {
+                <div class="table">
+                    <div class="tr head" style="@Columns"><span>@L("Evento", "Event")</span><span>@L("Publica", "Published by")</span><span>@L("Lo escuchan", "Listened to by")</span><span>@L("Estado", "Status")</span></div>
+                    @foreach (var route in routes.OrderBy(r => r.Problem is null).ThenBy(r => r.Consumers.Count == 0).ThenBy(r => r.Publisher).ThenBy(r => r.EventClass, StringComparer.Ordinal))
+                    {
+                        <div class="tr" style="@Columns">
+                            <span><span class="mono">@route.EventClass</span><br /><small class="hint mono">@route.Topic</small></span>
+                            <span>@(route.Publisher ?? "—")</span>
+                            <span class="row" style="gap: 4px; flex-wrap: wrap">
+                                @if (route.Consumers.Count == 0)
+                                {
+                                    <span class="hint">@L("nadie todavía", "nobody yet")</span>
+                                }
+                                @foreach (var consumer in route.Consumers)
+                                {
+                                    <span class="badge">@consumer</span>
+                                }
+                            </span>
+                            @if (route.Problem is { } problem)
+                            {
+                                <span style="color: var(--err)">⚠ @problem</span>
+                            }
+                            else
+                            {
+                                <span class="hint">@(route.Consumers.Count == 0 ? L("se publica, sin oyentes", "published, no listeners") : L("✔ llega", "✔ arrives"))</span>
+                            }
+                        </div>
+                    }
+                </div>
+                <span class="hint">@L(@<text>Las suscripciones nuevas necesitan regenerar el AppHost en <a href="run">Ejecutar</a>.</text>, @<text>New subscriptions need the AppHost regenerated in <a href="run">Run</a>.</text>)</span>
+            }
         </section>
 
         <section class="stack" aria-labelledby="h-asyncapi">
-            <h2 class="section" id="h-asyncapi">Especificación AsyncAPI</h2>
-            <p class="hint">La documentación de los eventos en el estándar AsyncAPI 3.1: topics, quién publica y quién escucha, y los datos de cada evento. Sirve para AsyncAPI Studio, generadores de clientes o para otros equipos.</p>
+            <h2 class="section" id="h-asyncapi">@L("Especificación AsyncAPI", "AsyncAPI specification")</h2>
+            <p class="hint">@L("La documentación de los eventos en el estándar AsyncAPI 3.1: topics, quién publica y quién escucha, y los datos de cada evento. Sirve para AsyncAPI Studio, generadores de clientes o para otros equipos.", "The documentation of the events in the AsyncAPI 3.1 standard: topics, who publishes and who listens, and the data of each event. Useful for AsyncAPI Studio, client generators or other teams.")</p>
             <div class="row" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
-                <button type="button" class="btn btn-primary" @onclick="Export">Guardar asyncapi.yaml</button>
-                <button type="button" class="btn" @onclick="() => showSpec = !showSpec">@(showSpec ? "Ocultar" : "Ver") especificación</button>
+                <button type="button" class="btn btn-primary" @onclick="Export">@L("Guardar asyncapi.yaml", "Save asyncapi.yaml")</button>
+                <button type="button" class="btn" @onclick="() => showSpec = !showSpec">@(showSpec ? L("Ocultar especificación", "Hide specification") : L("Ver especificación", "Show specification"))</button>
                 @if (exported is not null)
                 {
                     <small class="hint mono">✔ @exported</small>
@@ -66,10 +106,11 @@
             }
         </section>
     }
-
 </main>
 
 @code {
+    private const string Columns = "grid-template-columns: 1.6fr 1fr 1.4fr 1.6fr";
+
     private bool showSpec;
     private string? exported;
 

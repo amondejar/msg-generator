@@ -1,0 +1,194 @@
+@page "/spec"
+@page "/service/spec"
+@implements IDisposable
+@inject StudioState State
+@inject NavigationManager Nav
+
+<PageTitle>@L("Especificación", "Specification") · Stratum Studio</PageTitle>
+
+@* The service (or the system) told for people and for other models: docs/especificacion.g.md (Stratum's, always up
+   to date), docs/contexto.md and docs/historias (the user's: created once). See SpecGenerator. *@
+@if (ForService && State.Current is not { } )
+{
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>, o mira la <a href="spec">especificación del sistema</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>, or see the <a href="spec">system specification</a>.</text>)</p></main>
+}
+else if (ForService && State.Current is { IsNew: true } newDraft)
+{
+    <main class="content">
+        <h1>@L("Especificación", "Specification")</h1>
+        <p class="lead">@L(@<text>@newDraft.Name todavía no existe en el disco. <a href="apply">Aplícalo</a> y vuelve aquí.</text>, @<text>@newDraft.Name doesn't exist on disk yet. <a href="apply">Apply it</a> and come back here.</text>)</p>
+    </main>
+}
+else
+{
+    var (title, root, files, changes) = Load();
+    var stories = files.Where(f => f.Path.StartsWith(SpecGenerator.StoriesFolder, StringComparison.Ordinal)).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
+    var hasDocs = ForService ? SpecGenerator.HasDocs(root) : File.Exists(Path.Combine(root, SpecGenerator.SystemSpecPath));
+    <main class="content">
+        <div>
+            <h1>@(ForService ? L("Especificación", "Specification") : L("Especificación del sistema", "System specification"))</h1>
+            <p class="lead">
+                @if (ForService)
+                {
+                    <span>@L(@<text>@title contado para personas y para otros modelos, en <span class="mono">docs/</span>: la <b>especificación</b> (lo que hace el servicio, sacada del modelo y siempre al día) y una <b>historia de usuario</b> por entidad, operación y evento que escucha, con criterios de aceptación en Gherkin y lo que solo sabe el negocio «por completar».</text>, @<text>@title told for people and for other models, in <span class="mono">docs/</span>: the <b>specification</b> (what the service does, taken from the model and always up to date) and a <b>user story</b> per entity, operation and event it listens to, with acceptance criteria in Gherkin and what only the business knows left «por completar» (to complete). The documents are in Spanish.</text>)</span>
+                }
+                else
+                {
+                    <span>@L(@<text>El sistema completo en <span class="mono">docs/sistema.g.md</span>: sus servicios, qué eventos se mandan y quién los escucha, con un diagrama. Desde aquí puedes generar también la documentación de todos los servicios.</text>, @<text>The whole system in <span class="mono">docs/sistema.g.md</span>: its services, which events they send and who listens to them, with a diagram. From here you can also generate the documentation of every service.</text>)</span>
+                }
+            </p>
+        </div>
+
+        <section class="card stack" style="gap: 12px">
+            <div class="row" style="gap: 12px; align-items: center; flex-wrap: wrap">
+                <button type="button" class="btn btn-primary" disabled="@(changes == 0)" @onclick="Generate">
+                    @(hasDocs ? L("Actualizar documentación", "Update documentation") : L("Generar documentación", "Generate documentation"))@(ForService ? null : L(" de todo el sistema", " of the whole system"))
+                </button>
+                <span class="hint">
+                    @if (changes == 0)
+                    {
+                        <span>✔ <span class="mono">docs/</span> @L("está al día.", "is up to date.")</span>
+                    }
+                    else
+                    {
+                        <span>@L($"{changes} archivo(s) por crear o actualizar. Lo tuyo (contexto e historias) no se sobrescribe nunca.", $"{changes} file(s) to create or update. Yours (context and stories) are never overwritten.")</span>
+                    }
+                </span>
+            </div>
+            @if (ForService && State.Dirty)
+            {
+                <span class="hint" style="color: var(--warn)">@L("⚠ Tienes cambios sin aplicar: la documentación sale de lo que ya está en el disco. Al aplicarlos se actualiza sola.", "⚠ You have changes not applied: the documentation comes from what's on disk. Applying them updates it.")</span>
+            }
+            @if (ForService && hasDocs)
+            {
+                <span class="hint">@L("Cada cambio del modelo (Studio, CLI o MCP) actualiza la especificación y crea la historia de las operaciones y suscripciones nuevas.", "Every model change (Studio, CLI or MCP) updates the specification and creates the story of new operations and subscriptions.")</span>
+            }
+            @if (message is not null)
+            {
+                <div class="msg ok" role="status" style="white-space: pre-wrap">@message</div>
+            }
+        </section>
+
+        @if (ForService)
+        {
+            <section class="stack" aria-labelledby="h-stories">
+                <h2 class="section" id="h-stories">@L("Historias de usuario", "User stories") · @stories.Count</h2>
+                <div class="table">
+                    <div class="tr head" style="@Columns"><span>@L("Historia", "Story")</span><span>@L("Título", "Title")</span><span>@L("Estado", "Status")</span><span></span></div>
+                    @foreach (var story in stories)
+                    {
+                        var full = Path.Combine(root, story.Path);
+                        var onDisk = File.Exists(full);
+                        <div class="tr" style="@Columns">
+                            <span class="mono">@string.Join('-', Path.GetFileNameWithoutExtension(story.Path).Split('-').Take(2))</span>
+                            <span>@Title(onDisk ? File.ReadAllText(full) : story.Content)</span>
+                            <span class="@(onDisk ? null : "hint")">@(onDisk ? Status(File.ReadAllText(full)) : L("por crear", "to create"))</span>
+                            @if (onDisk)
+                            {
+                                <OpenInEditor Path="@full" Label="@L("Abrir", "Open")" Compact="true" />
+                            }
+                            else
+                            {
+                                <span></span>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+
+        <section class="card stack" style="gap: 8px">
+            <b>@L("Trabajar con otros modelos", "Working with other models")</b>
+            <span class="hint">
+                @L(@<text>Los agentes de código leen <span class="mono">AGENTS.md</span> (y <span class="mono">CLAUDE.md</span>), que les manda a <span class="mono">docs/</span>.
+                Con el servidor MCP de Stratum (<span class="mono">stratum mcp</span>) tienen <span class="mono">get_specification</span> y <span class="mono">generate_docs</span>,
+                y el prompt <b>implement_story</b>: lee una historia, te pregunta lo que falte, cambia el modelo si hace falta e implementa las reglas con sus tests.</text>, @<text>Coding agents read <span class="mono">AGENTS.md</span> (and <span class="mono">CLAUDE.md</span>), which sends them to <span class="mono">docs/</span>.
+                With Stratum's MCP server (<span class="mono">stratum mcp</span>) they have <span class="mono">get_specification</span> and <span class="mono">generate_docs</span>,
+                and the <b>implement_story</b> prompt: it reads a story, asks you what's missing, changes the model if needed and implements the rules with their tests.</text>)
+            </span>
+            <span class="hint">@L("Por consola:", "From the console:") <span class="mono">stratum spec</span> @L("en la carpeta del servicio o del sistema.", "in the service or system folder.")</span>
+        </section>
+    </main>
+
+    <CodePanel Tabs="@([.. files.Select(f => new CodePanel.Tab(Path.GetFileName(f.Path), f.Path, Current(root, f)))])" Root="@root" Label="@L("Documentación", "Documentation")" />
+}
+
+@code {
+    private const string Columns = "grid-template-columns: 90px 1fr 120px 90px";
+
+    private string? message;
+
+    private bool ForService => new Uri(Nav.Uri).AbsolutePath.StartsWith("/service/", StringComparison.Ordinal);
+
+    /// <summary>What there is to show: the files (as they'd be generated now) and how many would change.</summary>
+    private (string Title, string Root, IReadOnlyList<SpecFile> Files, int Changes) Load()
+    {
+        if (ForService && Service() is { } service)
+        {
+            var root = State.FullPath(service.Directory);
+            var files = SpecGenerator.ForService(root, service.Definition);
+            return (service.Definition.Service.Name, root, files, SpecGenerator.Changes(root, files).Count);
+        }
+
+        var system = SystemFile();
+        var total = SpecGenerator.Changes(State.Workspace, [system]).Count
+            + State.Services.Sum(s => SpecGenerator.Plan(State.FullPath(s.Directory), s.Definition).Changes.Count);
+        return (L("Sistema", "System"), State.Workspace, [system], total);
+    }
+
+    private WorkspaceService? Service() => State.Current is { } draft ? State.Services.FirstOrDefault(s => s.Directory == draft.Directory) : null;
+
+    private SpecFile SystemFile() =>
+        SpecGenerator.ForSystem(AspireGenerator.DefaultSystemName(State.Workspace), [.. State.Services.Select(s => (s.Directory, s.Definition))]);
+
+    /// <summary>The user's files as they are on disk; Stratum's as they will be.</summary>
+    private static string Current(string root, SpecFile file)
+    {
+        var path = Path.Combine(root, file.Path);
+        return !file.Generated && File.Exists(path) ? File.ReadAllText(path) : file.Content;
+    }
+
+    private static string Title(string content) =>
+        content.Split('\n', 2)[0].TrimStart('#', ' ') is var first && first.IndexOf('·', StringComparison.Ordinal) is var dot and >= 0 ? first[(dot + 1)..].Trim() : content.Split('\n', 2)[0];
+
+    private static string Status(string content) =>
+        content.Split('\n').FirstOrDefault(l => l.StartsWith("**Estado:**", StringComparison.Ordinal)) is { } line
+            ? line["**Estado:**".Length..].Split('·')[0].Trim()
+            : "—";
+
+    private void Generate()
+    {
+        var written = new List<string>();
+        if (ForService && Service() is { } service)
+        {
+            var plan = SpecGenerator.Plan(State.FullPath(service.Directory), service.Definition);
+            plan.Apply();
+            written.AddRange(plan.Changes.Select(c => $"{(c.Kind == ChangeKind.Create ? "+" : "~")} {c.Path}"));
+        }
+        else
+        {
+            foreach (var s in State.Services)
+            {
+                var plan = SpecGenerator.Plan(State.FullPath(s.Directory), s.Definition);
+                plan.Apply();
+                written.AddRange(plan.Changes.Select(c => $"{(c.Kind == ChangeKind.Create ? "+" : "~")} {s.Directory}/{c.Path}"));
+            }
+
+            var system = new ChangePlan(State.Workspace, SpecGenerator.Changes(State.Workspace, [SystemFile()]), []);
+            system.Apply();
+            written.AddRange(system.Changes.Select(c => $"{(c.Kind == ChangeKind.Create ? "+" : "~")} {c.Path}"));
+        }
+
+        message = written.Count == 0 ? L("Nada que cambiar.", "Nothing to change.") : L($"✔ {written.Count} archivo(s):", $"✔ {written.Count} file(s):") + "\n" + string.Join("\n", written);
+    }
+
+    protected override void OnInitialized()
+    {
+        State.Initialize();
+        State.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

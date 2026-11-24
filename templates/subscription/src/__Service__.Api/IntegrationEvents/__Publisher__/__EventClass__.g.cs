@@ -9,5 +9,5 @@ using Stratum.Messaging;
 namespace {{Service}}.IntegrationEvents.{{Publisher}};
 
 [IntegrationEvent("{{Topic}}")]
-public sealed record {{EventClass}}({{EventParameters}}) : IntegrationEvent;
+public sealed record {{EventClass}}({{EventParameters}}) : IntegrationEvent{{EventBody}}
 // @stratum:end

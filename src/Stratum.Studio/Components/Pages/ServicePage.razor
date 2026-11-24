@@ -3,25 +3,25 @@
 @inject StudioState State
 @inject NavigationManager Nav
 
-<PageTitle>General · Stratum Studio</PageTitle>
+<PageTitle>@L("General", "General") · Stratum Studio</PageTitle>
 
 @if (State.Current is not { } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
 }
 else
 {
     <main class="content">
         <div>
-            <h1>@(draft.IsNew ? "Nuevo servicio" : draft.Name)</h1>
+            <h1>@(draft.IsNew ? L("Nuevo servicio", "New service") : draft.Name)</h1>
             <p class="lead">
                 @if (draft.IsNew)
                 {
-                    <span>Elige el nombre, la arquitectura y las features. Nada se crea hasta que pulses <a href="apply">Revisar y aplicar</a>.</span>
+                    <span>@L(@<text>Elige el nombre, la arquitectura y las features. Nada se crea hasta que pulses <a href="apply">Revisar y aplicar</a>.</text>, @<text>Choose the name, the architecture and the features. Nothing is created until you press <a href="apply">Review and apply</a>.</text>)</span>
                 }
                 else
                 {
-                    <span>Arquitectura y features del servicio. Puedes activar o desactivar features cuando quieras: Stratum regenera lo suyo y no pisa tu código. La arquitectura queda fija.</span>
+                    <span>@L("Arquitectura y features del servicio. Puedes activar o desactivar features cuando quieras: Stratum regenera lo suyo y no pisa tu código. La arquitectura queda fija.", "Architecture and features of the service. You can turn features on or off whenever you want: Stratum regenerates its part and doesn't overwrite your code. The architecture stays fixed.")</span>
                 }
             </p>
         </div>
@@ -29,26 +29,30 @@ else
         @if (draft.IsNew)
         {
             <label class="field" style="max-width: 360px">
-                Nombre del servicio
+                @L("Nombre del servicio", "Service name")
                 <input type="text" value="@draft.Name" @onchange="e => { draft.Name = e.Value?.ToString() ?? string.Empty; State.Recompute(); }" />
             </label>
         }
 
         <section class="stack" aria-labelledby="h-arch">
-            <h2 class="section" id="h-arch">Arquitectura</h2>
+            <h2 class="section" id="h-arch">@L("Arquitectura", "Architecture")</h2>
+            @if (!draft.CanEditStructure)
+            {
+                <span class="hint">@L("Fija: se eligió al crear el servicio. Para cambiarla, crea un servicio nuevo con la otra arquitectura.", "Fixed: chosen when the service was created. To change it, create a new service with the other architecture.")</span>
+            }
             <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
                 <button type="button" class="card @(draft.Architecture == Architectures.VerticalSlice ? "selected" : "")"
                         aria-pressed="@(draft.Architecture == Architectures.VerticalSlice ? "true" : "false")"
                         disabled="@(!draft.CanEditStructure)" @onclick="() => SetArchitecture(Architectures.VerticalSlice)">
                     <b>Vertical slice</b>
-                    <small>Un proyecto, organizado por features. Los endpoints usan EF Core directamente. Ideal para servicios de CRUD.</small>
+                    <small>@L("Un proyecto, organizado por features. Los endpoints usan EF Core directamente. Ideal para servicios de CRUD.", "One project, organized by features. Endpoints use EF Core directly. Ideal for CRUD services.")</small>
                     <small class="mono">src/@(draft.Name).Api/Features/…</small>
                 </button>
                 <button type="button" class="card @(draft.Architecture == Architectures.CleanDdd ? "selected" : "")"
                         aria-pressed="@(draft.Architecture == Architectures.CleanDdd ? "true" : "false")"
                         disabled="@(!draft.CanEditStructure)" @onclick="() => SetArchitecture(Architectures.CleanDdd)">
                     <b>Clean + DDD</b>
-                    <small>Agregados con comportamiento, eventos de dominio y casos de uso. Dependencias hacia el dominio.</small>
+                    <small>@L("Agregados con comportamiento, eventos de dominio y casos de uso. Dependencias hacia el dominio.", "Aggregates with behavior, domain events and use cases. Dependencies point to the domain.")</small>
                     <small class="mono">Domain · Application · Infrastructure · Api</small>
                 </button>
             </div>
@@ -59,24 +63,26 @@ else
             @if (!draft.CanEditFeatures)
             {
                 <div class="msg warn" role="status">
-                    <b>Program.cs es de una versión de Stratum anterior a la 0.12</b> y configura las features a mano, así que Stratum no puede cambiarlas sin pisarlo.
+                    @L(@<text><b>Program.cs es de una versión de Stratum anterior a la 0.12</b> y configura las features a mano, así que Stratum no puede cambiarlas sin pisarlo.
                     Al pasarlo a <span class="mono">StratumWiring.g.cs</span>, Program.cs queda en unas pocas líneas (<span class="mono">builder.AddStratumWiring()</span>, <span class="mono">app.UseStratumWiring()</span>) y las features se activan y desactivan desde aquí.
-                    Si habías añadido código propio en Program.cs, el diff te enseña tu versión para volver a ponerlo.
+                    Si habías añadido código propio en Program.cs, el diff te enseña tu versión para volver a ponerlo.</text>, @<text><b>Program.cs comes from a Stratum version before 0.12</b> and configures the features by hand, so Stratum can't change them without overwriting it.
+                    Moving it to <span class="mono">StratumWiring.g.cs</span> leaves Program.cs in a few lines (<span class="mono">builder.AddStratumWiring()</span>, <span class="mono">app.UseStratumWiring()</span>) and features are turned on and off from here.
+                    If you had added your own code to Program.cs, the diff shows your version so you can put it back.</text>)
                     <div class="row" style="margin-top: 10px">
-                        <button type="button" class="btn btn-primary" @onclick="() => { draft.ConvertWiring = true; State.Recompute(); }">Pasar Program.cs a StratumWiring</button>
+                        <button type="button" class="btn btn-primary" @onclick="() => { draft.ConvertWiring = true; State.Recompute(); }">@L("Pasar Program.cs a StratumWiring", "Move Program.cs to StratumWiring")</button>
                     </div>
                 </div>
             }
             else if (!draft.IsNew)
             {
-                <span class="hint">Al desactivar una feature, Stratum quita sus paquetes y borra sus archivos solo si siguen como él los generó; si los cambiaste, te avisa en lugar de borrarlos.</span>
+                <span class="hint">@L("Al desactivar una feature, Stratum quita sus paquetes y borra sus archivos solo si siguen como él los generó; si los cambiaste, te avisa en lugar de borrarlos.", "When a feature is turned off, Stratum removes its packages and deletes its files only if they are still as it generated them; if you changed them, it warns you instead of deleting them.")</span>
             }
             <div class="grid">
                 @foreach (var (key, name, description, package) in FeatureList)
                 {
                     var on = draft.Features.IsEnabled(key);
                     <div class="card feature">
-                        <button type="button" class="switch" aria-pressed="@(on ? "true" : "false")" aria-label="@((on ? "Desactivar " : "Activar ") + name)"
+                        <button type="button" class="switch" aria-pressed="@(on ? "true" : "false")" aria-label="@((on ? L("Desactivar ", "Turn off ") : L("Activar ", "Turn on ")) + name)"
                                 disabled="@(!draft.CanEditFeatures)" @onclick="() => Toggle(key, !on)"></button>
                         <div class="stack" style="gap: 4px; min-width: 0">
                             <b>@name</b>
@@ -89,12 +95,12 @@ else
         </section>
 
         <section class="stack" aria-labelledby="h-next">
-            <h2 class="section" id="h-next">Del servicio</h2>
+            <h2 class="section" id="h-next">@L("Del servicio", "Of the service")</h2>
             <div class="actions">
-                <a class="action" href="entities"><Icon Name="entities" Size="20" /><span><b>Entidades · @draft.Entities.Count</b><small>Propiedades, CRUD, reglas y eventos que publica.</small></span></a>
-                <a class="action" href="service/data"><Icon Name="data" Size="20" /><span><b>Datos y migraciones</b><small>@(draft.Entities.Count == 0 ? "La base de datos se fija con la primera entidad." : $"{draft.Provider} · migraciones guiadas")</small></span></a>
-                <a class="action" href="service/messaging"><Icon Name="messaging" Size="20" /><span><b>Mensajería</b><small>@(draft.Broker is null ? "Desactivada" : $"{draft.Broker} · escucha {draft.Subscriptions.Count} evento(s)")</small></span></a>
-                <a class="action" href="service/code"><Icon Name="code" Size="20" /><span><b>Código generado</b><small>Program.cs, árbol de archivos y stratum.json.</small></span></a>
+                <a class="action" href="entities"><Icon Name="entities" Size="20" /><span><b>@L("Entidades", "Entities") · @draft.Entities.Count</b><small>@L("Propiedades, CRUD, reglas y eventos que publica.", "Properties, CRUD, rules and events it publishes.")</small></span></a>
+                <a class="action" href="service/data"><Icon Name="data" Size="20" /><span><b>@L("Datos y migraciones", "Data and migrations")</b><small>@(draft.Entities.Count == 0 ? L("La base de datos se fija con la primera entidad.", "The database is set with the first entity.") : L($"{draft.Provider} · migraciones guiadas", $"{draft.Provider} · guided migrations"))</small></span></a>
+                <a class="action" href="service/messaging"><Icon Name="messaging" Size="20" /><span><b>@L("Mensajería", "Messaging")</b><small>@(draft.Broker is null ? L("Desactivada", "Off") : L($"{draft.Broker} · escucha {draft.Subscriptions.Count} evento(s)", $"{draft.Broker} · listens to {draft.Subscriptions.Count} event(s)"))</small></span></a>
+                <a class="action" href="service/code"><Icon Name="code" Size="20" /><span><b>@L("Código generado", "Generated code")</b><small>@L("Program.cs, árbol de archivos y stratum.json.", "Program.cs, file tree and stratum.json.")</small></span></a>
             </div>
         </section>
 
@@ -103,13 +109,13 @@ else
         @if (!draft.IsNew)
         {
             <section class="stack" aria-labelledby="h-danger">
-                <h2 class="section" id="h-danger" style="color: var(--err)">Zona peligrosa</h2>
+                <h2 class="section" id="h-danger" style="color: var(--err)">@L("Zona peligrosa", "Danger zone")</h2>
                 <div class="card row" style="justify-content: space-between; border-color: #5B1A1A">
                     <span>
-                        <b>Eliminar el servicio</b><br />
-                        <small class="hint">Su carpeta, las suscripciones de otros servicios a sus eventos y su sitio en el AppHost. Verás todo antes de confirmar.</small>
+                        <b>@L("Eliminar el servicio", "Delete the service")</b><br />
+                        <small class="hint">@L("Su carpeta, las suscripciones de otros servicios a sus eventos y su sitio en el AppHost. Verás todo antes de confirmar.", "Its folder, other services' subscriptions to its events and its place in the AppHost. You'll see everything before confirming.")</small>
                     </span>
-                    <a class="btn" style="color: var(--err); border-color: #7F1D1D" href="service/remove">Eliminar @draft.Name…</a>
+                    <a class="btn" style="color: var(--err); border-color: #7F1D1D" href="service/remove">@L("Eliminar", "Delete") @draft.Name…</a>
                 </div>
             </section>
         }
@@ -117,16 +123,16 @@ else
 }
 
 @code {
-    private static readonly (string Key, string Name, string Description, string Package)[] FeatureList =
+    private static (string Key, string Name, string Description, string Package)[] FeatureList =>
     [
-        ("observability", "Observabilidad", "Trazas, métricas y logs con OpenTelemetry. Aspire las muestra en su dashboard.", "Stratum.ServiceDefaults.OpenTelemetry"),
-        ("openApi", "OpenAPI + Scalar", "Documento /openapi/v1.json y Scalar en /scalar para explorar y probar la API.", "Microsoft.AspNetCore.OpenApi · Scalar.AspNetCore"),
-        ("resilience", "Clientes HTTP", "Reintentos, timeout, circuit breaker y service discovery en todos los HttpClient.", "Stratum.ServiceDefaults.Resilience"),
-        ("auth", "Autenticación", "JWT bearer. Todo autenticado por defecto salvo los health checks.", "Stratum.ServiceDefaults.Authentication"),
-        ("tests", "Tests", "Tests de integración del contrato común y de cada entidad.", "xUnit · WebApplicationFactory"),
-        ("docker", "Docker", "Dockerfile multi-stage con usuario no-root.", "Dockerfile"),
-        ("ci", "CI", "GitHub Actions: build, test y auditoría de paquetes.", ".github/workflows/ci.yml"),
-        ("mcp", "Servidor MCP", "/mcp: el CRUD y las operaciones de las entidades como herramientas para asistentes de IA (con la misma autenticación que la API).", "ModelContextProtocol.AspNetCore"),
+        ("observability", L("Observabilidad", "Observability"), L("Trazas, métricas y logs con OpenTelemetry. Aspire las muestra en su dashboard.", "Traces, metrics and logs with OpenTelemetry. Aspire shows them in its dashboard."), "Stratum.ServiceDefaults.OpenTelemetry"),
+        ("openApi", "OpenAPI + Scalar", L("Documento /openapi/v1.json y Scalar en /scalar para explorar y probar la API.", "/openapi/v1.json document and Scalar at /scalar to explore and try the API."), "Microsoft.AspNetCore.OpenApi · Scalar.AspNetCore"),
+        ("resilience", L("Clientes HTTP", "HTTP clients"), L("Reintentos, timeout, circuit breaker y service discovery en todos los HttpClient.", "Retries, timeout, circuit breaker and service discovery on every HttpClient."), "Stratum.ServiceDefaults.Resilience"),
+        ("auth", L("Autenticación", "Authentication"), L("JWT bearer. Todo autenticado por defecto salvo los health checks.", "JWT bearer. Everything authenticated by default except the health checks."), "Stratum.ServiceDefaults.Authentication"),
+        ("tests", "Tests", L("Tests de integración del contrato común y de cada entidad.", "Integration tests of the common contract and of each entity."), "xUnit · WebApplicationFactory"),
+        ("docker", "Docker", L("Dockerfile multi-stage con usuario no-root.", "Multi-stage Dockerfile with a non-root user."), "Dockerfile"),
+        ("ci", "CI", L("GitHub Actions: build, test y auditoría de paquetes.", "GitHub Actions: build, test and package audit."), ".github/workflows/ci.yml"),
+        ("mcp", L("Servidor MCP", "MCP server"), L("/mcp: el CRUD y las operaciones de las entidades como herramientas para asistentes de IA (con la misma autenticación que la API).", "/mcp: the entities' CRUD and operations as tools for AI assistants (with the same authentication as the API)."), "ModelContextProtocol.AspNetCore"),
     ];
 
     protected override void OnInitialized()

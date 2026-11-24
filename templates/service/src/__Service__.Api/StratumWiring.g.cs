@@ -116,6 +116,18 @@ internal static class StratumWiring
             // @stratum:end
         }
         // @stratum:end
+        // @stratum:if messaging
+
+        if (app.Environment.IsDevelopment())
+        {
+            // GET /_stratum/messaging: events sent and received lately, for Stratum Studio's event traces (with payloads: Development only).
+            // @stratum:if auth
+            app.MapStratumMessagingDiagnostics().AllowAnonymous();
+            // @stratum:else
+            app.MapStratumMessagingDiagnostics();
+            // @stratum:end
+        }
+        // @stratum:end
 
         return app;
     }

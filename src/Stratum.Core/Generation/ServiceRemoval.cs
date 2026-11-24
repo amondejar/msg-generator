@@ -105,6 +105,58 @@ public static class ServiceRemoval
 
         var done = new List<string>();
 
+        // First, before changing anything: move the folder aside. Windows refuses to move a folder while a file in it
+        // is open (Visual Studio, the running system...), so nothing is left half done; and on any later failure the
+        // folder is put back.
+        string? moved = null;
+        if (deleteFolder && System.IO.Directory.Exists(plan.Directory))
+        {
+            var parent = System.IO.Path.GetDirectoryName(plan.Directory)!;
+            moved = System.IO.Path.Combine(parent, $".{System.IO.Path.GetFileName(plan.Directory)}.removing-{Guid.NewGuid():N}");
+            try
+            {
+                System.IO.Directory.Move(plan.Directory, moved);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new StratumException(
+                    $"No se ha cambiado nada: hay archivos de {plan.ServiceName} en uso ({ex.Message}). " +
+                    "Cierra Visual Studio (o el editor que tenga abierta la carpeta) y para el sistema si está en marcha, y vuelve a intentarlo.", ex);
+            }
+        }
+
+        try
+        {
+            ApplyRest(plan, done);
+        }
+        catch
+        {
+            if (moved is not null && !System.IO.Directory.Exists(plan.Directory))
+            {
+                System.IO.Directory.Move(moved, plan.Directory);   // undo: the service is back where it was
+            }
+
+            throw;
+        }
+
+        if (moved is not null)
+        {
+            try
+            {
+                DeleteFolder(moved);
+                done.Add($"Carpeta {plan.Directory} borrada.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                done.Add($"⚠ El servicio ya está quitado, pero no se pudo borrar del todo {moved} ({ex.Message}): bórrala a mano.");
+            }
+        }
+
+        return done;
+    }
+
+    private static void ApplyRest(ServiceRemovalPlan plan, List<string> done)
+    {
         foreach (var consumer in plan.Consumers)
         {
             consumer.Plan.Apply();
@@ -114,12 +166,6 @@ public static class ServiceRemoval
         if (WorkspaceFile.Remove(plan.Root, plan.Directory))
         {
             done.Add("Quitado de stratum.workspace.json.");
-        }
-
-        if (deleteFolder)
-        {
-            DeleteFolder(plan.Directory);
-            done.Add($"Carpeta {plan.Directory} borrada.");
         }
 
         if (plan.AppHost is { } appHost)
@@ -138,7 +184,6 @@ public static class ServiceRemoval
             }
         }
 
-        return done;
     }
 
     /// <summary>Deletes the folder, read-only files included (git marks its objects read-only on Windows).</summary>

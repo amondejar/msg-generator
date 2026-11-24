@@ -2,59 +2,62 @@
 @implements IDisposable
 @inject StudioState State
 
-<PageTitle>Mensajería · Stratum Studio</PageTitle>
+<PageTitle>@L("Mensajería", "Messaging") · Stratum Studio</PageTitle>
 
 @if (State.Current is not { } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
 }
 else
 {
     <main class="content">
         <div>
-            <h1>Mensajería</h1>
-            <p class="lead">Eventos de integración con otros servicios: qué publica este servicio y a qué eventos de los demás reacciona. Lo ves todo junto en el <a href="events">mapa de eventos</a>.</p>
+            <h1>@L("Mensajería", "Messaging")</h1>
+            <p class="lead">@L(@<text>Eventos de integración con otros servicios: qué publica este servicio y a qué eventos de los demás reacciona. Lo ves todo junto en el <a href="events">mapa de eventos</a>.</text>, @<text>Integration events with other services: what this service publishes and which events of the others it reacts to. See it all together in the <a href="events">event map</a>.</text>)</p>
         </div>
 
         <section class="stack" aria-labelledby="h-messaging">
-            <h2 class="section" id="h-messaging">Mensajería entre servicios</h2>
-            <div class="seg" role="group" aria-label="Broker de mensajería">
-                <button type="button" aria-pressed="@(draft.Broker is null ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(null)">Sin mensajería</button>
+            <h2 class="section" id="h-messaging">@L("Mensajería entre servicios", "Messaging between services")</h2>
+            <div class="seg" role="group" aria-label="@L("Broker de mensajería", "Messaging broker")">
+                <button type="button" aria-pressed="@(draft.Broker is null ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(null)">@L("Sin mensajería", "No messaging")</button>
                 <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.Kafka ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.Kafka)">Kafka</button>
                 <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.AzureServiceBus ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.AzureServiceBus)">Azure Service Bus</button>
-                <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.InMemory ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.InMemory)">En memoria</button>
+                <button type="button" aria-pressed="@(draft.Broker == MessagingSettings.InMemory ? "true" : "false")" disabled="@(!draft.CanEditFeatures)" @onclick="() => SetBroker(MessagingSettings.InMemory)">@L("En memoria", "In memory")</button>
             </div>
             <span class="hint">
                 @if (draft.Broker == MessagingSettings.Kafka)
                 {
-                    <span>Eventos de integración con outbox (no se pierden si Kafka cae), inbox (cada evento se procesa una vez), reintentos y dead-letter. Con Aspire, Stratum añade Kafka y Kafka UI al AppHost. Elige abajo qué entidades publican sus eventos.</span>
+                    <span>@L("Eventos de integración con outbox (no se pierden si Kafka cae), inbox (cada evento se procesa una vez), reintentos y dead-letter. Con Aspire, Stratum añade Kafka y Kafka UI al AppHost. Elige abajo qué entidades publican sus eventos.", "Integration events with an outbox (not lost if Kafka goes down), an inbox (each event processed once), retries and dead-letter. With Aspire, Stratum adds Kafka and Kafka UI to the AppHost. Choose below which entities publish their events.")</span>
                 }
                 else if (draft.Broker == MessagingSettings.AzureServiceBus)
                 {
-                    <span>Eventos de integración con outbox, inbox, reintentos y la cola dead-letter de Service Bus. Con Aspire se usa el emulador local (sin suscripción de Azure): Stratum declara un topic por evento y una suscripción por cada servicio que lo escucha. Todos los servicios que se comunican deben usar el mismo broker.</span>
+                    <span>@L("Eventos de integración con outbox, inbox, reintentos y la cola dead-letter de Service Bus. Con Aspire se usa el emulador local (sin suscripción de Azure): Stratum declara un topic por evento y una suscripción por cada servicio que lo escucha. Todos los servicios que se comunican deben usar el mismo broker.", "Integration events with an outbox, an inbox, retries and Service Bus's dead-letter queue. With Aspire the local emulator is used (no Azure subscription): Stratum declares a topic per event and a subscription per listening service. Every service that talks to another must use the same broker.")</span>
                 }
                 else if (draft.Broker == MessagingSettings.InMemory)
                 {
-                    <span>Los eventos no salen de este proceso: útil para empezar o para un servicio solo. Cambia a Kafka para que lleguen a otros servicios; tus handlers no cambian.</span>
+                    <span>@L("Los eventos no salen de este proceso: útil para empezar o para un servicio solo. Cambia a Kafka para que lleguen a otros servicios; tus handlers no cambian.", "Events don't leave this process: useful to start or for a single service. Switch to Kafka so they reach other services; your handlers don't change.")</span>
                 }
                 else
                 {
-                    <span>Actívala para que este servicio publique eventos (OrderCreated…) o reaccione a los de otros.</span>
+                    <span>@L("Actívala para que este servicio publique eventos (OrderCreated…) o reaccione a los de otros.", "Turn it on so this service publishes events (OrderCreated…) or reacts to others' events.")</span>
                 }
                 @if (draft.Broker is not null && draft.ProviderLocked && !draft.IsNew)
                 {
-                    <span> Después de aplicar, crea una migración: añade las tablas <span class="mono">msg_outbox</span> y <span class="mono">msg_inbox</span>.</span>
+                    <span> @L(@<text>Después de aplicar, crea una migración: añade las tablas <span class="mono">msg_outbox</span> y <span class="mono">msg_inbox</span>.</text>, @<text>After applying, create a migration: it adds the <span class="mono">msg_outbox</span> and <span class="mono">msg_inbox</span> tables.</text>)</span>
                 }
             </span>
         </section>
 
-        @if (draft.Broker is not null)
+        @if (draft.BrokerNote is { } brokerNote)
         {
+            <span class="hint" style="color: var(--accent)">ℹ @brokerNote</span>
+        }
+        @{
             <section class="stack" aria-labelledby="h-publishes">
-                <h2 class="section" id="h-publishes">Eventos que publica</h2>
+                <h2 class="section" id="h-publishes">@L("Eventos que publica", "Events it publishes")</h2>
                 @if (draft.Entities.Count == 0)
                 {
-                    <span class="hint">El servicio no tiene entidades. Cada entidad puede publicar sus eventos Created, Updated y Deleted.</span>
+                    <span class="hint">@L("El servicio no tiene entidades. Cada entidad puede publicar sus eventos Created, Updated y Deleted; al marcar Publicar se activa la mensajería si hace falta.", "The service has no entities. Each entity can publish its Created, Updated and Deleted events; ticking Publish turns messaging on if needed.")</span>
                 }
                 else
                 {
@@ -64,34 +67,33 @@ else
                             <div class="tr" style="grid-template-columns: 1.2fr 2.4fr auto; align-items: center">
                                 <b>@entity.Name</b>
                                 <span class="hint mono">
-                                    @(entity.PublishEvents ? $"{entity.Name}Created · {entity.Name}Updated · {entity.Name}Deleted" : "no publica")
+                                    @(entity.PublishEvents ? $"{entity.Name}Created · {entity.Name}Updated · {entity.Name}Deleted" : L("no publica", "doesn't publish"))
                                     @if (!entity.PublishEvents && State.ConsumersOf(draft, entity.Name) is { Count: > 0 } consumers)
                                     {
-                                        <br /><span style="color: var(--warn); font-family: inherit">⚠ @string.Join(", ", consumers) escucha(n) estos eventos: al aplicar dejarán de llegarles.</span>
+                                        <br /><span style="color: var(--warn); font-family: inherit">⚠ @string.Join(", ", consumers) @L("escucha(n) estos eventos: al aplicar dejarán de llegarles.", "listen(s) to these events: after applying they will stop receiving them.")</span>
                                     }
                                 </span>
                                 <label class="row" style="gap: 8px">
                                     <input type="checkbox" checked="@entity.PublishEvents" disabled="@(!entity.CanEdit)"
-                                           @onchange="e => { entity.PublishEvents = e.Value is true; State.Recompute(); }" />
-                                    Publicar
+                                           @onchange="e => SetPublishEvents(draft, entity, e)" />
+                                    @L("Publicar", "Publish")
                                 </label>
                             </div>
                         }
                     </div>
-                    <span class="hint">Se guardan en el outbox en la misma transacción que el cambio y se envían después, con reintentos.</span>
+                    <span class="hint">@L("Se guardan en el outbox en la misma transacción que el cambio y se envían después, con reintentos.", "They are stored in the outbox in the same transaction as the change and sent afterwards, with retries.")</span>
                 }
             </section>
         }
 
-        @if (draft.Broker is not null)
-        {
+        @{
             var available = State.AvailableEvents(draft).Where(e => !draft.Subscriptions.Any(e.Matches)).ToList();
             var problems = State.SubscriptionProblems(draft);
             <section class="stack" aria-labelledby="h-subscriptions">
-                <h2 class="section" id="h-subscriptions">Eventos que escucha</h2>
+                <h2 class="section" id="h-subscriptions">@L("Eventos que escucha", "Events it listens to")</h2>
                 @if (draft.Subscriptions.Count == 0)
                 {
-                    <span class="hint">Todavía no reacciona a eventos de otros servicios.</span>
+                    <span class="hint">@L("Todavía no reacciona a eventos de otros servicios.", "It doesn't react to other services' events yet.")</span>
                 }
                 else
                 {
@@ -107,13 +109,23 @@ else
                                         <br /><small style="color: var(--warn)">⚠ @text</small>
                                     }
                                 </span>
-                                <span class="hint mono">@(subscription.EventClass)Handler @(draft.Architecture == Architectures.CleanDdd ? "· Application" : "· Api")/Events/@subscription.Service</span>
+                                <span class="hint mono">
+                                    @if (State.FindServiceFile($"{subscription.EventClass}Handler.cs") is { } handlerFile)
+                                    {
+                                        <OpenInEditor Path="@handlerFile" Label="@($"{subscription.EventClass}Handler.cs")" Compact="true" />
+                                    }
+                                    else
+                                    {
+                                        @($"{subscription.EventClass}Handler")
+                                    }
+                                    @(draft.Architecture == Architectures.CleanDdd ? " · Application" : " · Api")/Events/@subscription.Service
+                                </span>
                                 <span class="row" style="gap: 6px">
                                     @if (problem.Current is { } latest)
                                     {
-                                        <button type="button" class="btn" @onclick="() => ReplaceSubscription(subscription, latest)">Actualizar contrato</button>
+                                        <button type="button" class="btn" @onclick="() => ReplaceSubscription(subscription, latest)">@L("Actualizar contrato", "Update contract")</button>
                                     }
-                                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => RemoveSubscription(subscription)">Quitar</button>
+                                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => RemoveSubscription(subscription)">@L("Quitar", "Remove")</button>
                                 </span>
                             </div>
                         }
@@ -123,9 +135,9 @@ else
                 {
                     <div class="row" style="gap: 8px; align-items: flex-end">
                         <label class="field" style="flex: 0 1 380px">
-                            Escuchar un evento de otro servicio
+                            @L("Escuchar un evento de otro servicio", "Listen to an event of another service")
                             <select @bind="selectedTopic">
-                                <option value="">Elige un evento…</option>
+                                <option value="">@L("Elige un evento…", "Choose an event…")</option>
                                 @foreach (var group in available.GroupBy(e => e.Service))
                                 {
                                     <optgroup label="@group.Key">
@@ -137,17 +149,17 @@ else
                                 }
                             </select>
                         </label>
-                        <button type="button" class="btn btn-primary" disabled="@string.IsNullOrEmpty(selectedTopic)" @onclick="() => AddSubscription(available)">+ Escuchar</button>
+                        <button type="button" class="btn btn-primary" disabled="@string.IsNullOrEmpty(selectedTopic)" @onclick="() => AddSubscription(available)">@L("+ Escuchar", "+ Listen")</button>
                     </div>
-                    <span class="hint">Stratum copia el contrato del evento y crea un handler vacío para tu lógica (tuyo: no lo vuelve a tocar). Cada evento se procesa una vez, con reintentos y dead-letter.</span>
+                    <span class="hint">@L("Stratum copia el contrato del evento y crea un handler vacío para tu lógica (tuyo: no lo vuelve a tocar). Cada evento se procesa una vez, con reintentos y dead-letter.", "Stratum copies the event's contract and creates an empty handler for your logic (yours: it never touches it again). Each event is processed once, with retries and dead-letter.")</span>
                 }
                 else if (draft.Subscriptions.Count == 0)
                 {
-                    <span class="hint">Ningún otro servicio del sistema publica eventos. Actívalo en sus <em>Entidades → Eventos para otros servicios</em>.</span>
+                    <span class="hint">@L(@<text>Ningún otro servicio del sistema publica eventos. Actívalo en sus <em>Entidades → Eventos para otros servicios</em>.</text>, @<text>No other service of the system publishes events. Turn it on in its <em>Entities → Events for other services</em>.</text>)</span>
                 }
                 @if (draft.Broker == MessagingSettings.InMemory && draft.Subscriptions.Count > 0)
                 {
-                    <span class="hint" style="color: var(--warn)">Con el broker en memoria no llegan eventos de otros servicios: usa Kafka o Azure Service Bus.</span>
+                    <span class="hint" style="color: var(--warn)">@L("Con el broker en memoria no llegan eventos de otros servicios: usa Kafka o Azure Service Bus.", "With the in-memory broker, other services' events don't arrive: use Kafka or Azure Service Bus.")</span>
                 }
             </section>
         }
@@ -173,6 +185,7 @@ else
         if (available.FirstOrDefault(e => e.Topic == selectedTopic) is { } subscription)
         {
             State.Current!.Subscriptions.Add(subscription);
+            State.EnsureBroker(State.Current, L("escuchar ", "listen to ") + subscription.EventClass);
             selectedTopic = string.Empty;
             State.Recompute();
         }
@@ -191,14 +204,30 @@ else
         State.Recompute();
     }
 
+    private void SetPublishEvents(ServiceDraft draft, EntityDraft entity, ChangeEventArgs e)
+    {
+        entity.PublishEvents = e.Value is true;
+        if (entity.PublishEvents)
+        {
+            State.EnsureBroker(draft, L($"publicar los eventos de {entity.Name}", $"publish the events of {entity.Name}"));
+        }
+
+        State.Recompute();
+    }
+
     private void SetBroker(string? broker)
     {
         State.Current!.Broker = broker;
+        State.Current.BrokerNote = null;
         if (broker is null)
         {
             foreach (var entity in State.Current.Entities)
             {
                 entity.PublishEvents = false;
+                foreach (var operation in entity.Operations)
+                {
+                    operation.Publish = false;
+                }
             }
 
             State.Current.Subscriptions.Clear();

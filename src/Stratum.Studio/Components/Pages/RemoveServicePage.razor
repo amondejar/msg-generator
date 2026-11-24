@@ -2,18 +2,18 @@
 @inject StudioState State
 @inject NavigationManager Nav
 
-<PageTitle>Eliminar servicio · Stratum Studio</PageTitle>
+<PageTitle>@L("Eliminar servicio", "Delete service") · Stratum Studio</PageTitle>
 
 @if (State.Current is not { IsNew: false } draft)
 {
-    <main class="content"><p class="lead">No hay ningún servicio existente abierto. Elige uno en <a href="services">Servicios</a>.</p></main>
+    <main class="content"><p class="lead">@L(@<text>No hay ningún servicio existente abierto. Elige uno en <a href="services">Servicios</a>.</text>, @<text>No existing service is open. Pick one in <a href="services">Services</a>.</text>)</p></main>
 }
 else
 {
     <main class="content">
         <div>
-            <h1>Eliminar @draft.Name</h1>
-            <p class="lead">Esto es lo que se elimina con el servicio. Nada se toca hasta que confirmes escribiendo su nombre.</p>
+            <h1>@L("Eliminar", "Delete") @draft.Name</h1>
+            <p class="lead">@L("Esto es lo que se elimina con el servicio. Nada se toca hasta que confirmes escribiendo su nombre.", "This is what goes away with the service. Nothing is touched until you confirm by typing its name.")</p>
         </div>
 
         @if (error is not null)
@@ -24,20 +24,20 @@ else
         @if (plan is not null)
         {
             <section class="stack" aria-labelledby="h-folder">
-                <h2 class="section" id="h-folder">El servicio</h2>
+                <h2 class="section" id="h-folder">@L("El servicio", "The service")</h2>
                 <div class="card stack">
                     <label class="row" style="gap: 10px; align-items: flex-start">
                         <input type="checkbox" checked="@deleteFolder" disabled="@(!plan.IsExternal)" @onchange="e => deleteFolder = e.Value is true" />
                         <span>
-                            <b>Borrar la carpeta del servicio</b> <span class="mono">@plan.Directory</span>
-                            <br /><small class="hint">@plan.FileCount archivo(s): código, tests, migraciones, stratum.json… No se puede deshacer (salvo que esté en Git y lo hayas subido).</small>
+                            <b>@L("Borrar la carpeta del servicio", "Delete the service folder")</b> <span class="mono">@plan.Directory</span>
+                            <br /><small class="hint">@L($"{plan.FileCount} archivo(s): código, tests, migraciones, stratum.json… No se puede deshacer (salvo que esté en Git y lo hayas subido).", $"{plan.FileCount} file(s): code, tests, migrations, stratum.json… It can't be undone (unless it's in Git and you pushed it).")</small>
                             @if (!plan.IsExternal)
                             {
-                                <br /><small class="hint">Está dentro de la carpeta del sistema, así que hay que borrarla: si la dejas, Stratum lo seguiría encontrando.</small>
+                                <br /><small class="hint">@L("Está dentro de la carpeta del sistema, así que hay que borrarla: si la dejas, Stratum lo seguiría encontrando.", "It's inside the system folder, so it has to be deleted: if you leave it, Stratum would keep finding it.")</small>
                             }
                             else if (!deleteFolder)
                             {
-                                <br /><small class="hint">Sin borrar: el servicio solo sale del sistema (stratum.workspace.json) y sus archivos se quedan donde están.</small>
+                                <br /><small class="hint">@L("Sin borrar: el servicio solo sale del sistema (stratum.workspace.json) y sus archivos se quedan donde están.", "Not deleted: the service only leaves the system (stratum.workspace.json) and its files stay where they are.")</small>
                             }
                         </span>
                     </label>
@@ -45,15 +45,15 @@ else
             </section>
 
             <section class="stack" aria-labelledby="h-consumers">
-                <h2 class="section" id="h-consumers">Otros servicios que escuchan sus eventos</h2>
+                <h2 class="section" id="h-consumers">@L("Otros servicios que escuchan sus eventos", "Other services that listen to its events")</h2>
                 @if (plan.Consumers.Count == 0)
                 {
-                    <span class="hint">Ninguno: no hay nada que limpiar en otros servicios.</span>
+                    <span class="hint">@L("Ninguno: no hay nada que limpiar en otros servicios.", "None: there's nothing to clean up in other services.")</span>
                 }
                 @foreach (var consumer in plan.Consumers)
                 {
                     <div class="card stack" style="gap: 6px">
-                        <b>@consumer.Service <small class="hint">deja de escuchar @string.Join(", ", consumer.Subscriptions.Select(s => s.EventClass))</small></b>
+                        <b>@consumer.Service <small class="hint">@L("deja de escuchar", "stops listening to") @string.Join(", ", consumer.Subscriptions.Select(s => s.EventClass))</small></b>
                         <div class="files">
                             @foreach (var change in consumer.Plan.Changes)
                             {
@@ -73,7 +73,7 @@ else
             @if (plan.AppHost is not null || plan.Notes.Count > 0)
             {
                 <section class="stack" aria-labelledby="h-rest">
-                    <h2 class="section" id="h-rest">Además</h2>
+                    <h2 class="section" id="h-rest">@L("Además", "Also")</h2>
                     <ul class="stack" style="margin: 0; padding-left: 18px; gap: 6px">
                         @foreach (var note in plan.Notes)
                         {
@@ -84,18 +84,18 @@ else
             }
 
             <section class="stack" aria-labelledby="h-confirm">
-                <h2 class="section" id="h-confirm">Confirmar</h2>
+                <h2 class="section" id="h-confirm">@L("Confirmar", "Confirm")</h2>
                 <div class="card stack" style="border-color: #7F1D1D">
                     <label class="field" style="max-width: 360px">
-                        <span>Escribe <span class="mono" style="color: var(--text)">@draft.Name</span> para confirmar</span>
+                        <span>@L(@<text>Escribe <span class="mono" style="color: var(--text)">@draft.Name</span> para confirmar</text>, @<text>Type <span class="mono" style="color: var(--text)">@draft.Name</span> to confirm</text>)</span>
                         <input type="text" @bind="confirmation" @bind:event="oninput" autocomplete="off" />
                     </label>
                     <div class="row">
                         <button type="button" class="btn" style="background: #7F1D1D; border-color: #B91C1C; color: #FEE2E2"
                                 disabled="@(confirmation.Trim() != draft.Name)" @onclick="Remove">
-                            Eliminar @draft.Name
+                            @L("Eliminar", "Delete") @draft.Name
                         </button>
-                        <a class="btn" href="service">Cancelar</a>
+                        <a class="btn" href="service">@L("Cancelar", "Cancel")</a>
                     </div>
                 </div>
             </section>
@@ -139,7 +139,7 @@ else
         }
         catch (Exception ex) when (ex is StratumException or IOException or UnauthorizedAccessException)
         {
-            error = $"No se pudo completar: {ex.Message} (¿hay un proceso usando la carpeta, como el sistema en marcha o el IDE?)";
+            error = L($"No se pudo completar: {ex.Message} (¿hay un proceso usando la carpeta, como el sistema en marcha o el IDE?)", $"Couldn't finish: {ex.Message} (is a process using the folder, like the running system or the IDE?)");
         }
     }
 }

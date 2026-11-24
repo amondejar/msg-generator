@@ -40,7 +40,8 @@ public static class StratumOpenTelemetryExtensions
             .WithMetrics(metrics => metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
-                .AddRuntimeInstrumentation())
+                .AddRuntimeInstrumentation()
+                .AddMeter("Stratum.Messaging"))   // integration events sent, processed (by outcome) and handler duration
             .WithTracing(tracing => tracing
                 .AddSource(serviceName)
                 .AddSource("Stratum.Messaging")   // integration events: publish and process spans, one trace across services

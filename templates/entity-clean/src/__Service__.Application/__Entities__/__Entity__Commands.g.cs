@@ -33,6 +33,13 @@ public sealed partial class Create{{Entity}}Handler(
             throw new DomainException(missing);
         }
         // @stratum:end
+        // @stratum:if hasUnique
+
+        if (await integrity.DuplicateReferenceAsync(null, {{UniqueArguments}}, cancellationToken) is { } duplicate)
+        {
+            throw new DomainException(duplicate);
+        }
+        // @stratum:end
 
         var entity = {{Entity}}.Create({{CommandArguments}});
         repository.Add(entity);
@@ -64,6 +71,13 @@ public sealed partial class Update{{Entity}}Handler(
         if (await integrity.MissingReferenceAsync({{ReferenceArguments}}, cancellationToken) is { } missing)
         {
             throw new DomainException(missing);
+        }
+
+        // @stratum:end
+        // @stratum:if hasUnique
+        if (await integrity.DuplicateReferenceAsync(command.Id, {{UniqueArguments}}, cancellationToken) is { } duplicate)
+        {
+            throw new DomainException(duplicate);
         }
 
         // @stratum:end

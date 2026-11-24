@@ -34,6 +34,9 @@ public static class MessagingExtensions
         services.TryAddScoped<IOutboxWriter>(sp => sp.GetRequiredService<InMemoryOutbox>());
         services.TryAddScoped<IOutboxStore>(sp => sp.GetRequiredService<InMemoryOutbox>());
         services.TryAddSingleton<IInbox, InMemoryInbox>();
+        services.TryAddSingleton<InMemoryJournal>();
+        services.TryAddScoped<IMessageJournal>(sp => sp.GetRequiredService<InMemoryJournal>());
+        services.TryAddSingleton<MessagingDiagnostics>();
 
         var registry = services.Select(d => d.ImplementationInstance).OfType<HandlerRegistry>().FirstOrDefault();
         if (registry is null)
@@ -111,6 +114,15 @@ public sealed class MessagingBuilder(IServiceCollection services, HandlerRegistr
 
 internal static class MessagingServices
 {
+    /// <summary>"kafka", "servicebus", "inMemory" or the transport's type name.</summary>
+    public static string BrokerOf(IMessageTransport transport) => transport.GetType().Name switch
+    {
+        var n when n.Contains("Kafka", StringComparison.Ordinal) => "kafka",
+        var n when n.Contains("ServiceBus", StringComparison.Ordinal) => "servicebus",
+        var n when n.Contains("InMemory", StringComparison.Ordinal) => "inMemory",
+        var n => n,
+    };
+
     public static IMessageTransport Transport(IServiceProvider services) =>
         services.GetService<IMessageTransport>()
         ?? throw new InvalidOperationException(

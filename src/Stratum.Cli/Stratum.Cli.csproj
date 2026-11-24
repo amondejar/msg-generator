@@ -24,8 +24,36 @@
       so a relative path such as "orders" is resolved where you are, not inside src/Stratum.Cli.
     -->
     <RunWorkingDirectory>$(MSBuildStartupDirectory)</RunWorkingDirectory>
-    <Description>Stratum: generador de microservicios .NET con las convenciones de tu equipo.</Description>
+    <Description>Stratum: a .NET 10 microservice generator with your team's conventions (CLI, visual editor and MCP server). Generador de microservicios .NET con las convenciones de tu equipo.</Description>
   </PropertyGroup>
+
+  <!--
+    A locally packed tool carries the Stratum.* packages of its own version (tools/net10.0/any/stratum-packages):
+    "stratum" copies them to ~/.stratum/packages and the services it generates restore from there. The release build
+    (-p:StratumPublished=true, packages on nuget.org) doesn't. Off with -p:BundleStratumPackages=false.
+  -->
+  <PropertyGroup>
+    <!-- The bundled .nupkg files would otherwise be skipped (NU5119). -->
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+    <BundleStratumPackages Condition="'$(BundleStratumPackages)' == '' And '$(StratumPublished)' == 'true'">false</BundleStratumPackages>
+    <BundleStratumPackages Condition="'$(BundleStratumPackages)' == ''">true</BundleStratumPackages>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);BundleStratumPackages</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <StratumLibrary Include="..\Stratum.Ddd\Stratum.Ddd.csproj;..\Stratum.ServiceDefaults*\*.csproj;..\Stratum.Messaging*\*.csproj" Exclude="$(StratumBundleExclude)" />
+  </ItemGroup>
+
+  <Target Name="BundleStratumPackages" Condition="'$(BundleStratumPackages)' == 'true'">
+    <!-- Same global properties as the solution's own pack: MSBuild packs each library once, even in "dotnet pack Stratum.slnx". -->
+    <MSBuild Projects="@(StratumLibrary)" Targets="Pack" />
+    <MSBuild Projects="@(StratumLibrary)" Targets="_GetOutputItemsFromPack">
+      <Output TaskParameter="TargetOutputs" ItemName="_StratumPackOutput" />
+    </MSBuild>
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="@(_StratumPackOutput)" Condition="'%(Extension)' == '.nupkg'" PackagePath="tools/$(TargetFramework)/any/stratum-packages/" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\Stratum.Core\Stratum.Core.csproj" />

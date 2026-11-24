@@ -1,0 +1,47 @@
+@* Add or change an item type (the elements of a list of objects, like the lines of an order). *@
+<Modal Title="@(Editor.Original is null ? "Nuevo tipo de elemento" : $"Tipo de elemento {Editor.Original.Name}")"
+       Subtitle="Los elementos de una lista de objetos, como las líneas de un pedido: cada uno se guarda en una tabla propia y forma parte de la entidad."
+       Error="@(attempted ? Error : null)" Note="@(Editor.Properties.All(r => r.IsBlank) ? null : Editor.Spec)" Width="640" OnSave="Save" OnClose="OnClose">
+    <label class="field">
+        Nombre
+        <input type="text" @bind="Editor.Name" placeholder="OrderLine" disabled="@(Usages.Count > 0)" autocomplete="off" />
+    </label>
+    @if (Usages.Count > 0)
+    {
+        <span class="hint">Lo usan <span class="mono">@string.Join(", ", Usages)</span>: para renombrarlo, cambia antes el tipo de esas listas.</span>
+    }
+    <div class="stack" style="gap: 6px">
+        <span class="hint" style="font-weight: 600">Propiedades <span style="font-weight: 400">(tipos básicos y enumerados)</span></span>
+        <FieldRowsEditor Rows="Editor.Properties" Enums="Enums" AllowLists="false" AddLabel="+ Añadir propiedad" NamePlaceholder="Quantity" />
+    </div>
+    <span class="hint">Úsalo como tipo de una propiedad: <span class="mono">▤ @(string.IsNullOrWhiteSpace(Editor.Name) ? "OrderLine" : Editor.Name.Trim())[]</span>.</span>
+</Modal>
+
+@code {
+    private bool attempted;
+
+    [Parameter, EditorRequired] public EntityEditors.TypeEditor Editor { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ServiceDraft Draft { get; set; } = default!;
+
+    [Parameter] public EventCallback<string> OnSaved { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private IReadOnlyList<string> Enums => [.. Draft.Enums.Where(e => !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name.Trim())];
+
+    private IReadOnlyList<string> Usages => Editor.Original is null ? [] :
+        [.. Draft.Entities.Where(e => !e.Removed).SelectMany(e => e.Properties.Where(p => p.Item is { } n && (n == Editor.Original.Name.Trim() || n == Editor.Original.OriginalName)).Select(p => $"{e.Name}.{p.Name}"))];
+
+    private string? Error => Editor.Validate(Draft, Enums);
+
+    private async Task Save()
+    {
+        attempted = true;
+        if (Error is null)
+        {
+            var saved = Editor.ApplyTo(Draft);
+            await OnSaved.InvokeAsync(saved.Name);
+        }
+    }
+}

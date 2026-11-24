@@ -161,6 +161,54 @@ public sealed class EntityFrameworkTests : IAsyncLifetime
         Assert.Equal(0, await CountAsync<InboxMessage>());
     }
 
+    [Fact]
+    public async Task TheJournalKeepsFailuresAndSuccessesInMsgReceived()
+    {
+        var probe = _host.Services.GetRequiredService<Probe>();
+        probe.FailFirst(1);
+        var consumer = _host.Services.GetRequiredService<IntegrationEventConsumer>();
+        var envelope = Envelope(new OrderCreated(Guid.NewGuid(), 5m));
+
+        Assert.Equal(ConsumeResult.Completed, await consumer.HandleAsync(envelope, CancellationToken.None));
+
+        // The first attempt failed inside the handler's transaction (rolled back); the journal is written apart.
+        await using var scope = _host.Services.CreateAsyncScope();
+        var row = await scope.ServiceProvider.GetRequiredService<ShopDbContext>().Set<ReceivedMessage>().SingleAsync();
+        Assert.Equal(ReceivedStatus.Processed, row.Status);
+        Assert.Equal(2, row.Attempts);
+        Assert.Equal("orders", row.Source);
+
+        var snapshot = await _host.Services.GetRequiredService<MessagingDiagnostics>().SnapshotAsync(TimeSpan.FromHours(1), 50, CancellationToken.None);
+        Assert.Equal(envelope.MessageId, Assert.Single(snapshot.Received).MessageId);
+        Assert.Empty(snapshot.Problems);
+    }
+
+    [Fact]
+    public async Task CleanupDeletesOldSentMessagesButKeepsPendingOnes()
+    {
+        await using (var scope = _host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ShopDbContext>();
+            db.Orders.Add(Order.Create(1m));
+            await db.SaveChangesAsync();
+        }
+
+        await _host.Services.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync();
+        await using (var scope = _host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ShopDbContext>();
+            db.Orders.Add(Order.Create(2m));
+            await db.SaveChangesAsync();   // pending: never deleted
+        }
+
+        _host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<MessagingOptions>>().Value.TraceRetention = TimeSpan.Zero;
+        var removed = await _host.Services.GetRequiredService<OutboxDispatcher>().CleanupAsync();
+
+        Assert.Equal(1, removed);
+        Assert.Equal(1, await CountAsync<OutboxMessage>(m => m.SentAt == null));
+        Assert.Equal(0, await CountAsync<OutboxMessage>(m => m.SentAt != null));
+    }
+
     private async Task<int> CountAsync<T>(System.Linq.Expressions.Expression<Func<T, bool>>? predicate = null)
         where T : class
     {

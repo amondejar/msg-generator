@@ -1,0 +1,223 @@
+@page "/run"
+@implements IDisposable
+@inject StudioState State
+@inject BuildRunner Builds
+@inject ProcessRunner Runner
+@inject Toolchain Tools
+
+<PageTitle>Ejecutar · Stratum Studio</PageTitle>
+
+<main class="content">
+    <div>
+        <h1>Ejecutar el sistema</h1>
+        <p class="lead">Todos los servicios a la vez con .NET Aspire: sus bases de datos, Kafka o el emulador de Service Bus si los usan, el dashboard de telemetría y el service discovery.</p>
+    </div>
+    <section class="stack" aria-labelledby="h-aspire">
+        <h2 class="section" id="h-aspire">Aspire</h2>
+        <div class="card stack">
+            @{ var job = Runner.Get(ServiceCommands.DashboardJob); var running = job?.Status == JobStatus.Running; }
+            <div class="row">
+                @if (running)
+                {
+                    <button type="button" class="btn" style="color: var(--err)" @onclick="StopSystem">■ Detener sistema</button>
+                    @if (job!.DetectedUrl is { } dashboard)
+                    {
+                        <a class="btn btn-primary" href="@dashboard" target="_blank" rel="noopener">Abrir dashboard de Aspire ↗</a>
+                    }
+                    else
+                    {
+                        <span class="hint">Arrancando… la primera vez compila y descarga las imágenes de las bases de datos, puede tardar unos minutos.</span>
+                    }
+                }
+                else
+                {
+                    <button type="button" class="btn btn-primary" disabled="@(State.Services.Count == 0 || dockerMissing)" @onclick="RunSystem">▶ Ejecutar sistema</button>
+                    <span class="hint">Genera o actualiza el AppHost y arranca todos los servicios con sus bases de datos.</span>
+                }
+            </div>
+            @if (dockerMissing)
+            {
+                <div class="msg warn" role="alert">Hay servicios con base de datos o broker (Kafka, emulador de Service Bus) y no se encuentra Docker. Arranca Docker Desktop (o Podman) y <button type="button" class="btn" style="min-height: 30px; padding: 0 10px" @onclick="RecheckDocker">vuelve a comprobar</button>.</div>
+            }
+            @if (running)
+            {
+                <div class="grid">
+                    @foreach (var service in State.Services)
+                    {
+                        var port = ServiceName.DevPort(service.Definition.Service.Name);
+                        <div class="card" style="padding: 10px 14px">
+                            <b>@service.Definition.Service.Name</b>
+                            <small class="row" style="gap: 10px">
+                                @if (service.Definition.Features.OpenApi)
+                                {
+                                    <a href="http://localhost:@port/scalar" target="_blank" rel="noopener">Scalar ↗</a>
+                                }
+                                <a href="http://localhost:@port/health/ready" target="_blank" rel="noopener">Health ↗</a>
+                                <span class="mono">:@port</span>
+                            </small>
+                        </div>
+                    }
+                </div>
+            }
+            <JobOutput Key="@ServiceCommands.DashboardJob" Lines="12" />
+        </div>
+        <div class="card stack">
+            <p style="margin: 0">
+                Un AppHost que arranca todos los servicios con sus bases de datos, el dashboard de telemetría y el service discovery.
+                @if (State.ExistingAppHost is { } appHost)
+                {
+                    <span> Ya existe <b class="mono">@appHost</b>: al regenerarlo se incorporan los servicios nuevos sin tocar tu <span class="mono">AppHost.cs</span>.</span>
+                }
+            </p>
+            <div class="row">
+                <label class="field" style="flex: 0 1 260px">
+                    Nombre del sistema
+                    <input type="text" @bind="systemName" />
+                </label>
+                <button type="button" class="btn" style="align-self: flex-end" disabled="@(State.Services.Count == 0)" @onclick="GenerateAppHost">
+                    @(State.ExistingAppHost is null ? "Generar AppHost" : "Actualizar AppHost")
+                </button>
+            </div>
+            @if (aspire is not null)
+            {
+                <div class="msg ok" role="status">
+                    ✔ @aspire.AppHostName con @aspire.Services.Count servicio(s).
+                    @(aspire.Created.Count + aspire.Updated.Count == 0 ? "Ya estaba al día." : $"{aspire.Created.Count} archivo(s) nuevos, {aspire.Updated.Count} actualizados.")
+                    Arráncalo con <span class="mono">aspire run</span> (necesita Docker o Podman).
+                </div>
+            }
+        </div>
+    </section>
+
+    <section class="stack" aria-labelledby="h-starts">
+        <h2 class="section" id="h-starts">Qué arranca</h2>
+        @if (State.Services.Count == 0)
+        {
+            <span class="hint">Todavía no hay servicios.</span>
+        }
+        else
+        {
+            var defs = State.Services.Select(x => x.Definition).ToList();
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 1.2fr 1fr 1.2fr 1.6fr"><span>Servicio</span><span>Base de datos</span><span>Mensajería</span><span>En local</span></div>
+                @foreach (var d in defs.OrderBy(d => d.Service.Name, StringComparer.Ordinal))
+                {
+                    <div class="tr" style="grid-template-columns: 1.2fr 1fr 1.2fr 1.6fr">
+                        <b>@d.Service.Name</b>
+                        <span class="hint">@(d.Persistence?.Provider is { } provider ? $"{provider} (contenedor)" : "—")</span>
+                        <span class="hint">@(d.Messaging?.Broker switch { MessagingSettings.AzureServiceBus => "Service Bus", null => "—", var b => b })</span>
+                        <span class="hint mono">http://localhost:@ServiceName.DevPort(d.Service.Name)@(d.Features.IsEnabled("openApi") ? "/scalar" : "/api/v1/ping")</span>
+                    </div>
+                }
+            </div>
+            <span class="hint">
+                Además: el dashboard de Aspire (logs, trazas y métricas de todo)@(defs.Any(d => d.Messaging?.Broker == MessagingSettings.Kafka) ? ", Kafka con Kafka UI" : string.Empty)@(defs.Any(d => d.Messaging?.Broker == MessagingSettings.AzureServiceBus) ? ", el emulador de Service Bus con sus topics y suscripciones" : string.Empty).
+                Las migraciones de cada servicio se aplican al arrancar.
+            </span>
+        }
+    </section>
+
+    <section class="stack" aria-labelledby="h-system-code">
+        <h2 class="section" id="h-system-code">Código de todo el sistema</h2>
+        @if (EditorLauncher.SystemSolution(State.Workspace) is { } systemSolution)
+        {
+            <div class="row" style="gap: 10px; flex-wrap: wrap; align-items: center">
+                <OpenInEditor Path="@systemSolution" Label="@($"Abrir {Path.GetFileName(systemSolution)}")" />
+                <button type="button" class="btn" disabled="@Builds.IsBusy(State.Workspace)" @onclick="() => BuildSystem(BuildRunner.Build, systemSolution)"><Icon Name="build" Size="15" /> Compilar todo</button>
+                <button type="button" class="btn" disabled="@Builds.IsBusy(State.Workspace)" @onclick="() => BuildSystem(BuildRunner.Test, systemSolution)">▶ Tests de todos</button>
+            </div>
+            <span class="hint">Una solución con el AppHost y todos los servicios: ábrela en tu editor para trabajar con todo a la vez.</span>
+            <BuildResults Directory="@State.Workspace" />
+        }
+        else
+        {
+            <span class="hint">Genera el AppHost (arriba): crea una solución con todos los servicios para abrirlos juntos en tu editor y compilarlos o probarlos de una vez. Mientras, cada servicio tiene su <b>Compilar y probar</b>.</span>
+        }
+    </section>
+
+    <section class="stack" aria-labelledby="h-ai">
+        <h2 class="section" id="h-ai">Asistentes de IA</h2>
+        <span class="hint">Conecta Claude, Copilot o Cursor con Stratum (<span class="mono">stratum mcp</span>): podrán ver el sistema y proponer cambios (entidades, eventos, migraciones…) que tú apruebas antes de aplicarlos. Cada servicio trae además un <span class="mono">AGENTS.md</span> con sus convenciones.</span>
+        <pre class="code" style="margin: 0; white-space: pre-wrap">@McpClientConfig.Text(State.Workspace)</pre>
+    </section>
+    @if (error is not null)
+    {
+        <div class="msg err" role="alert">@error</div>
+    }
+</main>
+
+@code {
+    private void BuildSystem(string kind, string solution) =>
+        Builds.Start(kind, State.Workspace, kind == BuildRunner.Test ? "Tests del sistema" : "Compilar el sistema", solution);
+
+    private string? error;
+    private string systemName = string.Empty;
+    private AspireResult? aspire;
+    private bool dockerMissing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Initialize();
+        systemName = AspireGenerator.DefaultSystemName(State.Workspace);   // the existing AppHost, if there is one
+        Runner.Changed += OnChanged;
+        await Task.CompletedTask;
+    }
+
+    // "docker info" can take seconds (or hang while Docker starts): checked after the first render, never while
+    // prerendering, so the page answers at once and the warning appears when the check finishes.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await CheckDockerAsync();
+            StateHasChanged();
+        }
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Runner.Changed -= OnChanged;
+
+    private async Task CheckDockerAsync()
+    {
+        var needsDocker = State.Services.Any(s => s.Definition.Persistence is not null || s.Definition.Messaging?.Broker is MessagingSettings.Kafka or MessagingSettings.AzureServiceBus);
+        dockerMissing = needsDocker && !await Tools.HasDockerAsync();
+    }
+
+    private async Task RecheckDocker()
+    {
+        Tools.Reset();
+        await CheckDockerAsync();
+    }
+
+    private void RunSystem()
+    {
+        try
+        {
+            error = null;
+            aspire = State.GenerateAppHost(systemName);   // always up to date with the services on disk
+            var project = Path.Combine(State.Workspace, aspire.AppHostName, $"{aspire.AppHostName}.csproj");
+            Runner.Start(ServiceCommands.DashboardJob, "Sistema (Aspire)", State.Workspace, "dotnet",
+                ["run", "--project", project], ServiceCommands.DashboardUrl());
+        }
+        catch (Exception ex) when (ex is StratumException or InvalidOperationException)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private void StopSystem() => Runner.Stop(ServiceCommands.DashboardJob);
+
+    private void GenerateAppHost()
+    {
+        try
+        {
+            error = null;
+            aspire = State.GenerateAppHost(systemName);
+        }
+        catch (StratumException ex)
+        {
+            error = ex.Message;
+        }
+    }
+}

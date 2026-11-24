@@ -1,0 +1,154 @@
+@* Add or change one property of an entity. Works on a copy (EntityEditors.PropertyEditor) until "Guardar y cerrar". *@
+<Modal Title="@(Editor.Original is null ? L($"Nueva propiedad de {Entity.Name}", $"New property of {Entity.Name}") : L($"Propiedad {Editor.Original.Name}", $"Property {Editor.Original.Name}"))"
+       Subtitle="@(Editor.Original is null ? L("Un dato más de la entidad: Stratum genera la columna, el contrato y la validación.", "One more piece of data of the entity: Stratum generates the column, the contract and the validation.") : null)"
+       Error="@(attempted ? Error : null)" Note="@(string.IsNullOrWhiteSpace(Editor.Name) ? null : Editor.Spec)" Width="680" OnSave="Save" OnClose="OnClose">
+    <div style="display: grid; grid-template-columns: 1.3fr 1.2fr 1fr; gap: 12px">
+        <label class="field">
+            @L("Nombre", "Name")
+            <input type="text" @bind="Editor.Name" placeholder="UnitPrice" autocomplete="off" />
+        </label>
+        <label class="field">
+            @L("Tipo", "Type")
+            <select @bind="Editor.Type">
+                @foreach (var type in EntityEditors.BasicTypes)
+                {
+                    <option value="@type">@type</option>
+                }
+                @if (Enums.Count > 0)
+                {
+                    <optgroup label="@L("Enumerado", "Enumeration")">
+                        @foreach (var name in Enums)
+                        {
+                            <option value="@(PropertyDraft.EnumPrefix + name)"># @name</option>
+                        }
+                    </optgroup>
+                }
+                @if (Types.Count > 0)
+                {
+                    <optgroup label="@L("Tipo de elemento (composición)", "Item type (composition)")">
+                        @foreach (var name in Types)
+                        {
+                            <option value="@(PropertyDraft.ItemPrefix + name)">▤ @name</option>
+                        }
+                    </optgroup>
+                }
+                @if (Targets.Count > 0)
+                {
+                    <optgroup label="@L("Relación con otra entidad", "Relation to another entity")">
+                        @foreach (var target in Targets)
+                        {
+                            <option value="@(PropertyDraft.ReferencePrefix + target)">→ @target</option>
+                        }
+                    </optgroup>
+                }
+            </select>
+        </label>
+        <label class="field">
+            @L("Valor", "Value")
+            <select @bind="Editor.Kind">
+                <option value="@EntityEditors.One">@L("Obligatorio", "Required")</option>
+                <option value="@EntityEditors.Optional">@L("Opcional", "Optional")</option>
+                @if (!Editor.IsReference)
+                {
+                    <option value="@EntityEditors.List">@L("Lista", "List")</option>
+                }
+            </select>
+        </label>
+    </div>
+    @if (Editor.IsReference)
+    {
+        var target = EntityEditors.TypeName(Editor.Type);
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+            <label class="field">
+                @L("Relación", "Relation")
+                <select value="@(Editor.OneToOne ? "1" : "N")" @onchange="SetRelation">
+                    <option value="N">@L($"1–N: un {target} tiene varios {Entity.Name}", $"1–N: a {target} has several {Entity.Name}")</option>
+                    <option value="1">@L($"1–1: un {target} tiene un solo {Entity.Name}", $"1–1: a {target} has a single {Entity.Name}")</option>
+                </select>
+            </label>
+            <label class="field">
+                @L($"Al borrar un {target}", $"When a {target} is deleted")
+                <select @bind="Editor.OnDelete">
+                    <option value="@DeleteBehaviors.Restrict">@L("Impedirlo mientras lo use (409)", "Prevent it while in use (409)")</option>
+                    <option value="@DeleteBehaviors.Cascade">@L($"Borrar también este {Entity.Name}", $"Delete this {Entity.Name} too")</option>
+                    @if (Editor.EffectiveKind == EntityEditors.Optional)
+                    {
+                        <option value="@DeleteBehaviors.SetNull">@L($"Vaciar {Editor.Name}", $"Empty {Editor.Name}")</option>
+                    }
+                </select>
+            </label>
+        </div>
+        <span class="hint">@L($"Se guarda el id del {target}; Stratum comprueba que existe y lo aplica la base de datos (clave ajena{(Editor.OneToOne ? " con índice único" : string.Empty)}). Para ver los de un {target}: GET ?{Camel(Editor.Name.Trim().Length == 0 ? target + "Id" : Editor.Name.Trim())}=…", $"The {target}'s id is stored; Stratum checks it exists and the database enforces it (foreign key{(Editor.OneToOne ? " with a unique index" : string.Empty)}). To get the ones of a {target}: GET ?{Camel(Editor.Name.Trim().Length == 0 ? target + "Id" : Editor.Name.Trim())}=…")</span>
+    }
+    else if (Editor.IsItem)
+    {
+        <span class="hint">@(Editor.EffectiveKind == EntityEditors.List
+            ? L("Composición en lista: cada elemento en una tabla propia, parte de esta entidad (se guarda y se borra con ella).", "Composition as a list: each item in its own table, part of this entity (saved and deleted with it).")
+            : L("Composición: sus campos son columnas de la tabla de esta entidad (p. ej. ShippingAddress_Street).", "Composition: its fields are columns of this entity's table (e.g. ShippingAddress_Street)."))</span>
+    }
+    <div class="row" style="gap: 8px; align-items: center">
+        <span class="hint">@L("¿Falta el tipo?", "Missing the type?")</span>
+        <button type="button" class="btn btn-dashed" style="min-height: 32px; padding: 0 10px" @onclick="OnNewEnum">@L("# Nuevo enumerado…", "# New enumeration…")</button>
+        <button type="button" class="btn btn-dashed" style="min-height: 32px; padding: 0 10px" @onclick="OnNewType">@L("▤ Nuevo tipo de elemento…", "▤ New item type…")</button>
+    </div>
+    <div class="sig">@EntityEditors.Generates(Preview)</div>
+    @if (Editor.Original is { OriginalName: { } before } && !EntityEditors.Same(before, Editor.Name))
+    {
+        <span class="hint" style="color: var(--warn)">@L(@<text>Se renombra: antes <span class="mono">@before</span>. La migración conserva los datos de la columna.</text>, @<text>Renamed: it was <span class="mono">@before</span>. The migration keeps the column's data.</text>)</span>
+    }
+    else if (Editor.Original is null && !Entity.IsNew)
+    {
+        <span class="hint">@L(@<text>Es una columna nueva: después crea una migración en <b>Datos y migraciones</b>.</text>, @<text>It's a new column: then create a migration in <b>Data and migrations</b>.</text>)@(Editor.EffectiveKind == EntityEditors.One && !Editor.IsItem ? L(" Al ser obligatoria, las filas que ya existan tomarán el valor por defecto del tipo.", " Being required, existing rows will get the type's default value.") : string.Empty)</span>
+    }
+</Modal>
+
+@code {
+    private bool attempted;
+
+    [Parameter, EditorRequired] public EntityEditors.PropertyEditor Editor { get; set; } = default!;
+
+    [Parameter, EditorRequired] public EntityDraft Entity { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ServiceDraft Draft { get; set; } = default!;
+
+    /// <summary>Called after the property was written to the draft.</summary>
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    [Parameter] public EventCallback OnNewEnum { get; set; }
+
+    [Parameter] public EventCallback OnNewType { get; set; }
+
+    private IReadOnlyList<string> Enums => [.. Draft.Enums.Where(e => !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name.Trim())];
+
+    private IReadOnlyList<string> Types => [.. Draft.Types.Where(t => !string.IsNullOrWhiteSpace(t.Name)).Select(t => t.Name.Trim())];
+
+    private IReadOnlyList<string> Targets => [.. Draft.Entities.Where(e => !e.Removed && !string.IsNullOrWhiteSpace(e.Name)).Select(e => e.Name)];
+
+    private string? Error => Editor.Validate(Entity);
+
+    private PropertyDraft Preview => new()
+    {
+        Name = Editor.Name,
+        Type = Editor.Type,
+        List = Editor.EffectiveKind == EntityEditors.List,
+        Nullable = Editor.EffectiveKind == EntityEditors.Optional,
+        OneToOne = Editor.OneToOne,
+        OnDelete = Editor.OnDelete,
+    };
+
+    private void SetRelation(ChangeEventArgs e) => Editor.OneToOne = e.Value?.ToString() == "1";
+
+    private static string Camel(string name) => char.ToLowerInvariant(name[0]) + name[1..];
+
+    private async Task Save()
+    {
+        attempted = true;
+        if (Error is null)
+        {
+            Editor.ApplyTo(Entity);
+            await OnSaved.InvokeAsync();
+        }
+    }
+}

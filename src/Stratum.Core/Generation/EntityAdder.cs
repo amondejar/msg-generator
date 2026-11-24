@@ -40,7 +40,7 @@ public static class EntityAdder
             {
                 Name = request.Name,
                 Plural = request.Plural ?? string.Empty,
-                Properties = PropertyTypes.Parse(request.Properties),
+                Properties = PropertyTypes.Parse(request.Properties, definition.EnumNames, definition.TypeNames),
             },
             definition);
         var provider = ServicePlanner.ResolveProvider(request.Provider, definition.Persistence);

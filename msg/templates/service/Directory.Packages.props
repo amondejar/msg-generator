@@ -1,0 +1,71 @@
+<Project>
+  <!-- Central Package Management: every NuGet version lives here, never in a .csproj. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!--
+      Security: restore fails (warnings are errors) if ANY package, direct or transitive,
+      has a known vulnerability. Fix it by bumping the version here, never by silencing the audit.
+    -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      Stratum platform packages. Always the same version; "stratum upgrade" bumps them.
+      Their own dependencies (OpenTelemetry, Polly, JwtBearer...) are managed by Stratum.
+    -->
+    <PackageVersion Include="Stratum.ServiceDefaults" Version="{{StratumVersion}}" />
+    <!-- @stratum:if cleanDdd -->
+    <PackageVersion Include="Stratum.Ddd" Version="{{StratumVersion}}" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if observability -->
+    <PackageVersion Include="Stratum.ServiceDefaults.OpenTelemetry" Version="{{StratumVersion}}" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if resilience -->
+    <PackageVersion Include="Stratum.ServiceDefaults.Resilience" Version="{{StratumVersion}}" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if auth -->
+    <PackageVersion Include="Stratum.ServiceDefaults.Authentication" Version="{{StratumVersion}}" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if messaging -->
+    <PackageVersion Include="Stratum.Messaging" Version="{{StratumVersion}}" />
+    <!-- @stratum:if persistence -->
+    <PackageVersion Include="Stratum.Messaging.EntityFrameworkCore" Version="{{StratumVersion}}" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if kafka -->
+    <PackageVersion Include="Stratum.Messaging.Kafka" Version="{{StratumVersion}}" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if azureServiceBus -->
+    <PackageVersion Include="Stratum.Messaging.AzureServiceBus" Version="{{StratumVersion}}" />
+    <!-- @stratum:end -->
+    <!-- @stratum:end -->
+  </ItemGroup>
+  <ItemGroup>
+    <!-- @stratum:if openApi -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.21.0" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if mcp -->
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.4.0" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if postgres -->
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if sqlserver -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.15" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if persistence -->
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.15" />
+    <!-- @stratum:end -->
+    <!-- @stratum:if tests -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.0" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <!-- @stratum:end -->
+  </ItemGroup>
+</Project>

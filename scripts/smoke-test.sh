@@ -33,10 +33,13 @@ fi
 pass "packed: $(ls "$PKGS" | tr '\n' ' ')"
 MSG=(dotnet "$ROOT/src/Stratum.Cli/bin/Release/net10.0/stratum.dll")
 VERSION="$("${MSG[@]}" --version)"
+HELP_MAIN="$("${MSG[@]}" --help 2>&1)"; HELP_NEW="$("${MSG[@]}" new --help 2>&1)"
+[[ "$HELP_MAIN" == *"stratum new"* && "$HELP_NEW" == *"stratum new"* && "$HELP_MAIN" != *"Exception"* ]] \
+  && pass "stratum --help and stratum new --help" || fail "--help: $HELP_MAIN"
 
 # The global NuGet cache keeps packages by id+version: drop old Stratum.* builds so we test the ones just packed.
 GLOBAL="$(dotnet nuget locals global-packages --list | sed 's/^global-packages: //')"
-rm -rf "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd "$GLOBAL"/msg.messaging*
+rm -rf "$GLOBAL"/stratum.servicedefaults* "$GLOBAL"/stratum.ddd "$GLOBAL"/stratum.messaging* "$GLOBAL"/msg.servicedefaults* "$GLOBAL"/msg.ddd "$GLOBAL"/msg.messaging*
 
 echo "▶ Generate every feature combination worth checking (Stratum $VERSION)"
 "${MSG[@]}" new Orders  -o "$WORK/full" --package-source "$PKGS"        >/dev/null && pass "full (default features)"
@@ -102,6 +105,10 @@ cp -r "$WORK/core" "$WORK/upgraded"
 grep -q 'Include="Stratum.ServiceDefaults" Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
   && grep -q '"stratumVersion": "9.9.9"' "$WORK/upgraded/stratum.json" \
   && pass "upgrade bumps Stratum.* packages and stratum.json" || fail "upgrade"
+"${MSG[@]}" enum add Tier --values "Basic, Gold" --path "$WORK/upgraded" >/dev/null
+grep -q "Include=\"Stratum.ServiceDefaults\" Version=\"$VERSION\"" "$WORK/upgraded/Directory.Packages.props" \
+  && ! grep -q 'Version="9.9.9"' "$WORK/upgraded/Directory.Packages.props" \
+  && pass "a change made with this Stratum puts every Stratum.* package at $VERSION" || fail "packages not aligned"
 
 echo "▶ stratum add entity"
 "${MSG[@]}" add entity Product  --path "$WORK/full" --props "Name:string, Price:decimal, Description:string?, Stock:int" >/dev/null
@@ -179,6 +186,21 @@ grep -q "HasOne<global::Catalog.Domain.Products.Product>().WithMany().HasForeign
   && grep -q "record ProductRestocked(Guid ProductId)" "$CR/Catalog.Domain/Products/ProductOperations.g.cs" \
   && ! "${MSG[@]}" entity remove Product --path "$WORK/clean" >/dev/null 2>&1 \
   && pass "clean-ddd: references (foreign keys, checks) and aggregate operations" || fail "clean-ddd references/operations"
+# Specification and user stories (on a copy: docs/ doesn't change how the service builds).
+cp -r "$WORK/clean" "$WORK/clean-docs"
+DOCS="$WORK/clean-docs/docs"
+"${MSG[@]}" spec --path "$WORK/clean-docs" >/dev/null
+STORY="$(ls "$DOCS"/historias/CAT-*-product-discontinue.md 2>/dev/null | head -1)"
+[[ -f "$DOCS/especificacion.g.md" && -f "$DOCS/contexto.md" && -n "$STORY" ]] \
+  && grep -q '/api/v1/products/{id}/discontinue' "$DOCS/especificacion.g.md" \
+  && grep -q 'Característica: Discontinue de Product' "$STORY" \
+  && "${MSG[@]}" spec --path "$WORK/clean-docs" | grep -q 'al día' \
+  && pass "spec: especificación, contexto e historias con criterios en Gherkin" || fail "spec"
+echo "mía" >> "$STORY"
+"${MSG[@]}" entity operation add Product Archive --path "$WORK/clean-docs" >/dev/null
+grep -q '/api/v1/products/{id}/archive' "$DOCS/especificacion.g.md" && ls "$DOCS"/historias/CAT-*-product-archive.md >/dev/null 2>&1 \
+  && tail -1 "$STORY" | grep -q "mía" \
+  && pass "spec: a model change updates the specification and adds the new story (the user's stay)" || fail "spec not kept up to date"
 "${MSG[@]}" feature on mcp --path "$WORK/clean" >/dev/null
 grep -q 'app.MapMcp("/mcp")' "$CR/Catalog.Api/StratumWiring.g.cs" \
   && grep -q 'Name = "discontinue_product"' "$CR/Catalog.Api/Features/Products/ProductMcpTools.g.cs" \
@@ -193,6 +215,75 @@ grep -q "MissingReferencesAsync" "$WORK/full/src/Orders.Api/Features/Shipments/S
   && ! "${MSG[@]}" entity operation add Supplier Approve --path "$WORK/full" >/dev/null 2>&1 \
   && ! "${MSG[@]}" add entity Bad --path "$WORK/full" --props "X:Nope" >/dev/null 2>&1 \
   && pass "vertical slice: references with 400/409 checks and test data" || fail "vertical references"
+"${MSG[@]}" enum add ShipmentState --values "pending, Sent, Delivered" --path "$WORK/full" >/dev/null
+"${MSG[@]}" entity update Shipment --path "$WORK/full" --props "Code:string, SupplierId:Supplier, ProductId:Product?, State:ShipmentState, Previous:ShipmentState?" >/dev/null
+"${MSG[@]}" enum add ProductLine --values "Basic, Premium" --path "$WORK/clean" >/dev/null
+"${MSG[@]}" entity operation add Product Reclassify --params "Line:ProductLine" --path "$WORK/clean" >/dev/null
+grep -q "public enum ShipmentState" "$WORK/full/src/Orders.Api/Features/Enums.g.cs" \
+  && grep -q "HasConversion<string>()" "$WORK/full/src/Orders.Api/Features/Shipments/ShipmentConfiguration.g.cs" \
+  && grep -q '<Using Include="Orders.Api.Features" />' "$WORK/full/tests/Orders.Api.Tests/Orders.Api.Tests.csproj" \
+  && grep -q "public enum ProductLine" "$WORK/clean/src/Catalog.Domain/Enums.g.cs" \
+  && grep -q "ProductLine line" "$WORK/clean/src/Catalog.Domain/Products/Product.Reclassify.cs" \
+  && ! "${MSG[@]}" enum remove ShipmentState --path "$WORK/full" >/dev/null 2>&1 \
+  && pass "enums: C# enum, stored as text, usable in properties and operations" || fail "enums"
+# Lists: of basic types, of enums and of objects (item types, own table, replaced on update). The tests of "full"
+# and "clean" (run at the end) create, read and update them against a real database.
+"${MSG[@]}" type add ShipmentLine --props "Sku:string, Quantity:int, State:ShipmentState, Note:string?" --path "$WORK/full" >/dev/null
+"${MSG[@]}" entity update Shipment --path "$WORK/full" --props "Code:string, SupplierId:Supplier, ProductId:Product?, State:ShipmentState, Previous:ShipmentState?, Tags:string[], States:ShipmentState[], Lines:ShipmentLine[]" >/dev/null
+"${MSG[@]}" type add BundleLine --props "Sku:string, Price:decimal, Line:ProductLine" --path "$WORK/clean" >/dev/null
+"${MSG[@]}" add entity Bundle --path "$WORK/clean" --props "Name:string, Codes:int[], Lines:BundleLine[]" >/dev/null
+grep -q "public sealed class ShipmentLine" "$WORK/full/src/Orders.Api/Features/Types.g.cs" \
+  && grep -q 'OwnsMany(e => e.Lines' "$WORK/full/src/Orders.Api/Features/Shipments/ShipmentConfiguration.g.cs" \
+  && grep -q 'ToTable("shipment_lines")' "$WORK/full/src/Orders.Api/Features/Shipments/ShipmentConfiguration.g.cs" \
+  && grep -q "PrimitiveCollection(e => e.States)" "$WORK/full/src/Orders.Api/Features/Shipments/ShipmentConfiguration.g.cs" \
+  && grep -q "IReadOnlyList<ShipmentLineContract> Lines" "$WORK/full/src/Orders.Api/Features/Shipments/ShipmentContracts.g.cs" \
+  && grep -q "public sealed class BundleLine" "$WORK/clean/src/Catalog.Domain/Types.g.cs" \
+  && grep -q "Lines = \[.. lines\];" "$WORK/clean/src/Catalog.Domain/Bundles/Bundle.g.cs" \
+  && ! "${MSG[@]}" type remove ShipmentLine --path "$WORK/full" >/dev/null 2>&1 \
+  && ! "${MSG[@]}" add entity Bad --path "$WORK/full" --props "Tags:string[]?" >/dev/null 2>&1 \
+  && pass "lists: string[], enum[] and item types (own table, replaced on update)" || fail "lists"
+# Relations between entities (1–N, 1–1, what deleting does) and compositions (one item inside the entity, its columns in
+# the same table). "full" and "clean" are built and tested at the end against a real database.
+"${MSG[@]}" type add PostalAddress --props "Street:string, City:string, Zip:string?" --path "$WORK/full" >/dev/null
+"${MSG[@]}" add entity Profile --path "$WORK/full" --props "Bio:string?" >/dev/null
+"${MSG[@]}" relation add Profile Supplier --one-to-one --on-delete cascade --path "$WORK/full" >/dev/null
+"${MSG[@]}" relation add Shipment.CarrierId Supplier --optional --on-delete set-null --path "$WORK/full" >/dev/null
+"${MSG[@]}" relation compose Supplier.Address PostalAddress --path "$WORK/full" >/dev/null
+"${MSG[@]}" relation compose Supplier.Billing PostalAddress --optional --path "$WORK/full" >/dev/null
+"${MSG[@]}" type add Dimensions --props "Width:decimal, Height:decimal" --path "$WORK/clean" >/dev/null
+"${MSG[@]}" add entity Manual --path "$WORK/clean" --props "Title:string" >/dev/null
+"${MSG[@]}" relation add Manual Product --one-to-one --on-delete cascade --path "$WORK/clean" >/dev/null
+"${MSG[@]}" relation compose Product.Size Dimensions --optional --path "$WORK/clean" >/dev/null
+RF="$WORK/full/src/Orders.Api/Features"
+grep -q 'WithOne().HasForeignKey<global::Orders.Api.Features.Profiles.Profile>(e => e.SupplierId).OnDelete(DeleteBehavior.Cascade)' "$RF/Profiles/ProfileConfiguration.g.cs" \
+  && grep -q 'HasForeignKey(e => e.CarrierId).OnDelete(DeleteBehavior.SetNull)' "$RF/Shipments/ShipmentConfiguration.g.cs" \
+  && grep -q 'OwnsOne(e => e.Address' "$RF/Suppliers/SupplierConfiguration.g.cs" \
+  && grep -q 'Navigation(e => e.Address).IsRequired()' "$RF/Suppliers/SupplierConfiguration.g.cs" \
+  && grep -q 'DuplicateReferencesAsync' "$RF/Profiles/ProfileEndpoints.g.cs" \
+  && grep -q 'Guid? carrierId' "$RF/Shipments/ShipmentEndpoints.g.cs" \
+  && grep -q 'DuplicateReferenceAsync' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Manuals/ManualIntegrity.g.cs" \
+  && grep -q 'OwnsOne(e => e.Size' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Products/ProductConfiguration.g.cs" \
+  && "${MSG[@]}" relation list --path "$WORK/full" | grep -q "Profile.SupplierId → Supplier   1–1" \
+  && ! "${MSG[@]}" relation add Shipment.OtherId Supplier --on-delete set-null --path "$WORK/full" >/dev/null 2>&1 \
+  && pass "relations: 1–1 (unique), on delete cascade / set null, ?supplierId= filter, compositions (OwnsOne)" || fail "relations"
+# Operations on lists (clean-ddd): one item or a list of items as parameters, with a head start for the rule.
+"${MSG[@]}" entity operation add Bundle AddLine --params "Line:BundleLine" --path "$WORK/clean" >/dev/null
+"${MSG[@]}" entity operation add Bundle ReplaceLines --params "Lines:BundleLine[]" --path "$WORK/clean" >/dev/null
+grep -q "Lines.Add(line);" "$WORK/clean/src/Catalog.Domain/Bundles/Bundle.AddLine.cs" \
+  && grep -q "Lines = \[.. lines\];" "$WORK/clean/src/Catalog.Domain/Bundles/Bundle.ReplaceLines.cs" \
+  && grep -q "record BundleLineAdded(Guid BundleId, BundleLine Line)" "$WORK/clean/src/Catalog.Domain/Bundles/BundleOperations.g.cs" \
+  && grep -q "\[property: Required\] BundleLineContract Line" "$WORK/clean/src/Catalog.Api/Features/Bundles/BundleOperationEndpoints.g.cs" \
+  && pass "operations on lists: AddLine(Line:BundleLine) → BundleLineAdded, with the rule started" || fail "operations on lists"
+# Best practices of dotnet/skills (dotnet-webapi, test-anti-patterns) and instructions for coding agents.
+grep -q '.WithSummary("Create a Shipment")' "$WORK/full/src/Orders.Api/Features/Shipments/ShipmentEndpoints.g.cs" \
+  && grep -q "<GenerateDocumentationFile>true</GenerateDocumentationFile>" "$WORK/full/src/Orders.Api/Orders.Api.csproj" \
+  && grep -q "JsonNumberHandling.Strict" "$WORK/full/src/Orders.Api/Program.cs" \
+  && grep -q "public sealed record ShipmentLineContract(" "$WORK/full/src/Orders.Api/Features/Types.g.cs" \
+  && grep -q "IReadOnlyList<BundleLineContract> Lines" "$WORK/clean/src/Catalog.Api/Features/Bundles/BundleContracts.g.cs" \
+  && grep -q "# @name createShipment" "$WORK/full/src/Orders.Api/Orders.Api.http" \
+  && grep -q "UpdateReplacesTheData" "$WORK/full/tests/Orders.Api.Tests/Features/ShipmentEndpointsTests.g.cs" \
+  && grep -q "Never edit them" "$WORK/clean/AGENTS.md" && grep -q "@AGENTS.md" "$WORK/clean/CLAUDE.md" \
+  && pass "best practices: OpenAPI metadata, strict JSON, item contracts, .http, focused tests, AGENTS.md" || fail "best practices"
 # An entity from Stratum < 0.10 (no "layout" in stratum.json) is read-only until converted.
 python3 - "$WORK/full/stratum.json" <<'PY'
 import json, sys
@@ -306,7 +397,7 @@ OUT=$("${MSG[@]}" import openapi "$WORK/library.yaml" -a clean-ddd -o "$WORK/imp
 echo "$OUT" | grep -q "Author (/api/v1/authors): FullName:string, Born:date?" \
   && echo "$OUT" | grep -q "Book (/api/v1/books): Title:string, AuthorId:Author, Pages:int?" \
   && echo "$OUT" | grep -q "operación Lend(Member:string) → BookLent" \
-  && echo "$OUT" | grep -q "Book.Tags: lista" && echo "$OUT" | grep -q "GET /stats" \
+  && echo "$OUT" | grep -q "Pages:int?, Tags:string\[\]" && echo "$OUT" | grep -q "GET /stats" \
   && [[ -f "$WORK/imported/src/LibraryAPI.Domain/Books/Book.Lend.cs" ]] \
   && pass "import openapi: entities, references, operations and a report of the rest" || { echo "$OUT"; fail "import openapi"; }
 
@@ -383,20 +474,24 @@ if "${MSG[@]}" feature off docker --path "$LP" >/dev/null 2>&1; then fail "featu
   && pass "Program.cs from before 0.12: blocked, converted, then editable" || fail "feature convert"
 
 echo "▶ Messaging (stratum messaging / stratum events)"
-if "${MSG[@]}" events on Product --path "$FS" >/dev/null 2>&1; then fail "events published without messaging"; fi
+# Messaging follows usage: publishing turns it on (no order to remember).
+OUT="$("${MSG[@]}" events on Product --path "$FS")"
+[[ "$OUT" == *"Mensajería activada en Shop con kafka"* ]] && pass "events on without messaging turns messaging on" || fail "events on: $OUT"
 "${MSG[@]}" messaging on --broker kafka --path "$FS" >/dev/null
-"${MSG[@]}" events on Product --path "$FS" >/dev/null
 grep -q "UseKafka(builder.Configuration)" "$FS/src/Shop.Api/StratumWiring.g.cs" \
   && grep -q "UseEntityFramework<ShopDbContext>" "$FS/src/Shop.Api/StratumWiring.g.cs" \
   && grep -q 'Include="Stratum.Messaging.Kafka"' "$FS/src/Shop.Api/Shop.Api.csproj" \
   && grep -q '"kafka": "localhost:9092"' "$FS/src/Shop.Api/appsettings.Development.json" \
   && grep -q "MessagingModel.ConfigureOutbox" "$FS/src/Shop.Api/Data/MessagingConfiguration.g.cs" \
   && pass "messaging on: Kafka, outbox/inbox tables, packages and connection string" || fail "messaging on"
+grep -q "MessagingModel.ConfigureReceived" "$FS/src/Shop.Api/Data/MessagingConfiguration.g.cs" \
+  && grep -q "app.MapStratumMessagingDiagnostics()" "$FS/src/Shop.Api/StratumWiring.g.cs" \
+  && pass "event traces: msg_received journal and GET /_stratum/messaging (Development)" || fail "event traces wiring"
 grep -q 'IntegrationEvent("shop.product-created")' "$FS/src/Shop.Api/IntegrationEvents/ProductIntegrationEvents.g.cs" \
   && grep -q "PublishAsync(new ProductCreated" "$FS/src/Shop.Api/Features/Products/ProductEndpoints.g.cs" \
   && pass "vertical slice: Product events published from the endpoints (outbox)" || fail "events on (vertical)"
 "${MSG[@]}" messaging on --broker kafka --path "$WORK/clean" >/dev/null
-"${MSG[@]}" events on Product --path "$WORK/clean" >/dev/null
+"${MSG[@]}" events on Product Bundle --path "$WORK/clean" >/dev/null
 grep -q "ProductIntegrationEventsMapper : IIntegrationEventMapper" "$WORK/clean/src/Catalog.Infrastructure/Persistence/Products/ProductIntegrationEventsMapper.g.cs" \
   && grep -q 'IntegrationEvent("catalog.product-created")' "$WORK/clean/src/Catalog.Application/IntegrationEvents/ProductIntegrationEvents.g.cs" \
   && pass "clean + DDD: domain events mapped to integration events" || fail "events on (clean)"
@@ -404,6 +499,20 @@ python3 -m json.tool "$FS/src/Shop.Api/appsettings.Development.json" >/dev/null 
 # Each one listens to the other: contracts copied, handlers created, names that collide on purpose (ProductCreated).
 "${MSG[@]}" subscribe "$FS" Product --path "$WORK/clean" >/dev/null
 "${MSG[@]}" subscribe "$WORK/clean" Product.Created --path "$FS" >/dev/null
+"${MSG[@]}" subscribe "$WORK/clean" Bundle.Updated --path "$FS" >/dev/null
+# A published operation: its own integration event (ProductReclassified) besides ProductUpdated.
+"${MSG[@]}" entity operation publish Product Reclassify --path "$WORK/clean" >/dev/null
+"${MSG[@]}" subscribe "$WORK/clean" Product.Reclassified --path "$FS" >/dev/null
+grep -q 'IntegrationEvent("catalog.product-reclassified")' "$WORK/clean/src/Catalog.Application/IntegrationEvents/ProductIntegrationEvents.g.cs" \
+  && grep -q "(ProductReclassified operation, Product entity) => \[new Integration.ProductUpdated(" "$WORK/clean/src/Catalog.Infrastructure/Persistence/Products/ProductIntegrationEventsMapper.g.cs" \
+  && grep -q "new Integration.ProductReclassified(entity.Id" "$WORK/clean/src/Catalog.Infrastructure/Persistence/Products/ProductIntegrationEventsMapper.g.cs" \
+  && grep -q "string Line) : IntegrationEvent" "$FS/src/Shop.Api/IntegrationEvents/Catalog/ProductReclassified.g.cs" \
+  && "${MSG[@]}" events map --path "$WORK" | grep -q "catalog.product-reclassified .*→ Shop" \
+  && pass "published operation: ProductReclassified with its own topic, subscribable" || fail "published operation"
+grep -q "IReadOnlyList<BundleUpdated.BundleLine> Lines" "$FS/src/Shop.Api/IntegrationEvents/Catalog/BundleUpdated.g.cs" \
+  && grep -q "public sealed record BundleLine(string Sku, decimal Price, string Line);" "$FS/src/Shop.Api/IntegrationEvents/Catalog/BundleUpdated.g.cs" \
+  && grep -q "new Integration.BundleUpdated.BundleLine(i.Sku, i.Price, i.Line.ToString())" "$WORK/clean/src/Catalog.Infrastructure/Persistence/Bundles/BundleIntegrationEventsMapper.g.cs" \
+  && pass "events with lists: the item records travel inside the contract" || fail "events with lists"
 grep -q 'IntegrationEvent("shop.product-deleted")' "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop/ProductDeleted.g.cs" \
   && grep -q "IIntegrationEventHandler<ProductCreated>" "$WORK/clean/src/Catalog.Application/Events/Shop/ProductCreatedHandler.cs" \
   && grep -q 'IntegrationEvent("catalog.product-created")' "$FS/src/Shop.Api/IntegrationEvents/Catalog/ProductCreated.g.cs" \
@@ -548,9 +657,11 @@ MCP_OUT=$(printf '%s\n' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_entity","arguments":{"service":"Orders","name":"Coupon","properties":"Code:string"}}}' \
   '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_services","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"add_relation","arguments":{"service":"Orders","entity":"Order","property":"ParentId","target":"Order","optional":true}}}' \
   | "${MSG[@]}" mcp --path "$SYS" 2>/dev/null)
-[ "$(echo "$MCP_OUT" | wc -l)" -eq 4 ] && echo "$MCP_OUT" | grep -q '"protocolVersion":"2025-11-25"' \
-  && echo "$MCP_OUT" | grep -q '"name":"subscribe"' && echo "$MCP_OUT" | grep -q 'no se ha escrito nada' \
+[ "$(echo "$MCP_OUT" | wc -l)" -eq 5 ] && echo "$MCP_OUT" | grep -q '"protocolVersion":"2025-11-25"' \
+  && echo "$MCP_OUT" | grep -q '"name":"subscribe"' && echo "$MCP_OUT" | grep -q '"name":"add_relation"' \
+  && [ "$(echo "$MCP_OUT" | grep -c 'no se ha escrito nada')" -eq 2 ] && ! grep -q ParentId "$SYS/orders/stratum.json" \
   && [ ! -e "$SYS/orders/src/Orders.Api/Features/Coupons" ] && echo "$MCP_OUT" | grep -q '"structuredContent":{"root"' \
   && pass "MCP server: handshake, tools, plan without writing" || fail "MCP server"
 "${MSG[@]}" new Legacy -o "$SYS/legacy" --package-source "$PKGS" >/dev/null
@@ -564,7 +675,7 @@ grep -q 'Notifications_Api' "$SYS/Shop.AppHost/StratumServices.g.cs" && grep -q 
 
 echo "▶ stratum studio"
 STUDIO_PORT=5988
-"${MSG[@]}" studio --path "$SYS" --port $STUDIO_PORT --no-browser >"$WORK/studio.log" 2>&1 &
+STRATUM_STUDIO_LANGUAGE=es "${MSG[@]}" studio --path "$SYS" --port $STUDIO_PORT --no-browser >"$WORK/studio.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$STUDIO_PORT/" >/dev/null 2>&1 && break; sleep 0.2; done
 HOME_HTML="$(curl -s "http://127.0.0.1:$STUDIO_PORT/")"
@@ -572,16 +683,69 @@ for s in Orders Billing Notifications; do
   echo "$HOME_HTML" | grep -q ">$s<" || fail "studio: $s missing on the system page"
 done
 pass "studio lists the services of the system"
-for p in services events run templates service entities service/data service/messaging service/code service/remove apply; do
+for p in services events spec run templates service entities service/data service/messaging service/code service/build service/spec service/remove apply; do
   [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$STUDIO_PORT/$p")" == 200 ]] || fail "studio: /$p"
 done
 pass "studio pages render"
+ENT="$(curl -s "http://127.0.0.1:$STUDIO_PORT/entities?open=orders&dialog=property:Total")"
+ENUM_DLG="$(curl -s "http://127.0.0.1:$STUDIO_PORT/entities?open=orders&dialog=enum")"
+[[ "$ENT" == *'class="modal-backdrop"'* && "$ENT" == *'Propiedad Total'* && "$ENT" == *'Guardar y cerrar'* && "$ENUM_DLG" == *'Nuevo enumerado'* ]] \
+  && pass "studio entity dialogs: property and enumeration open in floating windows" || fail "studio: entity dialogs"
+D="http://127.0.0.1:$STUDIO_PORT/designer"
+curl -s "$D" | grep -q "Diseñador de eventos" && curl -s "$D/api/model" | grep -q '"name":"Billing"' \
+  && pass "events designer: page and model" || fail "designer page/model"
+CONNECT='{"changes":[{"kind":"connect","publisher":"Billing","entity":"Invoice","event":"Created","consumer":"Orders"}],"layout":{"orders":{"x":40,"y":40},"billing":{"x":480,"y":40}}}'
+BEFORE="$(cat "$SYS/billing/stratum.json")"
+PREVIEW="$(curl -s -X POST "$D/api/preview" -H 'Content-Type: application/json' -d "$CONNECT")"
+[[ "$PREVIEW" == *'"saved":false'* && "$PREVIEW" == *"Mensajería activada en Billing"* && "$(cat "$SYS/billing/stratum.json")" == "$BEFORE" ]] \
+  && pass "designer preview: plan for both services, nothing written" || fail "designer preview: $PREVIEW"
+SAVED="$(curl -s -X POST "$D/api/save" -H 'Content-Type: application/json' -d "$CONNECT")"
+[[ "$SAVED" == *'"saved":true'* ]] && grep -q '"publishedEvents"' "$SYS/billing/stratum.json" \
+  && grep -q 'record InvoiceCreated' "$SYS/billing/src/Billing.Application/IntegrationEvents/InvoiceIntegrationEvents.g.cs" \
+  && ! grep -q 'record InvoiceUpdated' "$SYS/billing/src/Billing.Application/IntegrationEvents/InvoiceIntegrationEvents.g.cs" \
+  && grep -q '"service": "Billing"' "$SYS/orders/stratum.json" && [[ -f "$SYS/stratum.designer.json" ]] \
+  && pass "designer save: publishes only Invoice.Created, Orders subscribes, layout kept" || fail "designer save: $SAVED"
+DISCONNECT='{"changes":[{"kind":"disconnect","publisher":"Billing","entity":"Invoice","event":"Created","consumer":"Orders"},{"kind":"connect","publisher":"Orders","entity":"Order","event":"Created","consumer":"Orders"}]}'
+[[ "$(curl -s -X POST "$D/api/save" -H 'Content-Type: application/json' -d "$DISCONNECT")" == *'"saved":false'* ]] \
+  && grep -q '"service": "Billing"' "$SYS/orders/stratum.json" \
+  && pass "designer: a batch with an error writes nothing" || fail "designer error batch"
+curl -s -X POST "$D/api/save" -H 'Content-Type: application/json' -d '{"changes":[{"kind":"disconnect","publisher":"Billing","entity":"Invoice","event":"Created","consumer":"Orders"}]}' >/dev/null
+! grep -q '"service": "Billing"' "$SYS/orders/stratum.json" && pass "designer: disconnect removes the subscription" || fail "designer disconnect"
+curl -s -X POST "$D/api/save" -H 'Content-Type: application/json' -d '{"changes":[],"layout":{}}' >/dev/null
+curl -s "$D/api/model" | grep -q '"layout":{}' && pass "designer: a canvas left empty stays empty" || fail "designer empty canvas"
+EVENTS_HTML="$(curl -s "http://127.0.0.1:$STUDIO_PORT/events")"
+[[ "$(grep -o 'class="ev-mini' <<<"$EVENTS_HTML" | wc -l)" -ge 3 && "$EVENTS_HTML" == *'orders.order-created'* && "$EVENTS_HTML" == *'href="/designer"'* ]] \
+  && pass "studio event map: compact summary of services and events, link to the designer" || fail "studio: event map"
+ED="http://127.0.0.1:$STUDIO_PORT/entity-designer"
+RELATE='{"service":"orders","changes":[{"kind":"entity","entity":"Customer","properties":"Name:string"},{"kind":"relation","entity":"Order","property":"CustomerId","target":"Customer","optional":true,"onDelete":"setNull"}],"layout":{"Customer":{"x":40,"y":300}}}'
+ED_PREVIEW="$(curl -s -X POST "$ED/api/preview" -H 'Content-Type: application/json' -d "$RELATE")"
+ED_SAVED="$(curl -s -X POST "$ED/api/save" -H 'Content-Type: application/json' -d "$RELATE")"
+curl -s "$ED?service=orders" | grep -q "ador de entidades" && curl -s "$ED/api/model?service=orders" | grep -q '"name":"Order"' \
+  && [[ "$ED_PREVIEW" == *'"saved":false'* && "$ED_SAVED" == *'"saved":true'* && "$ED_SAVED" == *'"needsMigration":true'* ]] \
+  && grep -q 'OnDelete(DeleteBehavior.SetNull)' "$SYS/orders/src/Orders.Api/Features/Orders/OrderConfiguration.g.cs" \
+  && grep -q '"Customer"' "$SYS/stratum.designer.json" \
+  && pass "entity designer: page, model, preview and save (new entity + optional relation, set null)" || fail "entity designer: $ED_SAVED"
+TRACES="$(curl -s "http://127.0.0.1:$STUDIO_PORT/traces/api/report?minutes=15")"
+curl -s "http://127.0.0.1:$STUDIO_PORT/traces" | grep -q "Trazas de eventos" \
+  && [[ "$TRACES" == *'"name":"Orders"'* && "$TRACES" == *'"state":"offline"'* && "$TRACES" == *'"events":[]'* && "$TRACES" == *'"dashboard":"http://localhost:'* ]] \
+  && pass "event traces: window and report (services not running: offline, no events)" || fail "event traces: $TRACES"
 if [[ $ONLINE == 1 ]]; then
   [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$STUDIO_PORT/_framework/blazor.web.js")" == 200 ]] \
     && pass "studio serves blazor.web.js (interactive UI)" || fail "studio: blazor.web.js missing"
 else
   echo "  – blazor.web.js check skipped (source-built SDKs don't ship Blazor's JavaScript)"
 fi
+kill "$PID"; wait "$PID" 2>/dev/null || true; PID=""
+# The same Studio in English.
+STRATUM_STUDIO_LANGUAGE=en "${MSG[@]}" studio --path "$SYS" --port $STUDIO_PORT --no-browser >"$WORK/studio-en.log" 2>&1 &
+PID=$!
+for _ in $(seq 1 150); do curl -sf "http://127.0.0.1:$STUDIO_PORT/" 2>/dev/null | grep -q 'lang="en"' && break; sleep 0.2; done
+EN_HOME="$(curl -s "http://127.0.0.1:$STUDIO_PORT/")"
+EN_DIALOG="$(curl -s "http://127.0.0.1:$STUDIO_PORT/entities?open=orders&dialog=enum")"
+[[ "$EN_HOME" == *"System overview"* && "$EN_HOME" == *'lang="en"'* && "$EN_DIALOG" == *"New enumeration"*"Add value"* ]] \
+  && curl -s "http://127.0.0.1:$STUDIO_PORT/designer" | grep -q "Event designer" \
+  && ! grep -q "Resumen del sistema" <<<"$EN_HOME" \
+  && pass "studio in English (pages, dialogs and the events designer)" || fail "studio: English"
 kill "$PID"; wait "$PID" 2>/dev/null || true; PID=""
 
 echo "▶ Full services (need nuget.org)"

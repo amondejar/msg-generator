@@ -32,12 +32,17 @@ public static class StudioServer
         builder.Services.AddSingleton<ProcessRunner>();   // disposed on shutdown: kills every process it started
         builder.Services.AddSingleton<Toolchain>();
         builder.Services.AddSingleton<MigrationAssistant>();
+        builder.Services.AddSingleton<EditorLauncher>();
+        builder.Services.AddSingleton<BuildRunner>();
         builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
         var app = builder.Build();
         app.UseAntiforgery();
         app.MapStaticAssets();
         app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+        DesignerApi.Map(app, options);
+        EntityDesignerApi.Map(app, options);
+        TracesApi.Map(app, options);
         return app;
     }
 

@@ -10,6 +10,14 @@ public static class StratumInfo
     /// </summary>
     public static string Version { get; } = ReadVersion();
 
+    /// <summary>
+    /// Built by the release workflow (-p:StratumPublished=true): the Stratum.* packages of this version are on
+    /// nuget.org, so services need no local package source.
+    /// </summary>
+    public static bool IsPublished { get; } = typeof(StratumInfo).Assembly
+        .GetCustomAttributes<AssemblyMetadataAttribute>()
+        .Any(a => a.Key == "StratumPublished" && a.Value == "true");
+
     private static string ReadVersion()
     {
         var informational = typeof(StratumInfo).Assembly

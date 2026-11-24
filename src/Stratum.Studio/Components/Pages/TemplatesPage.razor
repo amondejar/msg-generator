@@ -1,22 +1,22 @@
 @page "/templates"
 @inject StudioState State
 
-<PageTitle>Plantillas · Stratum Studio</PageTitle>
+<PageTitle>@L("Plantillas", "Templates") · Stratum Studio</PageTitle>
 
 <main class="content">
     <div>
-        <h1>Plantillas del equipo</h1>
-        <p class="lead">Las convenciones de tu equipo (carpeta <span class="mono">.msg</span>): plantillas propias que sustituyen, añaden o quitan archivos en cada servicio, y tokens como <span class="mono">{{Company}}</span>.</p>
+        <h1>@L("Plantillas del equipo", "Team templates")</h1>
+        <p class="lead">@L(@<text>Las convenciones de tu equipo (carpeta <span class="mono">.stratum</span>): plantillas propias que sustituyen, añaden o quitan archivos en cada servicio, y tokens como <span class="mono">{{Company}}</span>.</text>, @<text>Your team's conventions (<span class="mono">.stratum</span> folder): your own templates that replace, add or remove files in every service, and tokens like <span class="mono">{{Company}}</span>.</text>)</p>
     </div>
     <section class="stack" aria-labelledby="h-team">
-        <h2 class="section" id="h-team">Estado</h2>
+        <h2 class="section" id="h-team">@L("Estado", "Status")</h2>
         <div class="card stack">
             @if (State.Team is { } team)
             {
                 var custom = team.CustomizedFiles();
                 <p style="margin: 0">
-                    Stratum está usando las convenciones de tu equipo de <span class="mono">@team.Root</span>:
-                    @custom.Count plantilla(s) personalizada(s)@(team.Tokens.Count > 0 ? $" y {team.Tokens.Count} token(s)" : "").
+                    @L("Stratum está usando las convenciones de tu equipo de", "Stratum is using your team's conventions from") <span class="mono">@team.Root</span>:
+                    @L($"{custom.Count} plantilla(s) personalizada(s)", $"{custom.Count} customized template(s)")@(team.Tokens.Count > 0 ? L($" y {team.Tokens.Count} token(s)", $" and {team.Tokens.Count} token(s)") : "").
                 </p>
                 @if (team.Tokens.Count > 0)
                 {
@@ -35,8 +35,7 @@
             else
             {
                 <p style="margin: 0">
-                    Sin plantillas del equipo: Stratum usa las suyas. Para imponer tus convenciones (logging, nombres, pipeline…),
-                    copia una plantilla y edítala; el Studio la usará en la vista previa y al aplicar:
+                    @L("Sin plantillas del equipo: Stratum usa las suyas. Para imponer tus convenciones (logging, nombres, pipeline…), copia una plantilla y edítala; el Studio la usará en la vista previa y al aplicar:", "No team templates: Stratum uses its own. To enforce your conventions (logging, names, pipeline…), copy a template and edit it; the Studio will use it in the preview and when applying:")
                 </p>
                 <span class="mono hint">stratum templates eject service/src/__Service__.Api/Program.cs --path "@State.Workspace"</span>
             }

@@ -21,6 +21,7 @@ public static class EntityFrameworkMessagingExtensions
         services.Replace(ServiceDescriptor.Scoped<IOutboxWriter, EfOutbox<TContext>>());
         services.Replace(ServiceDescriptor.Scoped<IOutboxStore, EfOutbox<TContext>>());
         services.Replace(ServiceDescriptor.Scoped<IInbox, EfInbox<TContext>>());
+        services.Replace(ServiceDescriptor.Scoped<IMessageJournal, EfJournal<TContext>>());
         services.TryAddScoped<IntegrationEventsInterceptor>();
 
         // Picked up by DbContexts that add the IInterceptor services (Stratum's clean + DDD services do), and in
