@@ -1,3 +1,4 @@
+using System.Globalization;
 using Stratum.Core;
 using Stratum.Core.Generation;
 using Stratum.Core.Import;
@@ -80,6 +81,12 @@ internal static partial class Cli
                                                  Copia plantillas a .stratum/templates para personalizarlas
           stratum upgrade [--path <servicio o sistema>] [--to <versión>] [--dry-run]
                                                  Actualiza los paquetes Stratum.* de un servicio existente
+          stratum rule list | set <Entidad|Tipo>.<Propiedad> [--min-length N] [--max-length N] [--format email|url|phone|none]
+                     [--pattern <regex>] [--example <valor>] [--min N] [--max N] | clear <Entidad|Tipo>.<Propiedad> [--path] [--dry-run]
+                                         Validación de una propiedad: longitud, formato, patrón, rango (API 400, dominio y columna)
+          stratum replica list | add <carpeta del publicador> <Entidad> [--fields "Name, Email"]
+                        | fields <carpeta del publicador> <Entidad> --fields ... | remove <Publicador>.<Entidad>  [--path] [--dry-run]
+                                                 Copia local de una entidad de otro servicio, al día con sus eventos
           stratum relation list | add <Entidad>[.<Propiedad>] <Destino> [--one-to-one] [--optional] [--on-delete restrict|cascade|set-null]
                          | update <Entidad>.<Propiedad> [--one-to-one|--one-to-many] [--optional|--required] [--on-delete ...]
                          | compose <Entidad>.<Propiedad> <TipoDeElemento> [--list] [--optional] | remove <Entidad>.<Propiedad>  [--path] [--dry-run]
@@ -168,6 +175,8 @@ internal static partial class Cli
             "type" => Types(args[1..], output),
             "spec" => Spec(args[1..], output),
             "relation" => RelationCommand(args[1..], output),
+            "rule" => RuleCommand(args[1..], output),
+            "replica" => ReplicaCommand(args[1..], output),
             _ => throw new StratumException($"Comando desconocido '{args[0]}'. Usa 'stratum --help'."),
         };
     }
@@ -1485,7 +1494,7 @@ internal static partial class Cli
             if (updated.Messaging is not null && current.Messaging is null && current.Persistence is not null)
             {
                 output.WriteLine();
-                output.WriteLine("Siguiente paso: crea la migración con las tablas msg_outbox y msg_inbox (Studio, o dotnet ef migrations add AddMessaging).");
+                output.WriteLine("Siguiente paso: crea la migración con las tablas msg_outbox, msg_inbox y msg_received (Studio, o dotnet ef migrations add AddMessaging).");
             }
 
             if (updated.Messaging?.Broker == MessagingSettings.Kafka)
@@ -2144,6 +2153,220 @@ internal static partial class Cli
         {
             output.WriteLine();
             output.WriteLine("Siguiente: crea la migración (en el Studio: Datos y migraciones; o dotnet ef migrations add … y stratum migration review).");
+        }
+
+        return 0;
+    }
+
+    private static int RuleCommand(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum rule list | set <Entidad|Tipo>.<Propiedad> [--min-length N] [--max-length N] [--format email|url|phone|none] " +
+                             "[--pattern <regex>] [--example <valor>] [--min N] [--max N] | clear <Entidad|Tipo>.<Propiedad>  [--path <servicio>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("list" or "set" or "clear"))
+        {
+            throw new StratumException(usage);
+        }
+
+        var action = args[0];
+        var positional = new List<string>();
+        var path = ".";
+        var dryRun = false;
+        var given = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path": path = Value(args, ref i, args[i]); break;
+                case "--dry-run": dryRun = true; break;
+                case "--min-length" or "--max-length" or "--format" or "--pattern" or "--example" or "--min" or "--max":
+                    given[args[i]] = Value(args, ref i, args[i]);
+                    break;
+                default:
+                    if (args[i].StartsWith('-'))
+                    {
+                        throw new StratumException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    positional.Add(args[i]);
+                    break;
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        if (action == "list")
+        {
+            var rows = current.Entities.SelectMany(e => e.Properties.Select(p => (Owner: e.Name, Property: p)))
+                .Concat((current.Types ?? []).SelectMany(t => t.Properties.Select(p => (Owner: t.Name, Property: p))))
+                .Where(x => x.Property.Rules is not null)
+                .ToList();
+            if (rows.Count == 0)
+            {
+                output.WriteLine($"{current.Service.Name} no tiene reglas de validación (los textos: hasta {PropertyTypes.DefaultStringLength} caracteres). " +
+                                 "Añade una: stratum rule set Customer.Email --format email --max-length 100");
+                return 0;
+            }
+
+            foreach (var (owner, p) in rows)
+            {
+                output.WriteLine($"{owner}.{p.Name}   {ValueRules.Describe(p.Rules, p)}");
+            }
+
+            return 0;
+        }
+
+        var target = positional.Count == 1 && positional[0].Contains('.', StringComparison.Ordinal)
+            ? positional[0]
+            : throw new StratumException($"Indica la propiedad: <Entidad>.<Propiedad>. {usage}");
+        var dot = target.IndexOf('.', StringComparison.Ordinal);
+        var (owner2, property) = (target[..dot], target[(dot + 1)..]);
+
+        PropertyRules? rules = null;
+        if (action == "set")
+        {
+            if (given.Count == 0)
+            {
+                throw new StratumException($"Indica al menos una regla. {usage}");
+            }
+
+            var existing = current.Entities.FirstOrDefault(e => e.Name.Equals(owner2, StringComparison.OrdinalIgnoreCase))?.Properties
+                .Concat((current.Types ?? []).FirstOrDefault(t => t.Name.Equals(owner2, StringComparison.OrdinalIgnoreCase))?.Properties ?? [])
+                .FirstOrDefault(p => p.Name.Equals(property, StringComparison.OrdinalIgnoreCase))?.Rules ?? new PropertyRules();
+            int? Int(string key) => given.TryGetValue(key, out var v)
+                ? int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : throw new StratumException($"{key}: '{v}' no es un número entero.")
+                : null;
+            decimal? Dec(string key) => given.TryGetValue(key, out var v)
+                ? decimal.TryParse(v, NumberStyles.Number, CultureInfo.InvariantCulture, out var n) ? n : throw new StratumException($"{key}: '{v}' no es un número (usa el punto decimal).")
+                : null;
+            string? Text(string key, string? keep) => given.TryGetValue(key, out var v) ? (v is "none" or "" ? null : v) : keep;
+
+            // Given options replace those rules; the rest stay ("none" or "" removes one).
+            rules = existing with
+            {
+                MinLength = given.ContainsKey("--min-length") ? Int("--min-length") is { } a and > 0 ? a : null : existing.MinLength,
+                MaxLength = given.ContainsKey("--max-length") ? Int("--max-length") : existing.MaxLength,
+                Format = given.ContainsKey("--format") ? Text("--format", null)?.ToLowerInvariant() : existing.Format,
+                Pattern = Text("--pattern", existing.Pattern),
+                Example = Text("--example", existing.Example),
+                Min = given.ContainsKey("--min") ? given["--min"] is "none" ? null : Dec("--min") : existing.Min,
+                Max = given.ContainsKey("--max") ? given["--max"] is "none" ? null : Dec("--max") : existing.Max,
+            };
+        }
+
+        var updated = ServicePlanner.SetRules(current, owner2, property, rules);
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+        }
+
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Any(c => c.Path.EndsWith("Configuration.g.cs", StringComparison.Ordinal)))
+        {
+            output.WriteLine();
+            output.WriteLine("La longitud de la columna cambia: crea la migración (en el Studio: Datos y migraciones; o dotnet ef migrations add … y stratum migration review).");
+        }
+
+        return 0;
+    }
+
+    private static int ReplicaCommand(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum replica list | add <carpeta del publicador> <Entidad> [--fields \"Name, Email\"] | " +
+                             "fields <carpeta del publicador> <Entidad> --fields \"Name\" | remove <Publicador>.<Entidad>  [--path <servicio>] [--dry-run]";
+        if (args.Length == 0 || args[0] is not ("list" or "add" or "fields" or "remove"))
+        {
+            throw new StratumException(usage);
+        }
+
+        var action = args[0];
+        var positional = new List<string>();
+        var path = ".";
+        var dryRun = false;
+        string? fields = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path": path = Value(args, ref i, args[i]); break;
+                case "--dry-run": dryRun = true; break;
+                case "--fields": fields = Value(args, ref i, args[i]); break;
+                default:
+                    if (args[i].StartsWith('-'))
+                    {
+                        throw new StratumException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    positional.Add(args[i]);
+                    break;
+            }
+        }
+
+        var current = ServicePlanner.Load(path);
+        if (action == "list")
+        {
+            if (current.Replicas is not { Count: > 0 } replicas)
+            {
+                output.WriteLine($"{current.Service.Name} no tiene réplicas. Añade una: stratum replica add ../Customers Customer --fields \"Name, Email\"");
+                return 0;
+            }
+
+            foreach (var r in replicas)
+            {
+                output.WriteLine($"{r.Service}.{r.Entity}  →  {r.Name} (tabla replica_…): Id{string.Concat(r.Properties.Select(p => ", " + p.Name))}");
+            }
+
+            return 0;
+        }
+
+        IReadOnlyList<string>? chosen = fields is null ? null
+            : [.. fields.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        ServiceDefinition updated;
+        if (action == "remove")
+        {
+            var target = positional.Count == 1 && positional[0].Contains('.', StringComparison.Ordinal)
+                ? positional[0].Split('.', 2)
+                : throw new StratumException($"Indica la réplica: <Publicador>.<Entidad>. {usage}");
+            updated = Replicas.Remove(current, target[0], target[1]);
+        }
+        else
+        {
+            if (positional.Count != 2)
+            {
+                throw new StratumException(usage);
+            }
+
+            var publisher = ServicePlanner.Load(positional[0]);
+            if (action == "add")
+            {
+                var withMessaging = ServicePlanner.EnsureMessaging(path, current, publisher.Messaging?.Broker, out var note);
+                if (note is not null)
+                {
+                    output.WriteLine("ℹ " + note);
+                }
+
+                updated = Replicas.Add(withMessaging, publisher, positional[1], chosen);
+            }
+            else
+            {
+                updated = Replicas.SetFields(current, publisher, positional[1], chosen ?? throw new StratumException($"Indica los datos: --fields \"Name, Email\". {usage}"));
+            }
+        }
+
+        var plan = ServicePlanner.Plan(path, current, updated, new GenerationOptions { Team = TeamTemplates.Find(path) });
+        if (!dryRun && plan.Changes.Count > 0)
+        {
+            plan.Apply();
+        }
+
+        PrintPlan(output, plan, dryRun);
+        if (!dryRun && plan.Changes.Any(c => c.Path.Contains("/Replicas/", StringComparison.Ordinal)))
+        {
+            output.WriteLine();
+            output.WriteLine("La tabla de la réplica cambia: crea la migración (en el Studio: Datos y migraciones; o dotnet ef migrations add … y stratum migration review).");
+            if (action == "add")
+            {
+                output.WriteLine("La réplica se llena con los eventos que lleguen desde ahora: los datos que ya existían no se copian.");
+            }
         }
 
         return 0;

@@ -119,6 +119,86 @@ public static partial class EntityEditors
 
         public bool IsReference => Type.StartsWith(PropertyDraft.ReferencePrefix, StringComparison.Ordinal);
 
+        // Validation, as typed in the dialog (numbers as text: empty = no rule).
+        public string MinLength { get; set; } = string.Empty;
+
+        public string MaxLength { get; set; } = string.Empty;
+
+        public string Format { get; set; } = string.Empty;
+
+        public string Pattern { get; set; } = string.Empty;
+
+        public string Example { get; set; } = string.Empty;
+
+        public string Min { get; set; } = string.Empty;
+
+        public string Max { get; set; } = string.Empty;
+
+        /// <summary>A text (length, format, pattern) and not a list.</summary>
+        public bool HasTextRules => Type == "string" && EffectiveKind != List;
+
+        /// <summary>A number (range) and not a list.</summary>
+        public bool HasNumberRules => Type is "int" or "long" or "decimal" && EffectiveKind != List;
+
+        /// <summary>The rules typed in the dialog, or an error when a number can't be read.</summary>
+        public (PropertyRules? Rules, string? Error) ReadRules()
+        {
+            static string? Clean(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            int? length = null, maxLength = null;
+            decimal? min = null, max = null;
+            if (Clean(MinLength) is { } a && !int.TryParse(a, System.Globalization.CultureInfo.InvariantCulture, out var la))
+            {
+                return (null, L("La longitud mínima debe ser un número entero.", "The minimum length must be a whole number."));
+            }
+
+            if (Clean(MaxLength) is { } b && !int.TryParse(b, System.Globalization.CultureInfo.InvariantCulture, out var lb))
+            {
+                return (null, L("La longitud máxima debe ser un número entero.", "The maximum length must be a whole number."));
+            }
+
+            if (Clean(Min) is { } c && !decimal.TryParse(c, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var mc))
+            {
+                return (null, L("El mínimo debe ser un número (con punto decimal).", "The minimum must be a number (with a decimal point)."));
+            }
+
+            if (Clean(Max) is { } d && !decimal.TryParse(d, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var md))
+            {
+                return (null, L("El máximo debe ser un número (con punto decimal).", "The maximum must be a number (with a decimal point)."));
+            }
+
+            if (Clean(MinLength) is { } x)
+            {
+                length = int.Parse(x, System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            if (Clean(MaxLength) is { } y)
+            {
+                maxLength = int.Parse(y, System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            if (Clean(Min) is { } z)
+            {
+                min = decimal.Parse(z, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            if (Clean(Max) is { } w)
+            {
+                max = decimal.Parse(w, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            var rules = new PropertyRules
+            {
+                MinLength = length is > 0 ? length : null,
+                MaxLength = maxLength,
+                Format = Clean(Format),
+                Pattern = Clean(Pattern),
+                Example = Clean(Example),
+                Min = min,
+                Max = max,
+            };
+            return (PropertyDraft.Fitting(rules, Type, EffectiveKind == List), null);
+        }
+
         /// <summary>What Kind really is: references are never lists.</summary>
         public string EffectiveKind => IsReference && Kind == List ? One : Kind;
 
@@ -133,6 +213,13 @@ public static partial class EntityEditors
             Kind = property.IsList ? List : property.Nullable ? Optional : One,
             OneToOne = property.OneToOne,
             OnDelete = property.OnDelete,
+            MinLength = property.Rules?.MinLength?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+            MaxLength = property.Rules?.MaxLength?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+            Format = property.Rules?.Format ?? string.Empty,
+            Pattern = property.Rules?.Pattern ?? string.Empty,
+            Example = property.Rules?.Example ?? string.Empty,
+            Min = property.Rules?.Min is { } min ? ValueRules.Number(min) : string.Empty,
+            Max = property.Rules?.Max is { } max ? ValueRules.Number(max) : string.Empty,
         };
 
         public string? Validate(EntityDraft entity)
@@ -162,6 +249,17 @@ public static partial class EntityEditors
                 return L("Una relación con la propia entidad solo puede impedir el borrado (SQL Server rechaza los ciclos en cascada).", "A relation to the same entity can only prevent the delete (SQL Server rejects cascade cycles).");
             }
 
+            var (rules, rulesError) = ReadRules();
+            if (rulesError is not null)
+            {
+                return rulesError;
+            }
+
+            if (rules is not null && ValueRules.Problems(new PropertyDefinition { Name = Name.Trim(), Type = Type, Nullable = EffectiveKind == Optional, Rules = rules }, entity.Name).FirstOrDefault() is { } problem)
+            {
+                return problem[(problem.IndexOf(':', StringComparison.Ordinal) + 1)..].Trim();
+            }
+
             return null;
         }
 
@@ -175,6 +273,7 @@ public static partial class EntityEditors
             target.Nullable = EffectiveKind == Optional;
             target.OneToOne = IsReference && OneToOne;
             target.OnDelete = IsReference ? OnDelete : DeleteBehaviors.Restrict;
+            target.Rules = ReadRules().Rules;
             if (Original is null)
             {
                 entity.Properties.Add(target);
@@ -206,12 +305,33 @@ public static partial class EntityEditors
         ? L("Texto en la BD · valor desconocido → 400", "Text in the DB · unknown value → 400") + (p.Nullable ? L(" · opcional", " · optional") : string.Empty)
         : (p.Type, p.Nullable) switch
     {
-        ("string", false) => $"Required · MaxLength({PropertyTypes.DefaultStringLength})",
-        ("string", true) => L($"MaxLength({PropertyTypes.DefaultStringLength}) · columna nullable", $"MaxLength({PropertyTypes.DefaultStringLength}) · nullable column"),
-        ("decimal", _) => L("Precisión (18, 2)", "Precision (18, 2)") + (p.Nullable ? " · nullable" : string.Empty),
-        (_, true) => L("Columna nullable", "Nullable column"),
-        _ => L("Columna obligatoria", "Required column"),
+        ("string", false) => $"Required · {TextRules(p)}",
+        ("string", true) => TextRules(p) + L(" · columna nullable", " · nullable column"),
+        ("decimal", _) => L("Precisión (18, 2)", "Precision (18, 2)") + Range(p) + (p.Nullable ? " · nullable" : string.Empty),
+        (_, true) => L("Columna nullable", "Nullable column") + Range(p),
+        _ => L("Columna obligatoria", "Required column") + Range(p),
     };
+
+    private static string TextRules(PropertyDraft p)
+    {
+        var r = p.Rules;
+        var parts = new List<string> { r?.MinLength is { } min ? $"Length({min}–{r.MaxLength ?? PropertyTypes.DefaultStringLength})" : $"MaxLength({r?.MaxLength ?? PropertyTypes.DefaultStringLength})" };
+        if (r?.Format is { } format)
+        {
+            parts.Add(format switch { TextFormats.Email => "Email", TextFormats.Url => "Url", _ => L("Teléfono", "Phone") });
+        }
+
+        if (r?.Pattern is { } pattern)
+        {
+            parts.Add(L($"patrón {pattern}", $"pattern {pattern}"));
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string Range(PropertyDraft p) => p.Rules is { Min: not null } or { Max: not null }
+        ? $" · Range({(p.Rules.Min is { } a ? ValueRules.Number(a) : "…")}..{(p.Rules.Max is { } b ? ValueRules.Number(b) : "…")})"
+        : string.Empty;
 
     /// <summary>"#OrderStatus" → "OrderStatus"; "string" → "string".</summary>
     public static string TypeName(string type) =>

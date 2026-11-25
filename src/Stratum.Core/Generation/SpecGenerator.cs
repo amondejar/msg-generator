@@ -217,7 +217,27 @@ public static partial class SpecGenerator
             foreach (var x in listens)
             {
                 var data = string.Join(", ", new[] { "Id" }.Concat(x.Properties.Select(p => p.Name)));
-                s.AppendLine($"| `{x.EventClass}` | {x.Service} | `{x.Topic}` | {data} | `{HandlerPath(d, x)}` |");
+                var handlers = new[] { x.HasHandler ? $"`{HandlerPath(d, x)}`" : null, ReplicaOf(d, x) is { } r ? $"la réplica `{r.Name}`" : null }.OfType<string>();
+                s.AppendLine($"| `{x.EventClass}` | {x.Service} | `{x.Topic}` | {data} | {string.Join(" y ", handlers)} |");
+            }
+
+            s.AppendLine();
+        }
+
+        if (d.Replicas is { Count: > 0 } replicas)
+        {
+            s.AppendLine("## Réplicas de otros servicios");
+            s.AppendLine();
+            s.AppendLine("Copias locales de entidades de otros servicios, al día con sus eventos Created, Updated y Deleted (un evento antiguo que");
+            s.AppendLine("llega tarde se ignora). Sirven para comprobar que algo existe o mostrar sus datos sin llamar al otro servicio. Son");
+            s.AppendLine("consistentes a la larga: lo creado hace un momento puede no estar todavía, y solo tienen lo creado o cambiado desde que existen.");
+            s.AppendLine();
+            s.AppendLine("| Réplica | De | Tabla | Datos |");
+            s.AppendLine("|---|---|---|---|");
+            foreach (var r in replicas)
+            {
+                var table = "replica_" + EntityCodeGen.Kebab(PropertyTypes.Pluralize(r.Entity)).Replace('-', '_');
+                s.AppendLine($"| `{r.Name}` | {r.Entity} de {r.Service} | `{table}` | {string.Join(", ", new[] { "Id" }.Concat(r.Properties.Select(p => p.Name)))} |");
             }
 
             s.AppendLine();
@@ -383,8 +403,9 @@ public static partial class SpecGenerator
 
         return p.Type switch
         {
-            "string" => $"hasta {PropertyTypes.DefaultStringLength} caracteres{(p.Nullable ? string.Empty : ", no vacío")}",
-            "decimal" => "2 decimales (precisión 18, 2)",
+            "string" => ValueRules.Describe(p.Rules, p) + (p.Nullable ? string.Empty : ", no vacío"),
+            "int" or "long" when p.Rules is not null => ValueRules.Describe(p.Rules, p),
+            "decimal" => "2 decimales (precisión 18, 2)" + (p.Rules is not null && ValueRules.Describe(p.Rules, p) is { Length: > 0 } range ? $", {range}" : string.Empty),
             "date" => "fecha (`2026-01-31`)",
             "datetime" => "fecha y hora con zona (`2026-01-31T10:00:00Z`)",
             _ => "—",
@@ -491,7 +512,7 @@ public static partial class SpecGenerator
             }
         }
 
-        foreach (var subscription in d.Subscriptions ?? [])
+        foreach (var subscription in (d.Subscriptions ?? []).Where(x => x.HasHandler))
         {
             yield return ($"recibe-{ServiceName.ToKebab(subscription.Service)}-{ServiceName.ToKebab(subscription.EventClass)}",
                 $"Al recibir {subscription.EventClass} de {subscription.Service}", SubscriptionStory(d, subscription));
@@ -546,8 +567,26 @@ public static partial class SpecGenerator
         {
             s.AppendLine();
             s.AppendLine("  Escenario: Texto demasiado largo");
-            s.AppendLine($"    Cuando envío POST {route} con {texts[0].Name} de {PropertyTypes.DefaultStringLength + 1} caracteres");
+            s.AppendLine($"    Cuando envío POST {route} con {texts[0].Name} de {ValueRules.MaxLength(texts[0]) + 1} caracteres");
             s.AppendLine($"    Entonces la respuesta es 400 con el error de {texts[0].Name}");
+        }
+
+        foreach (var p in entity.Properties.Where(p => ValueRules.IsText(p) && p.Rules is { Format: not null } or { Pattern: not null }))
+        {
+            var what = p.Rules!.Format switch { TextFormats.Email => "que no es un email", TextFormats.Url => "que no es una URL", TextFormats.Phone => "que no es un teléfono", _ => "que no cumple su patrón" };
+            s.AppendLine();
+            s.AppendLine($"  Escenario: {p.Name} {what}");
+            s.AppendLine($"    Cuando envío POST {route} con {p.Name} = \"no-valido\"");
+            s.AppendLine($"    Entonces la respuesta es 400 con el error de {p.Name}");
+        }
+
+        foreach (var p in entity.Properties.Where(p => ValueRules.IsNumber(p) && p.Rules is { Min: not null } or { Max: not null }))
+        {
+            var outside = p.Rules!.Max is { } max ? ValueRules.Number(max + 1) : ValueRules.Number(p.Rules.Min!.Value - 1);
+            s.AppendLine();
+            s.AppendLine($"  Escenario: {p.Name} fuera de rango");
+            s.AppendLine($"    Cuando envío POST {route} con {p.Name} = {outside}");
+            s.AppendLine($"    Entonces la respuesta es 400 con el error de {p.Name}");
         }
 
         foreach (var p in entity.Properties.Where(p => p.Enum is not null && !p.IsList))
@@ -811,6 +850,9 @@ public static partial class SpecGenerator
         d.Architecture == Architectures.CleanDdd
             ? $"src/{d.Service.Name}.Domain/{entity.Plural}/{entity.Name}.cs"
             : $"src/{d.Service.Name}.Api/Features/{entity.Plural}/{entity.Name}.cs";
+
+    private static ReplicaDefinition? ReplicaOf(ServiceDefinition d, Subscription x) =>
+        (d.Replicas ?? []).FirstOrDefault(r => r.Service == x.Service && r.Entity == x.Entity && Subscription.Events.Contains(x.Event));
 
     private static string HandlerPath(ServiceDefinition d, Subscription x) =>
         d.Architecture == Architectures.CleanDdd

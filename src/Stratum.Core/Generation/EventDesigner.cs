@@ -100,7 +100,7 @@ public static class EventDesigner
                         Publish(change.Publisher, change.Entity, change.Event, on: true);
                         var publisher = Get(change.Publisher);
                         var subscription = ServicePlanner.SubscriptionTo(publisher, change.Entity, change.Event);
-                        if ((consumer.Subscriptions ?? []).Any(x => x.Topic == subscription.Topic))
+                        if ((consumer.Subscriptions ?? []).Any(x => x.Topic == subscription.Topic && x.HasHandler))
                         {
                             break;   // already listening
                         }

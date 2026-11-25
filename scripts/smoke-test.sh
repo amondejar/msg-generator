@@ -266,6 +266,23 @@ grep -q 'WithOne().HasForeignKey<global::Orders.Api.Features.Profiles.Profile>(e
   && "${MSG[@]}" relation list --path "$WORK/full" | grep -q "Profile.SupplierId → Supplier   1–1" \
   && ! "${MSG[@]}" relation add Shipment.OtherId Supplier --on-delete set-null --path "$WORK/full" >/dev/null 2>&1 \
   && pass "relations: 1–1 (unique), on delete cascade / set null, ?supplierId= filter, compositions (OwnsOne)" || fail "relations"
+# Validation rules (stratum rule): length, format, pattern and range, in the API (400), the domain, the column and the tests.
+"${MSG[@]}" rule set Supplier.Name --min-length 2 --max-length 80 --path "$WORK/full" >/dev/null
+"${MSG[@]}" rule set Product.Stock --min 0 --max 10000 --path "$WORK/full" >/dev/null
+"${MSG[@]}" rule set PostalAddress.Zip --pattern '^[0-9]{5}$' --example 28001 --path "$WORK/full" >/dev/null
+"${MSG[@]}" rule set Category.Title --max-length 60 --format email --path "$WORK/clean" >/dev/null
+"${MSG[@]}" rule set Product.Price --min 0.01 --max 99999.99 --path "$WORK/clean" >/dev/null
+grep -q '\[property: Required, MinLength(2), MaxLength(80)\] string Name' "$RF/Suppliers/SupplierContracts.g.cs" \
+  && grep -q 'HasMaxLength(80)' "$RF/Suppliers/SupplierConfiguration.g.cs" \
+  && grep -q 'Range(typeof(int), "0", "10000"' "$RF/Products/ProductContracts.g.cs" \
+  && grep -q 'RegularExpression(@"^\[0-9\]{5}\$")' "$WORK/full/src/Orders.Api/Features/Types.g.cs" \
+  && grep -q 'HasMaxLength(60)' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Categories/CategoryConfiguration.g.cs" \
+  && grep -q 'EmailAddressAttribute().IsValid' "$WORK/clean/src/Catalog.Domain/Categories/Category.g.cs" \
+  && grep -q 'is < 0.01m or > 99999.99m' "$WORK/clean/src/Catalog.Domain/Products/Product.g.cs" \
+  && "${MSG[@]}" rule list --path "$WORK/full" | grep -q "Supplier.Name   2–80 caracteres" \
+  && ! "${MSG[@]}" rule set Supplier.Name --pattern '^[A-Z]+$' --path "$WORK/full" >/dev/null 2>&1 \
+  && ! "${MSG[@]}" rule set Product.Stock --min-length 3 --path "$WORK/full" >/dev/null 2>&1 \
+  && pass "validation rules: attributes (400), domain guards, column length, samples; bad rules rejected" || fail "validation rules"
 # Operations on lists (clean-ddd): one item or a list of items as parameters, with a head start for the rule.
 "${MSG[@]}" entity operation add Bundle AddLine --params "Line:BundleLine" --path "$WORK/clean" >/dev/null
 "${MSG[@]}" entity operation add Bundle ReplaceLines --params "Lines:BundleLine[]" --path "$WORK/clean" >/dev/null
@@ -539,6 +556,21 @@ grep -q 'IntegrationEvent("shop.product-deleted")' "$WORK/clean/src/Catalog.Appl
 [[ ! -d "$WORK/clean/src/Catalog.Application/IntegrationEvents/Shop" ]] && ! grep -q '"service": "Shop"' "$WORK/clean/stratum.json" \
   && pass "--prune drops subscriptions to events no longer published" || fail "subscribe --prune"
 "${MSG[@]}" events on Product --path "$FS" >/dev/null
+# Replicas: a local copy of another service's entity, kept up to date with its Created/Updated/Deleted events.
+"${MSG[@]}" replica add "$FS" Product --fields "Name" --path "$WORK/clean" >/dev/null
+"${MSG[@]}" replica add "$WORK/clean" Product --path "$FS" >/dev/null
+CR="$WORK/clean/src/Catalog.Infrastructure/Persistence/Replicas/Shop/ProductReplicaStore.g.cs"
+grep -q 'IIntegrationEventHandler<ProductDeleted>' "$CR" && grep -q 'builder.ToTable("replica_products")' "$CR" \
+  && grep -q 'public interface IProductReplicas' "$WORK/clean/src/Catalog.Application/Replicas/Shop/ProductReplica.g.cs" \
+  && grep -q 'IProductReplicas, global::Catalog.Infrastructure.Persistence.Replicas.Shop.ProductReplicaStore' "$WORK/clean/src/Catalog.Infrastructure/Persistence/RepositoryRegistration.g.cs" \
+  && grep -q 'replica.LastEventAt > occurredAt' "$FS/src/Shop.Api/Replicas/Catalog/ProductReplicaHandler.g.cs" \
+  && grep -q 'DbSet<global::Shop.Api.Replicas.Catalog.ProductReplica> ProductReplicas' "$FS/src/Shop.Api/Data/ShopDbContext.g.cs" \
+  && [[ ! -f "$FS/src/Shop.Api/Events/Catalog/ProductUpdatedHandler.cs" ]] && [[ -f "$FS/src/Shop.Api/Events/Catalog/ProductCreatedHandler.cs" ]] \
+  && "${MSG[@]}" replica list --path "$FS" | grep -q "Catalog.Product" \
+  && ! "${MSG[@]}" replica add "$FS" Product --fields "Nope" --path "$WORK/full" >/dev/null 2>&1 \
+  && "${MSG[@]}" unsubscribe Catalog Product.Created --path "$FS" >/dev/null && grep -q '"handler": false' "$FS/stratum.json" \
+  && "${MSG[@]}" subscribe "$WORK/clean" Product.Created --path "$FS" >/dev/null \
+  && pass "replicas: table, handler of Created/Updated/Deleted, reader in clean-ddd; your handlers stay apart" || fail "replicas"
 
 echo "▶ Guided migrations (stratum migration review)"
 MIG="$WORK/migration"; cp -r "$WORK/clean" "$MIG"

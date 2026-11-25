@@ -33,6 +33,14 @@ public sealed record Subscription
     /// <summary>Data of the event besides Id (empty for Deleted).</summary>
     public IReadOnlyList<PropertyDefinition> Properties { get; init; } = [];
 
+    /// <summary>
+    /// False: no handler of yours for this event (a replica uses it, with its own generated handler). Null = true.
+    /// </summary>
+    public bool? Handler { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasHandler => Handler != false;
+
     [System.Text.Json.Serialization.JsonIgnore]
     public string EventClass => Entity + Event;
 
@@ -159,6 +167,12 @@ public sealed record PropertyDefinition
     /// </summary>
     public IReadOnlyList<PropertyDefinition>? Fields { get; init; }
 
+    /// <summary>
+    /// Validation of the value (texts: length, format, pattern; numbers: range), checked by the API (400), by the
+    /// domain (clean-ddd) and, for the length, by the database. Null: only required/optional and 200 characters.
+    /// </summary>
+    public PropertyRules? Rules { get; init; }
+
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsList => List == true;
 
@@ -247,4 +261,28 @@ public sealed record EntityOperation
 
     [System.Text.Json.Serialization.JsonIgnore]
     public bool Publishes => Publish == true;
+}
+
+/// <summary>
+/// A local copy of an entity of another service (CustomerReplica in Addresses): its table, kept up to date by a
+/// handler Stratum generates for the Created, Updated and Deleted events of the publisher. Read it to check that a
+/// customer exists, or to show its name, without calling the other service.
+/// </summary>
+public sealed record ReplicaDefinition
+{
+    /// <summary>Publishing service (its name in its stratum.json, e.g. "Customers").</summary>
+    public required string Service { get; init; }
+
+    /// <summary>Entity of the publisher (e.g. "Customer").</summary>
+    public required string Entity { get; init; }
+
+    /// <summary>Data copied, as the events carry it (a subset of the Created event; Id always).</summary>
+    public IReadOnlyList<PropertyDefinition> Properties { get; init; } = [];
+
+    /// <summary>"CustomerReplica": the class and the table (replica_customers).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Name => Entity + "Replica";
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Plural => Entity + "Replicas";
 }

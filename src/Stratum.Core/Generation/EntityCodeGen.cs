@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Stratum.Core.Model;
 
@@ -31,7 +32,6 @@ public static partial class EntityCodeGen
     public static Dictionary<string, string> Tokens(EntityDefinition entity, FeatureSet features, ServiceDefinition? definition = null)
     {
         var props = entity.Properties;
-        var max = PropertyTypes.DefaultStringLength;
         var types = definition?.Types ?? [];
         var integration = definition?.Architecture == Architectures.CleanDdd ? "Integration." : string.Empty;
         var wire = props.Any(p => p.Type == PropertyTypes.ObjectType) && types.Count == 0 ? [] : props.Select(p => PropertyTypes.OnTheWire(p, types)).ToList();
@@ -74,8 +74,8 @@ public static partial class EntityCodeGen
                 $"    public {PropertyTypes.EntityCSharp(p)} {p.Name} {{ get; private set; }}{PropertyTypes.EntityInitializer(p)}")),
             ["FactoryParameters"] = string.Join(", ", props.Select(p => $"{PropertyTypes.ToCSharp(p)} {Camel(p.Name)}")),
             ["FactoryArguments"] = string.Join(", ", props.Select(p => Camel(p.Name))),
-            ["ApplyGuards"] = string.Join("\n\n", props.Where(IsString).Select(p => Guard(p, max))
-                .Concat(props.Where(p => p.IsObjectList).Select(p => ItemGuards(p, types, max)).Where(g => g.Length > 0))),
+            ["ApplyGuards"] = string.Join("\n\n", props.Where(p => IsString(p) || ValueRules.IsNumber(p) && p.Rules is not null).Select(Guard)
+                .Concat(props.Where(p => p.IsObjectList).Select(p => ItemGuards(p, types)).Where(g => g.Length > 0))),
             ["ApplyAssignments"] = string.Join("\n", props.Select(p => p.IsList
                 ? $"        {p.Name} = [.. {Camel(p.Name)}];"
                 : $"        {p.Name} = {Camel(p.Name)};")),
@@ -372,12 +372,13 @@ public static partial class EntityCodeGen
                 $"public enum {e.Name}\n{{\n{string.Join(",\n", e.Values.Select(v => "    " + v))},\n}}")),
             ["FeatureUsings"] = string.Join("\n", entities.Select(e => $"using {service}.Api.Features.{e.Plural};")),
             ["FeatureMaps"] = string.Join("\n", entities.Select(e => $"        api.Map{e.Name}Endpoints();")),
-            ["DbSets"] = string.Join("\n\n", entities.Select(e => $"    public DbSet<{e.Name}> {e.Plural} => Set<{e.Name}>();")),
+            ["DbSets"] = string.Join("\n\n", entities.Select(e => $"    public DbSet<{e.Name}> {e.Plural} => Set<{e.Name}>();").Concat(ReplicaCodeGen.DbSets(definition))),
             ["DomainUsings"] = string.Join("\n", entities.Select(e => $"using {service}.Domain.{e.Plural};")),
             ["InfrastructureUsings"] = string.Join("\n", entities.Select(e => $"using {service}.Infrastructure.Persistence.{e.Plural};")),
             ["RepositoryRegistrations"] = string.Join("\n", entities.Select(e => $"        services.AddScoped<I{e.Name}Repository, {e.Name}Repository>();")
                 .Concat(entities.Where(e => e.References.Any() || ModelRules.Dependents(definition, e.Name, includeSelf: true, blockingOnly: true).Count > 0).Select(e =>
-                    $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Integrity, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Integrity>();"))),
+                    $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Integrity, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Integrity>();"))
+                .Concat(ReplicaCodeGen.Registrations(definition))),
             ["TypeDeclarations"] = TypeDeclarations(definition),
             ["TypeContracts"] = TypeContracts(definition),
             ["HttpRequests"] = HttpRequests(definition),
@@ -481,6 +482,8 @@ public static partial class EntityCodeGen
 
         var one = p.Type switch
         {
+            "string" when p.Rules is not null && !p.IsList => System.Text.Json.JsonSerializer.Serialize(PropertyTypes.TextSample(p), HttpJson),
+            "int" or "long" or "decimal" when p.Rules is { Min: not null } or { Max: not null } && !p.IsList => PropertyTypes.NumberSample(p),
             "string" => "\"sample\"",
             "int" or "long" => "1",
             "decimal" => "9.95",
@@ -493,6 +496,8 @@ public static partial class EntityCodeGen
         };
         return p.IsList ? $"[{one}]" : one;
     }
+
+    private static readonly System.Text.Json.JsonSerializerOptions HttpJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     private static string CamelJson(string name) => char.ToLowerInvariant(name[0]) + name[1..];
 
@@ -526,27 +531,17 @@ public static partial class EntityCodeGen
         }));
     }
 
-    /// <summary>Domain checks of the text fields of the items of an object list (clean-ddd).</summary>
-    private static string ItemGuards(PropertyDefinition list, IReadOnlyList<ItemTypeDefinition> types, int max)
+    /// <summary>Domain checks of the fields of the items of an object list (clean-ddd).</summary>
+    private static string ItemGuards(PropertyDefinition list, IReadOnlyList<ItemTypeDefinition> types)
     {
         var item = types.FirstOrDefault(t => t.Name == list.Of);
-        var strings = item?.Properties.Where(IsString).ToList() ?? [];
+        var fields = item?.Properties.Where(p => IsString(p) || ValueRules.IsNumber(p) && p.Rules is not null).ToList() ?? [];
         var arg = Camel(list.Name);
         var checks = new List<string>
         {
             $"            if (element is null)\n            {{\n                throw new DomainException(\"{list.Name} can't contain empty items.\");\n            }}",
         };
-        foreach (var p in strings)
-        {
-            if (!p.Nullable)
-            {
-                checks.Add($"            if (string.IsNullOrWhiteSpace(element.{p.Name}))\n            {{\n                throw new DomainException(\"{list.Name}.{p.Name} is required.\");\n            }}");
-            }
-
-            var lengthCheck = p.Nullable ? $"element.{p.Name} is {{ Length: > {max} }}" : $"element.{p.Name}.Length > {max}";
-            checks.Add($"            if ({lengthCheck})\n            {{\n                throw new DomainException(\"{list.Name}.{p.Name} must be at most {max} characters.\");\n            }}");
-        }
-
+        checks.AddRange(fields.SelectMany(p => RuleChecks(p, $"element.{p.Name}", $"{list.Name}.{p.Name}", "            ")));
         return $"        foreach (var element in {arg})\n        {{\n{string.Join("\n\n", checks)}\n        }}";
     }
 
@@ -559,19 +554,78 @@ public static partial class EntityCodeGen
         return CSharpKeywords.Contains(camel) ? "@" + camel : camel;
     }
 
-    private static string Guard(PropertyDefinition p, int max)
-    {
-        var arg = Camel(p.Name);
-        var lines = new List<string>();
-        if (!p.Nullable)
-        {
-            lines.Add($"        if (string.IsNullOrWhiteSpace({arg}))\n        {{\n            throw new DomainException(\"{p.Name} is required.\");\n        }}");
-        }
+    private static string Guard(PropertyDefinition p) => string.Join("\n\n", RuleChecks(p, Camel(p.Name), p.Name, "        "));
 
-        var lengthCheck = p.Nullable ? $"{arg} is {{ Length: > {max} }}" : $"{arg}.Length > {max}";
-        lines.Add($"        if ({lengthCheck})\n        {{\n            throw new DomainException(\"{p.Name} must be at most {max} characters.\");\n        }}");
-        return string.Join("\n\n", lines);
+    /// <summary>
+    /// The domain checks of a value (clean-ddd): required, length, format, pattern and range. The same rules as the
+    /// attributes of the API request, so the domain stays valid whoever calls it.
+    /// </summary>
+    private static IEnumerable<string> RuleChecks(PropertyDefinition p, string value, string label, string indent)
+    {
+        string Check(string condition, string message) =>
+            $"{indent}if ({condition})\n{indent}{{\n{indent}    throw new DomainException(\"{label} {message}\");\n{indent}}}";
+
+        var r = p.Rules ?? new PropertyRules();
+        if (IsString(p))
+        {
+            if (!p.Nullable)
+            {
+                yield return Check($"string.IsNullOrWhiteSpace({value})", "is required.");
+            }
+
+            var max = ValueRules.MaxLength(p);
+            yield return Check(p.Nullable ? $"{value} is {{ Length: > {max} }}" : $"{value}.Length > {max}", $"must be at most {max} characters.");
+            if (r.MinLength is { } min and > 0)
+            {
+                yield return Check(p.Nullable ? $"{value} is {{ Length: < {min} }}" : $"{value}.Length < {min}", $"must be at least {min} characters.");
+            }
+
+            if (r.Format is { } format)
+            {
+                var (attribute, what) = format switch
+                {
+                    TextFormats.Email => ("EmailAddressAttribute", "a valid email address"),
+                    TextFormats.Url => ("UrlAttribute", "a valid http(s) URL"),
+                    _ => ("PhoneAttribute", "a valid phone number"),
+                };
+                yield return Check($"!new System.ComponentModel.DataAnnotations.{attribute}().IsValid({value})", $"must be {what}.");
+            }
+
+            if (r.Pattern is { } pattern)
+            {
+                var regex = $"System.Text.RegularExpressions.Regex.IsMatch({value}, {Verbatim(pattern)})";
+                yield return Check(p.Nullable ? $"{value} is not null && !{regex}" : $"!{regex}", "has an invalid format.");
+            }
+        }
+        else if (ValueRules.IsNumber(p) && (r.Min is not null || r.Max is not null))
+        {
+            var bounds = new List<string>();
+            if (r.Min is { } low)
+            {
+                bounds.Add($"< {Literal(low, p.Type)}");
+            }
+
+            if (r.Max is { } high)
+            {
+                bounds.Add($"> {Literal(high, p.Type)}");
+            }
+
+            var message = r.Min is { } a && r.Max is { } b ? $"must be between {ValueRules.Number(a)} and {ValueRules.Number(b)}."
+                : r.Min is { } onlyLow ? $"must be at least {ValueRules.Number(onlyLow)}." : $"must be at most {ValueRules.Number(r.Max!.Value)}.";
+            yield return Check($"{value} is {string.Join(" or ", bounds)}", message);
+        }
     }
+
+    /// <summary>A C# literal of the type of the property: 5, 5L, 5.5m.</summary>
+    private static string Literal(decimal value, string type) => type switch
+    {
+        "long" => ValueRules.Number(value) + "L",
+        "decimal" => ValueRules.Number(value) + "m",
+        _ => ValueRules.Number(value),
+    };
+
+    /// <summary>A verbatim C# string: @"^\d{5}$".</summary>
+    private static string Verbatim(string text) => "@\"" + text.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     private static string InvalidArguments(IReadOnlyList<PropertyDefinition> props, IReadOnlyList<ItemTypeDefinition> types)
     {
@@ -586,14 +640,47 @@ public static partial class EntityCodeGen
             return p.Nullable ? string.Empty : "[property: Required] ";
         }
 
-        if (!IsString(p))
+        var r = p.Rules ?? new PropertyRules();
+        var attributes = new List<string>();
+        if (IsString(p))
         {
-            return string.Empty;
+            if (!p.Nullable)
+            {
+                attributes.Add("Required");
+            }
+
+            if (r.MinLength is { } min and > 0)
+            {
+                attributes.Add($"MinLength({min})");
+            }
+
+            attributes.Add($"MaxLength({ValueRules.MaxLength(p)})");
+            switch (r.Format)
+            {
+                case TextFormats.Email: attributes.Add("EmailAddress"); break;
+                case TextFormats.Url: attributes.Add("Url"); break;
+                case TextFormats.Phone: attributes.Add("Phone"); break;
+            }
+
+            if (r.Pattern is { } pattern)
+            {
+                attributes.Add($"RegularExpression({Verbatim(pattern)})");
+            }
+        }
+        else if (ValueRules.IsNumber(p) && (r.Min is not null || r.Max is not null))
+        {
+            var (type, lowest, highest) = p.Type switch
+            {
+                "int" => ("int", int.MinValue.ToString(CultureInfo.InvariantCulture), int.MaxValue.ToString(CultureInfo.InvariantCulture)),
+                "long" => ("long", long.MinValue.ToString(CultureInfo.InvariantCulture), long.MaxValue.ToString(CultureInfo.InvariantCulture)),
+                _ => ("decimal", decimal.MinValue.ToString(CultureInfo.InvariantCulture), decimal.MaxValue.ToString(CultureInfo.InvariantCulture)),
+            };
+            var low = r.Min is { } a ? ValueRules.Number(a) : lowest;
+            var high = r.Max is { } b ? ValueRules.Number(b) : highest;
+            attributes.Add($"Range(typeof({type}), \"{low}\", \"{high}\", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)");
         }
 
-        return p.Nullable
-            ? $"[property: MaxLength({PropertyTypes.DefaultStringLength})] "
-            : $"[property: Required, MaxLength({PropertyTypes.DefaultStringLength})] ";
+        return attributes.Count == 0 ? string.Empty : $"[property: {string.Join(", ", attributes)}] ";
     }
 
     private static string Configuration(PropertyDefinition p, EntityDefinition entity, IReadOnlyList<ItemTypeDefinition> types)
@@ -638,7 +725,7 @@ public static partial class EntityCodeGen
 
     private static string Configuration(PropertyDefinition p, string builder, string lambda, string indent) => p.Type.ToLowerInvariant() switch
     {
-        "string" => $"{indent}{builder}.Property({lambda} => {lambda}.{p.Name}).HasMaxLength({PropertyTypes.DefaultStringLength})" +
+        "string" => $"{indent}{builder}.Property({lambda} => {lambda}.{p.Name}).HasMaxLength({ValueRules.MaxLength(p)})" +
                     (p.Nullable ? ";" : ".IsRequired();"),
         "decimal" => $"{indent}{builder}.Property({lambda} => {lambda}.{p.Name}).HasPrecision(18, 2);",
         PropertyTypes.EnumType => $"{indent}{builder}.Property({lambda} => {lambda}.{p.Name}).HasConversion<string>().HasMaxLength({PropertyTypes.EnumColumnLength})" +

@@ -22,6 +22,11 @@ public static partial class ModelRules
         ValidateEnums(definition, names);
         ValidateTypes(definition, names);
         ValidatePublishedOperations(definition);
+        ValidatePropertyRules(definition);
+        if (Replicas.Problems(definition).ToList() is { Count: > 0 } replicaProblems)
+        {
+            throw new StratumException(string.Join("\n", replicaProblems));
+        }
 
         foreach (var entity in definition.Entities)
         {
@@ -229,6 +234,20 @@ public static partial class ModelRules
                     throw new StratumException($"{entity.Name}.{o.Name}({p.Name}) usa el tipo '{p.Of}', que no existe en este servicio.");
                 }
             }
+        }
+    }
+
+    /// <summary>Length, format, pattern and range of properties, item fields and operation parameters.</summary>
+    private static void ValidatePropertyRules(ServiceDefinition definition)
+    {
+        var problems = definition.Entities
+            .SelectMany(e => e.Properties.SelectMany(p => ValueRules.Problems(p, e.Name))
+                .Concat((e.Operations ?? []).SelectMany(o => o.Parameters.SelectMany(p => ValueRules.Problems(p, $"{e.Name}.{o.Name}")))))
+            .Concat((definition.Types ?? []).SelectMany(t => t.Properties.SelectMany(p => ValueRules.Problems(p, t.Name))))
+            .ToList();
+        if (problems.Count > 0)
+        {
+            throw new StratumException(string.Join("\n", problems));
         }
     }
 

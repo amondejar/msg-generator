@@ -1,3 +1,4 @@
+// @stratum:if subscriptionHandler
 // @stratum:if verticalSlice
 using {{Service}}.IntegrationEvents.{{Publisher}};
 using Stratum.Messaging;
@@ -23,4 +24,5 @@ public sealed partial class {{EventClass}}Handler(ILogger<{{EventClass}}Handler>
     [LoggerMessage(Level = LogLevel.Information, Message = "{{EventClass}} {Id} received from {Source}")]
     private static partial void LogReceived(ILogger logger, Guid id, string source);
 }
+// @stratum:end
 // @stratum:end

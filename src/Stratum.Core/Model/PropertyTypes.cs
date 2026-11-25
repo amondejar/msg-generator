@@ -174,11 +174,84 @@ public static partial class PropertyTypes
                     : $"new {item.Name} {{ {string.Join(", ", item.Properties.Select(p => $"{p.Name} = {Sample(p, changed: changed)}"))} }}";
         }
 
+        if (ValueRules.IsText(property) && property.Rules is not null)
+        {
+            return CSharpString(TextSample(property, changed));
+        }
+
+        if (ValueRules.IsNumber(property) && property.Rules is { Min: not null } or { Max: not null })
+        {
+            var number = NumberSample(property, changed);
+            return property.Type switch { "long" => $"{number}L", "decimal" => $"{number}m", _ => number };
+        }
+
         var one = property.Type == EnumType
             ? changed ? $"Enum.GetValues<{property.Enum}>()[^1]" : $"default({property.Enum})"
             : changed ? ChangedSamples[property.Type] : Map[property.Type].Sample;
         return property.IsList ? $"[{one}]" : one;
     }
+
+    /// <summary>
+    /// A text that meets the rules of the property (its example, or one of its format, as long as the length allows):
+    /// for the tests and the .http file.
+    /// </summary>
+    public static string TextSample(PropertyDefinition property, bool changed = false)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+        var r = property.Rules ?? new PropertyRules();
+        if (r.Example is { } example)
+        {
+            return example;
+        }
+
+        var text = r.Format switch
+        {
+            TextFormats.Email => changed ? "changed@example.com" : "sample@example.com",
+            TextFormats.Url => changed ? "https://example.com/changed" : "https://example.com/sample",
+            TextFormats.Phone => changed ? "+34 600 000 002" : "+34 600 000 001",
+            _ => changed ? "changed" : "sample",
+        };
+
+        var min = r.MinLength ?? 0;
+        var max = ValueRules.MaxLength(property);
+        if (text.Length < min)
+        {
+            var padding = new string(r.Format == TextFormats.Phone ? '0' : 'x', min - text.Length);
+            text = r.Format switch
+            {
+                TextFormats.Email => text.Insert(text.IndexOf('@', StringComparison.Ordinal), padding),
+                _ => text + padding,
+            };
+        }
+
+        return text.Length > max && r.Format is null ? text[..max] : text;
+    }
+
+    /// <summary>A number inside the range of the property ("1", "2.25"…), invariant culture, no suffix.</summary>
+    public static string NumberSample(PropertyDefinition property, bool changed = false)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+        var min = property.Rules?.Min;
+        var max = property.Rules?.Max;
+        decimal Clamp(decimal v) => min is { } low && v < low ? low : max is { } high && v > high ? high : v;
+
+        var first = Clamp(property.Type == "decimal" ? 1.5m : 1m);
+        if (!changed)
+        {
+            return ValueRules.Number(first);
+        }
+
+        var second = Clamp(property.Type == "decimal" ? 2.25m : 2m);
+        if (second == first)
+        {
+            second = max is null || first + 1 <= max ? first + 1 : min is null || first - 1 >= min ? first - 1 : first;
+        }
+
+        return ValueRules.Number(second);
+    }
+
+    private static string CSharpString(string text) =>
+        "\"" + text.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
 
     /// <summary>API contract of an item type: OrderItem → OrderItemContract.</summary>
     public static string ContractName(string itemType) => itemType + "Contract";

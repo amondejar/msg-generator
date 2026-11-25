@@ -27,6 +27,12 @@ public sealed record ServiceDefinition
     /// <summary>Events of other services this one reacts to. Null when there are none.</summary>
     public IReadOnlyList<Subscription>? Subscriptions { get; init; }
 
+    /// <summary>
+    /// Local copies of entities of other services, kept up to date with their Created/Updated/Deleted events
+    /// ("stratum replica add"). Null when there are none.
+    /// </summary>
+    public IReadOnlyList<ReplicaDefinition>? Replicas { get; init; }
+
     /// <summary>Enumerations entities can use as property types.</summary>
     public IReadOnlyList<EnumDefinition>? Enums { get; init; }
 

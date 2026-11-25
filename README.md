@@ -244,6 +244,33 @@ con su nombre y propiedades básicas (los detalles, en los diálogos de *Entidad
 *Guardar y cerrar*, que aplica todo de una vez o nada. Las relaciones N–M llegarán en una segunda fase; mientras tanto,
 modélalas con una entidad intermedia (`OrderTag` con `OrderId` y `TagId`).
 
+### Validaciones (`stratum rule`)
+
+Cada propiedad puede llevar reglas: longitud mínima y máxima, formato (email, url, teléfono) o una expresión regular en
+los textos, y un rango en los números (`int`, `long`, `decimal`). Stratum las lleva a todas partes:
+
+| Dónde | Qué genera |
+| --- | --- |
+| API | Atributos en el contrato (`[MinLength]`, `[MaxLength]`, `[EmailAddress]`, `[RegularExpression]`, `[Range]`): un valor que no cumple responde 400 con el error en su campo. |
+| Dominio (clean-ddd) | Las mismas comprobaciones en el agregado (`DomainException`), también para los campos de los tipos de elemento. |
+| Base de datos | La longitud de la columna (`HasMaxLength`, 200 si no se indica). |
+| Tests, `.http` y especificación | Valores de ejemplo que cumplen las reglas, escenarios con valores no válidos (400) y la regla descrita en cada campo. |
+
+```bash
+stratum rule set Customer.Name --min-length 2 --max-length 80
+stratum rule set Customer.Email --format email
+stratum rule set Address.Zip --pattern "^[0-9]{5}$" --example 28001   # el patrón necesita un valor válido de ejemplo
+stratum rule set Product.Price --min 0.01 --max 99999.99
+stratum rule set Customer.Email --format none                         # quita una regla; el resto se queda
+stratum rule clear Customer.Name                                      # quita todas
+stratum rule list
+```
+
+Las reglas que no encajan se rechazan antes de escribir nada (una longitud en un número, un mínimo mayor que el máximo, una
+expresión regular que no compila, un ejemplo que no cumple). En el Studio están en el diálogo de cada propiedad
+(*Entidades → propiedad → Validación*), y los asistentes de IA tienen `set_rules`. Si cambia la longitud de una columna,
+crea una migración.
+
 ### Enumerados
 
 ```bash
@@ -532,6 +559,32 @@ stratum events map                                         # quién publica y qu
 - En el Studio: **Servicio → Eventos que escucha** (elegir de los eventos que publican los demás servicios, actualizar el
   contrato cuando cambia) y **Sistema → Mapa de eventos**.
 
+### Réplicas de entidades de otros servicios (`stratum replica`)
+
+Una réplica es una copia local de una entidad de otro servicio (solo los datos que elijas), al día con sus eventos
+`Created`, `Updated` y `Deleted`. Sirve para comprobar que algo existe o mostrar sus datos sin llamar al otro servicio:
+`Addresses` sabe si un cliente existe y cómo se llama aunque `Customers` no esté disponible.
+
+```bash
+stratum replica add ../customers Customer --fields "Name, Email" --path addresses   # sin --fields: todos los datos simples
+stratum replica fields ../customers Customer --fields "Name" --path addresses        # cambiar lo que se copia
+stratum replica list --path addresses
+stratum replica remove Customers.Customer --path addresses
+```
+
+- Stratum genera la clase `CustomerReplica` (tabla `replica_customers`, con `Id`, los datos elegidos y `LastEventAt`) y un
+  handler que inserta, actualiza o borra la fila con cada evento (una vez por evento, inbox). Un evento antiguo que llega
+  tarde se ignora. Todo es `.g.cs`: no se edita a mano.
+- Vertical slice: se lee con `db.CustomerReplicas`. Clean-ddd: los casos de uso usan `ICustomerReplicas`
+  (`FindAsync`, `ExistsAsync`), registrado en Infrastructure.
+- El publicador tiene que publicar los tres eventos (`stratum events on Customer`) y el servicio que guarda la copia
+  necesita base de datos; la mensajería se activa sola si hace falta. Crea una migración después.
+- Las suscripciones que usa la réplica no crean handlers tuyos. Si además quieres reaccionar a uno de esos eventos,
+  `stratum subscribe` crea tu handler y los dos se ejecutan; `unsubscribe` quita el tuyo y la réplica sigue al día.
+- Es consistencia eventual: lo creado hace un momento puede no estar todavía, y **solo se copia lo que llegue desde que
+  existe la réplica** (los datos anteriores no se cargan).
+- En el Studio: **Servicio → Mensajería → Réplicas de otros servicios**. Asistentes de IA: `add_replica` y `remove_replica`.
+
 #### Mapa de eventos (Studio)
 
 Un resumen compacto del sistema, de solo lectura: una ficha pequeña por servicio (broker, cuántos eventos publica y escucha,
@@ -660,7 +713,7 @@ stratum mcp config            # configuración lista para pegar en Claude Deskto
 
 - **Herramientas**: `list_services`, `get_service`, `event_map`, `get_asyncapi`, `create_service`, `add_entity`,
   `update_entity`, `remove_entity`, `import_openapi`, `set_enum`, `remove_enum`, `add_operation`, `remove_operation`, `set_features`, `set_messaging`, `set_event_publishing`, `subscribe`, `unsubscribe`,
-  `sync_subscriptions`, `review_migration`, `generate_apphost`, `remove_service`.
+  `sync_subscriptions`, `set_rules`, `add_replica`, `remove_replica`, `add_relation`, `update_relation`, `add_composition`, `remove_relation`, `review_migration`, `generate_apphost`, `remove_service`.
 - **Plan primero**: las que cambian algo devuelven el plan (lo mismo que `--dry-run`) y solo escriben con
   `"apply": true`, que el asistente envía cuando tú apruebas el plan. Cada herramienta ejecuta el comando de la CLI
   correspondiente: el resultado es el mismo que desde la CLI o el Studio, con la misma protección de tus archivos.
@@ -836,4 +889,6 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 21. ✅ Relaciones 1–N y 1–1 con qué pasa al borrar, filtros por referencia y composición (`stratum relation`, diseñador de entidades). Siguiente: relaciones N–M.
 22. ✅ Trazas de eventos en el Studio: del outbox al broker y a cada servicio que escucha, con lo que no ha llegado, errores y enlaces a Aspire y Kafka UI.
 23. ✅ Publicar en nuget.org (prefijo `StratumKit.*`, la herramienta como `StratumKit.Cli`).
+24. ✅ Validaciones por propiedad (`stratum rule`): longitud, formato, patrón y rango en la API, el dominio, la columna y los tests.
+25. ✅ Réplicas de entidades de otros servicios (`stratum replica`), al día con sus eventos.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

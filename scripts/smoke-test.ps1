@@ -369,6 +369,24 @@ public sealed partial class Product
         -and ((Get-DotnetOutput $StratumDll relation list --path $full) -join "`n") -like '*Profile.SupplierId*Supplier*1*1*'
     $null = Get-DotnetOutput $StratumDll relation add Shipment.OtherId Supplier --on-delete set-null --path $full   # expected to fail: set-null needs optional
     if ($relOk -and $LASTEXITCODE -ne 0) { Pass 'relations: 1-1 (unique), on delete cascade / set null, ?supplierId= filter, compositions (OwnsOne)' } else { Fail 'relations' }
+    # Validation rules (stratum rule): length, format, pattern and range, in the API (400), the domain, the column and the tests.
+    Invoke-Dotnet $StratumDll rule set Supplier.Name --min-length 2 --max-length 80 --path $full
+    Invoke-Dotnet $StratumDll rule set Product.Stock --min 0 --max 10000 --path $full
+    Invoke-Dotnet $StratumDll rule set PostalAddress.Zip --pattern '^[0-9]{5}$' --example 28001 --path $full
+    Invoke-Dotnet $StratumDll rule set Category.Title --max-length 60 --format email --path $clean
+    Invoke-Dotnet $StratumDll rule set Product.Price --min 0.01 --max 99999.99 --path $clean
+    $rulesOk = (Get-Content (Join-Path $rf 'Suppliers\SupplierContracts.g.cs') -Raw) -like '*`[property: Required, MinLength(2), MaxLength(80)`] string Name*' `
+        -and (Get-Content (Join-Path $rf 'Suppliers\SupplierConfiguration.g.cs') -Raw) -like '*HasMaxLength(80)*' `
+        -and (Get-Content (Join-Path $rf 'Products\ProductContracts.g.cs') -Raw) -like '*Range(typeof(int), "0", "10000"*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Features\Types.g.cs') -Raw) -like '*RegularExpression(@"^`[0-9`]{5}$")*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Categories\CategoryConfiguration.g.cs') -Raw) -like '*HasMaxLength(60)*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Categories\Category.g.cs') -Raw) -like '*EmailAddressAttribute().IsValid*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Domain\Products\Product.g.cs') -Raw) -like '*is < 0.01m or > 99999.99m*' `
+        -and ((Get-DotnetOutput $StratumDll rule list --path $full) -join "`n") -like '*Supplier.Name*2*80*'
+    $null = Get-DotnetOutput $StratumDll rule set Supplier.Name --pattern '^[A-Z]+$' --path $full   # expected to fail: a pattern needs an example
+    $patternFailed = $LASTEXITCODE -ne 0
+    $null = Get-DotnetOutput $StratumDll rule set Product.Stock --min-length 3 --path $full   # expected to fail: length on a number
+    if ($rulesOk -and $patternFailed -and $LASTEXITCODE -ne 0) { Pass 'validation rules: attributes (400), domain guards, column length, samples; bad rules rejected' } else { Fail 'validation rules' }
     # Operations on lists (clean-ddd): one item or a list of items as parameters, with a head start for the rule.
     Invoke-Dotnet $StratumDll entity operation add Bundle AddLine --params 'Line:BundleLine' --path $clean
     Invoke-Dotnet $StratumDll entity operation add Bundle ReplaceLines --params 'Lines:BundleLine[]' --path $clean
@@ -509,6 +527,23 @@ await app.RunAsync().ConfigureAwait(false);
         Pass '--prune drops subscriptions to events no longer published'
     } else { Fail 'subscribe --prune' }
     Invoke-Dotnet $StratumDll events on Product --path $fs
+    # Replicas: a local copy of another service's entity, kept up to date with its Created/Updated/Deleted events.
+    Invoke-Dotnet $StratumDll replica add $fs Product --fields 'Name' --path $clean
+    Invoke-Dotnet $StratumDll replica add $clean Product --path $fs
+    $store = Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Replicas\Shop\ProductReplicaStore.g.cs') -Raw
+    $replicaOk = $store -like '*IIntegrationEventHandler<ProductDeleted>*' -and $store -like '*builder.ToTable("replica_products")*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Application\Replicas\Shop\ProductReplica.g.cs') -Raw) -like '*public interface IProductReplicas*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\RepositoryRegistration.g.cs') -Raw) -like '*IProductReplicas, global::Catalog.Infrastructure.Persistence.Replicas.Shop.ProductReplicaStore*' `
+        -and (Get-Content (Join-Path $fs 'src\Shop.Api\Replicas\Catalog\ProductReplicaHandler.g.cs') -Raw) -like '*replica.LastEventAt > occurredAt*' `
+        -and (Get-Content (Join-Path $fs 'src\Shop.Api\Data\ShopDbContext.g.cs') -Raw) -like '*DbSet<global::Shop.Api.Replicas.Catalog.ProductReplica> ProductReplicas*' `
+        -and -not (Test-Path (Join-Path $fs 'src\Shop.Api\Events\Catalog\ProductUpdatedHandler.cs')) -and (Test-Path (Join-Path $fs 'src\Shop.Api\Events\Catalog\ProductCreatedHandler.cs')) `
+        -and ((Get-DotnetOutput $StratumDll replica list --path $fs) -join "`n") -like '*Catalog.Product*'
+    $null = Get-DotnetOutput $StratumDll replica add $fs Product --fields 'Nope' --path $full   # expected to fail
+    $badFieldFailed = $LASTEXITCODE -ne 0
+    Invoke-Dotnet $StratumDll unsubscribe Catalog Product.Created --path $fs
+    $keptForReplica = (Get-Content (Join-Path $fs 'stratum.json') -Raw) -like '*"handler": false*'
+    Invoke-Dotnet $StratumDll subscribe $clean Product.Created --path $fs
+    if ($replicaOk -and $badFieldFailed -and $keptForReplica) { Pass 'replicas: table, handler of Created/Updated/Deleted, reader in clean-ddd; your handlers stay apart' } else { Fail 'replicas' }
 
     Step 'Guided migrations (stratum migration review)'
     $mig = Join-Path $Work 'migration'

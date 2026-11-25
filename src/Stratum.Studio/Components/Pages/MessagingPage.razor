@@ -164,6 +164,97 @@ else
             </section>
         }
 
+        @{
+            var candidates = State.ReplicaCandidates(draft);
+            var replicaProblems = State.SubscriptionProblems(draft).Where(p => draft.ReplicaSubscriptions.Contains(p.Subscription)).ToList();
+            <section class="stack" aria-labelledby="h-replicas">
+                <h2 class="section" id="h-replicas">@L("Réplicas de otros servicios", "Replicas of other services")</h2>
+                <span class="hint">@L("Una copia local de una entidad de otro servicio (los datos que elijas), al día con sus eventos Created, Updated y Deleted. Sirve para comprobar que existe o mostrar sus datos sin llamar a ese servicio. Stratum genera la tabla y el handler; solo se copia lo que llegue desde que existe la réplica.", "A local copy of an entity of another service (the data you choose), kept up to date with its Created, Updated and Deleted events. Use it to check that one exists or show its data without calling that service. Stratum generates the table and the handler; only what arrives after the replica exists is copied.")</span>
+                @if (draft.Replicas.Count > 0)
+                {
+                    <div class="table">
+                        @foreach (var replica in draft.Replicas.ToList())
+                        {
+                            var created = draft.ReplicaSubscriptions.FirstOrDefault(s => s.Service == replica.Service && s.Entity == replica.Entity && s.Event == Subscription.Created);
+                            var copiable = created is null ? [] : Replicas.Copiable(created);
+                            var problem = replicaProblems.FirstOrDefault(p => p.Subscription.Service == replica.Service && p.Subscription.Entity == replica.Entity);
+                            <div class="tr" style="grid-template-columns: 1.4fr 2.6fr auto; align-items: center">
+                                <span>
+                                    <b>@replica.Name</b><br />
+                                    <small class="hint">@replica.Entity @L("de", "of") @replica.Service · <span class="mono">replica_…</span></small>
+                                    @if (problem.Problem is { } text)
+                                    {
+                                        <br /><small style="color: var(--warn)">⚠ @text</small>
+                                    }
+                                </span>
+                                <span class="row" style="gap: 10px; flex-wrap: wrap">
+                                    <span class="hint mono">Id</span>
+                                    @foreach (var field in copiable)
+                                    {
+                                        <label class="row" style="gap: 4px">
+                                            <input type="checkbox" checked="@replica.Properties.Any(p => p.Name == field.Name)"
+                                                   @onchange="e => ToggleReplicaField(replica, field, copiable, e.Value is true)" />
+                                            @field.Name
+                                        </label>
+                                    }
+                                </span>
+                                <span class="row" style="gap: 6px">
+                                    @if (problem.Current is not null)
+                                    {
+                                        <button type="button" class="btn" @onclick="() => State.RefreshReplica(draft, replica)">@L("Actualizar contrato", "Update contract")</button>
+                                    }
+                                    <button type="button" class="btn" style="color: var(--err)" @onclick="() => RemoveReplica(replica)">@L("Quitar", "Remove")</button>
+                                </span>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (candidates.Count > 0)
+                {
+                    var chosen = candidates.FirstOrDefault(c => $"{c.Publisher.Service.Name}.{c.Entity}" == selectedReplica);
+                    <div class="row" style="gap: 8px; align-items: flex-end; flex-wrap: wrap">
+                        <label class="field" style="flex: 0 1 300px">
+                            @L("Copiar una entidad de otro servicio", "Copy an entity of another service")
+                            <select value="@selectedReplica" @onchange="e => SelectReplica(e.Value as string, candidates)">
+                                <option value="">@L("Elige una entidad…", "Choose an entity…")</option>
+                                @foreach (var group in candidates.GroupBy(c => c.Publisher.Service.Name))
+                                {
+                                    <optgroup label="@group.Key">
+                                        @foreach (var c in group)
+                                        {
+                                            <option value="@($"{group.Key}.{c.Entity}")">@c.Entity</option>
+                                        }
+                                    </optgroup>
+                                }
+                            </select>
+                        </label>
+                        @if (chosen.Publisher is not null)
+                        {
+                            <span class="row" style="gap: 10px; flex-wrap: wrap; padding-bottom: 6px">
+                                <span class="hint mono">Id</span>
+                                @foreach (var field in chosen.Fields)
+                                {
+                                    <label class="row" style="gap: 4px">
+                                        <input type="checkbox" checked="@replicaFields.Contains(field.Name)" @onchange="e => ToggleNewField(field.Name, e.Value is true)" />
+                                        @field.Name
+                                    </label>
+                                }
+                            </span>
+                        }
+                        <button type="button" class="btn btn-primary" disabled="@(chosen.Publisher is null)" @onclick="() => AddReplica(chosen.Publisher!, chosen.Entity, chosen.Fields)">@L("+ Crear réplica", "+ Create replica")</button>
+                    </div>
+                }
+                else if (draft.Replicas.Count == 0)
+                {
+                    <span class="hint">@L("Ninguna entidad de otro servicio publica sus tres eventos (Created, Updated y Deleted): actívalos en sus Entidades.", "No entity of another service publishes its three events (Created, Updated and Deleted): turn them on in its Entities.")</span>
+                }
+                @if (draft.Replicas.Count > 0 && draft.ProviderLocked && !draft.IsNew)
+                {
+                    <span class="hint">@L("Después de aplicar, crea una migración: añade (o cambia) la tabla de la réplica.", "After applying, create a migration: it adds (or changes) the replica's table.")</span>
+                }
+            </section>
+        }
+
         <ProblemList />
     </main>
 }
@@ -179,6 +270,63 @@ else
 
     public void Dispose() => State.Changed -= OnChanged;
     private string selectedTopic = string.Empty;
+
+    private string selectedReplica = string.Empty;
+    private readonly HashSet<string> replicaFields = new(StringComparer.Ordinal);
+
+    private void SelectReplica(string? value, IReadOnlyList<(ServiceDefinition Publisher, string Entity, IReadOnlyList<PropertyDefinition> Fields)> candidates)
+    {
+        selectedReplica = value ?? string.Empty;
+        replicaFields.Clear();
+        var chosen = candidates.FirstOrDefault(c => $"{c.Publisher.Service.Name}.{c.Entity}" == selectedReplica);
+        foreach (var field in chosen.Fields ?? [])
+        {
+            replicaFields.Add(field.Name);
+        }
+    }
+
+    private void ToggleNewField(string name, bool on)
+    {
+        if (on)
+        {
+            replicaFields.Add(name);
+        }
+        else
+        {
+            replicaFields.Remove(name);
+        }
+    }
+
+    private void AddReplica(ServiceDefinition publisher, string entity, IReadOnlyList<PropertyDefinition> fields)
+    {
+        State.AddReplica(State.Current!, publisher, entity, [.. fields.Where(f => replicaFields.Contains(f.Name))]);
+        selectedReplica = string.Empty;
+        replicaFields.Clear();
+    }
+
+    private void ToggleReplicaField(ReplicaDefinition replica, PropertyDefinition field, IReadOnlyList<PropertyDefinition> copiable, bool on)
+    {
+        var list = State.Current!.Replicas;
+        var names = replica.Properties.Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
+        if (on)
+        {
+            names.Add(field.Name);
+        }
+        else
+        {
+            names.Remove(field.Name);
+        }
+
+        list[list.IndexOf(replica)] = replica with { Properties = [.. copiable.Where(p => names.Contains(p.Name))] };
+        State.Recompute();
+    }
+
+    private void RemoveReplica(ReplicaDefinition replica)
+    {
+        State.Current!.Replicas.Remove(replica);
+        State.Current.ReplicaSubscriptions.RemoveAll(s => s.Service == replica.Service && s.Entity == replica.Entity);
+        State.Recompute();
+    }
 
     private void AddSubscription(IReadOnlyList<Subscription> available)
     {

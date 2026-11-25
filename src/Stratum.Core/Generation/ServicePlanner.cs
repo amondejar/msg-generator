@@ -71,10 +71,11 @@ public static class ServicePlanner
         // Re-parse through the same rules as --props (names, types, reserved, duplicates).
         // The options of a relation (1–1, on delete) aren't part of --props: they come from the entity as given.
         var spec = PropertyTypes.Spec(entity.Properties);
+        // So are the validation rules (length, format, range…).
         var properties = PropertyTypes.Parse(spec, definition.EnumNames, definition.TypeNames).Select(p =>
-            p.References is not null && entity.Properties.FirstOrDefault(x => x.Name == p.Name) is { } given
+            (p.References is not null && entity.Properties.FirstOrDefault(x => x.Name == p.Name) is { } given
                 ? p with { Unique = given.Unique == true ? true : null, OnDelete = DeleteBehaviors.Normalize(given.OnDelete) is DeleteBehaviors.Restrict or null ? null : DeleteBehaviors.Normalize(given.OnDelete) }
-                : p).ToList();
+                : p) with { Rules = entity.Properties.FirstOrDefault(x => x.Name == p.Name)?.Rules?.OrNull() }).ToList();
         return new EntityDefinition { Name = name, Plural = plural, Properties = properties, Layout = EntityDefinition.CurrentLayout };
     }
 
@@ -175,15 +176,20 @@ public static class ServicePlanner
 
         // --props doesn't carry the options of a relation (1–1, on delete): the ones given win (Studio, designer:
         // false / "restrict" to turn them off); otherwise a reference that stays keeps its own.
+        // The validation rules too, as long as the type stays (a rule of a text means nothing for a number).
         parsed = [.. parsed.Select(p =>
         {
+            var before = renames?.FirstOrDefault(r => r.To.Equals(p.Name, StringComparison.OrdinalIgnoreCase))?.From ?? p.Name;
+            var givenAny = properties.FirstOrDefault(x => x.Name.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
+            var oldAny = entity.Properties.FirstOrDefault(o => o.Name.Equals(before, StringComparison.OrdinalIgnoreCase));
+            var rules = keepRelationOptions ? givenAny?.Rules ?? (oldAny?.Type == p.Type && oldAny?.IsList == p.IsList ? oldAny.Rules : null) : givenAny?.Rules;
+            p = p with { Rules = rules?.OrNull() };
             if (p.References is null)
             {
                 return p;
             }
 
             var given = properties.FirstOrDefault(x => x.Name.Equals(p.Name, StringComparison.OrdinalIgnoreCase) && x.References == p.References);
-            var before = renames?.FirstOrDefault(r => r.To.Equals(p.Name, StringComparison.OrdinalIgnoreCase))?.From ?? p.Name;
             var old = entity.Properties.FirstOrDefault(o => o.Name.Equals(before, StringComparison.OrdinalIgnoreCase) && o.References == p.References);
             var unique = keepRelationOptions ? given?.Unique ?? old?.Unique : given?.Unique;
             var onDelete = DeleteBehaviors.Normalize(keepRelationOptions ? given?.OnDelete ?? old?.OnDelete : given?.OnDelete);
@@ -233,17 +239,65 @@ public static class ServicePlanner
     }
 
     /// <summary>Adds an item type, or replaces the properties of an existing one ("stratum type add|update").</summary>
-    public static ServiceDefinition SetType(ServiceDefinition current, string name, IReadOnlyList<PropertyDefinition> properties)
+    /// <param name="keepRules">Fields without rules keep the ones they had (--props carries none).</param>
+    public static ServiceDefinition SetType(ServiceDefinition current, string name, IReadOnlyList<PropertyDefinition> properties, bool keepRules = true)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(properties);
         var normalized = ServiceName.Normalize(name);
         var existing = (current.Types ?? []).FirstOrDefault(t => t.Name.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        if (keepRules && existing is not null)
+        {
+            properties = [.. properties.Select(p => p.Rules is null && existing.Properties.FirstOrDefault(o => o.Name == p.Name && o.Type == p.Type) is { Rules: { } rules }
+                ? p with { Rules = rules } : p)];
+        }
+
         var type = new ItemTypeDefinition { Name = existing?.Name ?? normalized, Properties = properties };
         var updated = current with
         {
             Types = existing is null ? [.. current.Types ?? [], type] : [.. current.Types!.Select(t => t == existing ? type : t)],
         };
+        ModelRules.Validate(updated);
+        return updated;
+    }
+
+    /// <summary>
+    /// Sets (or, with null, removes) the validation rules of a property of an entity or a field of an item type
+    /// ("stratum rule set Customer.Email --format email").
+    /// </summary>
+    public static ServiceDefinition SetRules(ServiceDefinition current, string owner, string property, PropertyRules? rules)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        rules = rules?.OrNull();
+        PropertyDefinition Apply(PropertyDefinition p) => p with { Rules = rules };
+
+        ServiceDefinition updated;
+        if (current.Entities.FirstOrDefault(e => e.Name.Equals(owner, StringComparison.OrdinalIgnoreCase)) is { } entity)
+        {
+            RequireEditable(entity);
+            var target = entity.Properties.FirstOrDefault(p => p.Name.Equals(property, StringComparison.OrdinalIgnoreCase))
+                ?? throw new StratumException($"{entity.Name} no tiene la propiedad '{property}'. Propiedades: {string.Join(", ", entity.Properties.Select(p => p.Name))}.");
+            updated = current with
+            {
+                Entities = [.. current.Entities.Select(e => e != entity ? e
+                    : e with { Properties = [.. e.Properties.Select(p => p == target ? Apply(p) : p)] })],
+            };
+        }
+        else if ((current.Types ?? []).FirstOrDefault(t => t.Name.Equals(owner, StringComparison.OrdinalIgnoreCase)) is { } type)
+        {
+            var target = type.Properties.FirstOrDefault(p => p.Name.Equals(property, StringComparison.OrdinalIgnoreCase))
+                ?? throw new StratumException($"{type.Name} no tiene el campo '{property}'. Campos: {string.Join(", ", type.Properties.Select(p => p.Name))}.");
+            updated = current with
+            {
+                Types = [.. current.Types!.Select(t => t != type ? t
+                    : t with { Properties = [.. t.Properties.Select(p => p == target ? Apply(p) : p)] })],
+            };
+        }
+        else
+        {
+            throw new StratumException($"No existe la entidad ni el tipo de elemento '{owner}'.");
+        }
+
         ModelRules.Validate(updated);
         return updated;
     }
@@ -541,9 +595,12 @@ public static class ServicePlanner
         }
 
         var existing = current.Subscriptions ?? [];
-        if (existing.Any(subscription.Matches))
+        if (existing.FirstOrDefault(subscription.Matches) is { } already)
         {
-            return current;
+            // A replica listened already, without a handler of yours: now you get one too.
+            return already.HasHandler || !subscription.HasHandler
+                ? current
+                : current with { Subscriptions = [.. existing.Select(s => s == already ? s with { Handler = null } : s)] };
         }
 
         return current with { Subscriptions = [.. existing, subscription] };
@@ -553,16 +610,21 @@ public static class ServicePlanner
     {
         ArgumentNullException.ThrowIfNull(current);
         var existing = current.Subscriptions ?? [];
-        var remaining = existing
-            .Where(s => !(s.Service.Equals(service, StringComparison.OrdinalIgnoreCase)
-                          && s.Entity.Equals(entity, StringComparison.OrdinalIgnoreCase)
-                          && s.Event.Equals(eventName, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-        if (remaining.Count == existing.Count)
+        bool Same(Subscription s) => s.Service.Equals(service, StringComparison.OrdinalIgnoreCase)
+                                     && s.Entity.Equals(entity, StringComparison.OrdinalIgnoreCase)
+                                     && s.Event.Equals(eventName, StringComparison.OrdinalIgnoreCase);
+        if (!existing.Any(Same))
         {
             throw new StratumException($"{current.Service.Name} no escucha {service} {entity}{eventName}.");
         }
 
+        // A replica still needs the event: only your handler goes.
+        if ((current.Replicas ?? []).Any(r => r.Service.Equals(service, StringComparison.OrdinalIgnoreCase) && r.Entity.Equals(entity, StringComparison.OrdinalIgnoreCase)))
+        {
+            return current with { Subscriptions = [.. existing.Select(s => Same(s) ? s with { Handler = false } : s)] };
+        }
+
+        var remaining = existing.Where(s => !Same(s)).ToList();
         return current with { Subscriptions = remaining.Count == 0 ? null : remaining };
     }
 
@@ -613,9 +675,9 @@ public static class ServicePlanner
 
         var remaining = (consumer.Subscriptions ?? [])
             .Where(s => !gone.Contains(s))
-            .Select(s => updates.FirstOrDefault(u => u.Subscription == s).Current ?? s)
+            .Select(s => updates.FirstOrDefault(u => u.Subscription == s).Current is { } latest ? latest with { Handler = s.Handler } : s)
             .ToList();
-        return consumer with { Subscriptions = remaining.Count == 0 ? null : remaining };
+        return Replicas.Refresh(consumer with { Subscriptions = remaining.Count == 0 ? null : remaining });
     }
 
     private static bool SameProperties(IReadOnlyList<PropertyDefinition>? a, IReadOnlyList<PropertyDefinition>? b) =>

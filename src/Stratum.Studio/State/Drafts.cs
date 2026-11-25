@@ -21,6 +21,25 @@ public sealed class PropertyDraft
     /// <summary>Only for a reference: what deleting the target does (<see cref="DeleteBehaviors"/>).</summary>
     public string OnDelete { get; set; } = DeleteBehaviors.Restrict;
 
+    /// <summary>Validation (length, format, pattern, range); only the rules that fit the type are kept.</summary>
+    public PropertyRules? Rules { get; set; }
+
+    /// <summary>The rules that apply to a property of this type (text rules for texts, the range for numbers).</summary>
+    public static PropertyRules? Fitting(PropertyRules? rules, string type, bool list)
+    {
+        if (rules is null || list)
+        {
+            return null;
+        }
+
+        return type switch
+        {
+            "string" => (rules with { Min = null, Max = null }).OrNull(),
+            "int" or "long" or "decimal" => (rules with { MinLength = null, MaxLength = null, Format = null, Pattern = null, Example = null }).OrNull(),
+            _ => null,
+        };
+    }
+
     /// <summary>Name in stratum.json. Null for a property added in this session. If it differs from <see cref="Name"/>, it's a rename.</summary>
     public string? OriginalName { get; init; }
 
@@ -59,7 +78,7 @@ public sealed class PropertyDraft
                 ? new PropertyDefinition { Name = name, Type = PropertyTypes.ObjectType, List = list, Nullable = nullable, Of = item }
                 : Enum is { } enumName
                     ? new PropertyDefinition { Name = name, Type = PropertyTypes.EnumType, Nullable = nullable, Enum = enumName, List = list }
-                    : new PropertyDefinition { Name = name, Type = Type, Nullable = nullable, List = list };
+                    : new PropertyDefinition { Name = name, Type = Type, Nullable = nullable, List = list, Rules = Fitting(Rules, Type, IsList) };
     }
 
     public static PropertyDraft From(PropertyDefinition p) => new()
@@ -72,6 +91,7 @@ public sealed class PropertyDraft
         List = p.IsList,
         OneToOne = p.IsOneToOne,
         OnDelete = p.DeleteBehavior,
+        Rules = p.Rules,
         OriginalName = p.Name,
     };
 }
@@ -101,7 +121,10 @@ public sealed class TypeDraft
     /// <summary>Name in stratum.json (null when new): renaming a type in use is not supported.</summary>
     public string? OriginalName { get; init; }
 
-    public static TypeDraft From(ItemTypeDefinition t) => new() { Name = t.Name, Properties = PropertyTypes.Spec(t.Properties), OriginalName = t.Name };
+    /// <summary>Fields as stratum.json had them: their validation rules (set with "stratum rule") aren't in <see cref="Properties"/>.</summary>
+    public IReadOnlyList<PropertyDefinition> OriginalFields { get; init; } = [];
+
+    public static TypeDraft From(ItemTypeDefinition t) => new() { Name = t.Name, Properties = PropertyTypes.Spec(t.Properties), OriginalName = t.Name, OriginalFields = t.Properties };
 }
 
 /// <summary>A business operation of an aggregate being edited (clean-ddd).</summary>
@@ -220,7 +243,8 @@ public sealed class ServiceDraft
         [.. Types.Where(t => !string.IsNullOrWhiteSpace(t.Name)).Select(t => new ItemTypeDefinition
         {
             Name = ServiceName.Normalize(t.Name),
-            Properties = string.IsNullOrWhiteSpace(t.Properties) ? [] : PropertyTypes.Parse(t.Properties, enums),
+            Properties = string.IsNullOrWhiteSpace(t.Properties) ? [] : [.. PropertyTypes.Parse(t.Properties, enums).Select(p =>
+                t.OriginalFields.FirstOrDefault(o => o.Name == p.Name && o.Type == p.Type && o.IsList == p.IsList) is { Rules: { } rules } ? p with { Rules = rules } : p)],
         })];
 
     /// <summary>When removing entities, also delete the user's files (handlers, repositories...).</summary>
@@ -244,8 +268,32 @@ public sealed class ServiceDraft
     /// </summary>
     public string? BrokerNote { get; set; }
 
-    /// <summary>Events of other services this one listens to.</summary>
+    /// <summary>Events of other services this one listens to (with a handler of yours).</summary>
     public List<Subscription> Subscriptions { get; } = [];
+
+    /// <summary>Local copies of entities of other services (see <see cref="Stratum.Core.Generation.Replicas"/>).</summary>
+    public List<ReplicaDefinition> Replicas { get; } = [];
+
+    /// <summary>The Created/Updated/Deleted subscriptions the replicas need (Handler = false).</summary>
+    public List<Subscription> ReplicaSubscriptions { get; } = [];
+
+    /// <summary>
+    /// The subscriptions of the service: yours, plus the ones only the replicas use (in the order of
+    /// <paramref name="original"/> when nothing changed, so nothing is rewritten).
+    /// </summary>
+    public List<Subscription> AllSubscriptions(IReadOnlyList<Subscription>? original)
+    {
+        var all = Subscriptions.ToList();
+        foreach (var s in ReplicaSubscriptions.Where(s => Replicas.Any(r => r.Service == s.Service && r.Entity == s.Entity)))
+        {
+            if (!all.Any(x => x.Topic == s.Topic))
+            {
+                all.Add(s);
+            }
+        }
+
+        return original is not null && original.Count == all.Count && original.All(all.Contains) ? [.. original] : all;
+    }
 
     public static ServiceDraft ForExisting(string directory, ServiceDefinition definition)
     {
@@ -264,7 +312,11 @@ public sealed class ServiceDraft
         draft.Entities.AddRange(definition.Entities.Select(e => EntityDraft.From(e)));
         draft.Enums.AddRange((definition.Enums ?? []).Select(EnumDraft.From));
         draft.Types.AddRange((definition.Types ?? []).Select(TypeDraft.From));
-        draft.Subscriptions.AddRange(definition.Subscriptions ?? []);
+        draft.Subscriptions.AddRange((definition.Subscriptions ?? []).Where(s => s.HasHandler));
+        draft.Replicas.AddRange(definition.Replicas ?? []);
+        draft.ReplicaSubscriptions.AddRange((definition.Subscriptions ?? [])
+            .Where(s => draft.Replicas.Any(r => r.Service == s.Service && r.Entity == s.Entity) && Subscription.Events.Contains(s.Event))
+            .Select(s => s.HasHandler ? s with { Handler = false } : s));
         return draft;
     }
 }

@@ -34,6 +34,8 @@ stratum entity list                                   # entities, properties and
 stratum entity update Order --props "Number:string, Items:OrderItem[]"   # full list: missing ones are removed
 stratum enum add OrderStatus --values "Draft, Paid"
 stratum type add OrderItem --props "ProductId:guid, Quantity:int"
+stratum rule set Order.Number --max-length 20 --pattern "^[A-Z0-9-]+$" --example ORD-1   # validation (400, domain, column)
+stratum replica add ../customers Customer --fields "Name"   # local copy of another service's entity, kept up to date by its events
 <!-- @stratum:if cleanDdd -->
 stratum entity operation add Order Cancel --params "Reason:string"
 <!-- @stratum:end -->

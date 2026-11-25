@@ -490,6 +490,55 @@ public sealed class StudioState(StudioOptions options) : IDisposable
             .OrderBy(s => s.Topic, StringComparer.Ordinal)];
     }
 
+    /// <summary>Entities of the other services a replica can copy: they publish Created, Updated and Deleted.</summary>
+    public IReadOnlyList<(ServiceDefinition Publisher, string Entity, IReadOnlyList<PropertyDefinition> Fields)> ReplicaCandidates(ServiceDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var own = draft.IsNew ? null : FullPath(draft.Directory);
+        return [.. Services
+            .Where(s => FullPath(s.Directory) != own && s.Definition.Messaging is not null)
+            .SelectMany(s => s.Definition.Entities
+                .Where(e => Subscription.Events.All(e.PublishesEvent) && !draft.Replicas.Any(r => r.Entity == e.Name))
+                .Select(e => (s.Definition, e.Name, Replicas.Copiable(ServicePlanner.SubscriptionTo(s.Definition, e.Name, Subscription.Created)))))
+            .OrderBy(x => x.Definition.Service.Name, StringComparer.Ordinal).ThenBy(x => x.Name, StringComparer.Ordinal)];
+    }
+
+    /// <summary>Adds a replica to the draft (the change is applied with the rest).</summary>
+    public void AddReplica(ServiceDraft draft, ServiceDefinition publisher, string entity, IReadOnlyList<PropertyDefinition> fields)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(publisher);
+        draft.Replicas.Add(new ReplicaDefinition { Service = publisher.Service.Name, Entity = entity, Properties = [.. fields] });
+        foreach (var name in Subscription.Events)
+        {
+            var subscription = ServicePlanner.SubscriptionTo(publisher, entity, name) with { Handler = false };
+            draft.ReplicaSubscriptions.RemoveAll(s => s.Topic == subscription.Topic);
+            draft.ReplicaSubscriptions.Add(subscription);
+        }
+
+        EnsureBroker(draft, L("la réplica de ", "the replica of ") + entity);
+        Recompute();
+    }
+
+    /// <summary>Copies again the contract of the replica's events from the publisher (its fields that still exist stay).</summary>
+    public void RefreshReplica(ServiceDraft draft, ReplicaDefinition replica)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(replica);
+        foreach (var (subscription, latest, _) in SubscriptionProblems(draft).Where(p => p.Current is not null && draft.ReplicaSubscriptions.Contains(p.Subscription)))
+        {
+            draft.ReplicaSubscriptions[draft.ReplicaSubscriptions.IndexOf(subscription)] = latest! with { Handler = false };
+        }
+
+        var created = draft.ReplicaSubscriptions.First(s => s.Service == replica.Service && s.Entity == replica.Entity && s.Event == Subscription.Created);
+        var copiable = Replicas.Copiable(created);
+        draft.Replicas[draft.Replicas.IndexOf(replica)] = replica with
+        {
+            Properties = [.. replica.Properties.Select(p => copiable.FirstOrDefault(c => c.Name == p.Name)).OfType<PropertyDefinition>()],
+        };
+        Recompute();
+    }
+
     /// <summary>Subscriptions of the draft whose contract changed in the publisher (or that it no longer publishes).</summary>
     public IReadOnlyList<(Subscription Subscription, Subscription? Current, string Problem)> SubscriptionProblems(ServiceDraft draft)
     {
@@ -498,7 +547,7 @@ public sealed class StudioState(StudioOptions options) : IDisposable
         {
             Service = new ServiceInfo { Name = draft.Name },
             Architecture = draft.Architecture,
-            Subscriptions = [.. draft.Subscriptions],
+            Subscriptions = [.. draft.Subscriptions, .. draft.ReplicaSubscriptions],
         };
         return ServicePlanner.CheckSubscriptions(probe, Services.Select(s => s.Definition));
     }
@@ -649,7 +698,8 @@ public sealed class StudioState(StudioOptions options) : IDisposable
             errors.Add(L("Hay operaciones marcadas como Publica y el servicio no tiene mensajería: elige un broker en Mensajería o desmárcalas.", "Some operations are marked Publish and the service has no messaging: choose a broker in Messaging or untick them."));
         }
 
-        var subscriptions = draft.Subscriptions.Count == 0 ? null : draft.Subscriptions.ToList();
+        var all = draft.AllSubscriptions(definition.Subscriptions);
+        var subscriptions = all.Count == 0 ? null : all;
         if (!(subscriptions ?? []).SequenceEqual(definition.Subscriptions ?? []))
         {
             if (subscriptions is not null && definition.Messaging is null)
@@ -659,6 +709,18 @@ public sealed class StudioState(StudioOptions options) : IDisposable
             else
             {
                 definition = definition with { Subscriptions = subscriptions };
+            }
+        }
+
+        if (!draft.Replicas.SequenceEqual(definition.Replicas ?? []))
+        {
+            if (draft.Replicas.Count > 0 && definition.Persistence is null && !draft.Entities.Any(e => !e.Removed))
+            {
+                errors.Add(L("Para guardar una réplica el servicio necesita base de datos: añade antes una entidad.", "To store a replica the service needs a database: add an entity first."));
+            }
+            else
+            {
+                definition = definition with { Replicas = draft.Replicas.Count == 0 ? null : [.. draft.Replicas] };
             }
         }
 

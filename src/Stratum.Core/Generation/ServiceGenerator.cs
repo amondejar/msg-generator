@@ -31,6 +31,9 @@ public static class ServiceGenerator
     public const string EntityTemplateName = "entity";
     public const string CleanEntityTemplateName = "entity-clean";
     public const string EntityTestsTemplateName = "entity-tests";
+    /// <summary>Templates of a replica of another service's entity (both architectures).</summary>
+    public const string ReplicaTemplateName = "replica";
+
     public const string SubscriptionTemplateName = "subscription";
     public const string OperationTemplateName = "operation";
     public const string DefinitionFileName = "stratum.json";
@@ -114,7 +117,19 @@ public static class ServiceGenerator
                     ["EventParameters"] = string.Join(", ", ["Guid Id", .. subscription.Properties.Select(p => $"{PropertyTypes.ToCSharp(p, subscription.EventClass)} {p.Name}")]),
                     ["EventBody"] = EntityCodeGen.ContractBody(subscription.Properties),
                 };
-                RenderTemplateSet(SubscriptionTemplateName, subscriptionTokens, isEnabled, result, team);
+                var handler = subscription.HasHandler;
+                RenderTemplateSet(SubscriptionTemplateName, subscriptionTokens, c => c == "subscriptionHandler" ? handler : isEnabled(c), result, team);
+            }
+
+            foreach (var replica in definition.Persistence is null ? [] : definition.Replicas ?? [])
+            {
+                var replicaTokens = new Dictionary<string, string>(tokens, StringComparer.Ordinal);
+                foreach (var (key, value) in ReplicaCodeGen.Tokens(definition, replica))
+                {
+                    replicaTokens[key] = value;
+                }
+
+                RenderTemplateSet(ReplicaTemplateName, replicaTokens, isEnabled, result, team);
             }
         }
 

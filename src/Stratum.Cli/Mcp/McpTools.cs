@@ -131,6 +131,23 @@ internal sealed class McpTools(string root, string? packageSource)
             "Quita de una entidad una referencia o un elemento compuesto (sus columnas o su tabla se borran en la migración). " + PlanNote,
             new JsonObject { ["service"] = Service(), ["entity"] = Text("Entidad."), ["property"] = Text("Propiedad."), ["apply"] = Apply() },
             ["service", "entity", "property"], ReadOnly: false, Destructive: true),
+        new("set_rules", "Reglas de validación de una propiedad",
+            "Valida una propiedad de una entidad (o un campo de un tipo de elemento). Textos: minLength, maxLength (también la longitud de la columna; por defecto 200), format (email, url, phone), pattern (expresión regular; requiere example, un valor válido que usan los tests y el .http). Números (int, long, decimal): min y max. La API responde 400 con el error por campo; en clean-ddd el dominio también lo comprueba. Lo que no se indique se queda como está; clear quita todas. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["owner"] = Text("Entidad o tipo de elemento, p. ej. Customer."),
+                ["property"] = Text("Propiedad, p. ej. Email."),
+                ["minLength"] = new JsonObject { ["type"] = "integer", ["description"] = "Textos: longitud mínima." },
+                ["maxLength"] = new JsonObject { ["type"] = "integer", ["description"] = "Textos: longitud máxima (y de la columna)." },
+                ["format"] = Enum("Textos: formato.", "email", "url", "phone", "none"),
+                ["pattern"] = Text("Textos: expresión regular que debe cumplir el valor completo, p. ej. ^\\d{5}$."),
+                ["example"] = Text("Textos: un valor válido (obligatorio con pattern)."),
+                ["min"] = new JsonObject { ["type"] = "number", ["description"] = "Números: valor mínimo." },
+                ["max"] = new JsonObject { ["type"] = "number", ["description"] = "Números: valor máximo." },
+                ["clear"] = Bool("Quita todas las reglas de la propiedad."),
+                ["apply"] = Apply(),
+            }, ["service", "owner", "property"], ReadOnly: false),
         new("set_enum", "Crear o cambiar un enumerado",
             "Crea un enumerado del servicio (p. ej. OrderStatus: Draft, Confirmed, Shipped) o sustituye sus valores. Se usa como tipo de propiedad (\"Status:OrderStatus\"); se guarda como texto. Quitar un valor que ya esté en la base de datos rompe esas filas: el plan lo avisa. " + PlanNote,
             new JsonObject
@@ -223,6 +240,25 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["event"] = Text("\"Order\" (Created, Updated y Deleted) o \"Order.Created\"."),
                 ["apply"] = Apply(),
             }, ["service", "publisher", "event"], ReadOnly: false),
+        new("add_replica", "Réplica de una entidad de otro servicio",
+            "Crea en el servicio una copia local (tabla replica_<entidades>) de una entidad de otro servicio, al día con sus eventos Created, Updated y Deleted: un handler generado inserta, actualiza o borra la fila (un evento antiguo que llega tarde se ignora). Sirve para comprobar que existe o mostrar sus datos sin llamar al otro servicio. El publicador tiene que publicar los tres eventos; el servicio necesita base de datos (y se le activa la mensajería). Solo se copia lo que llegue desde ahora; necesita una migración. Si ya hay una réplica de esa entidad, fields cambia los datos que copia. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service("Servicio que guarda la copia."),
+                ["publisher"] = Service("Servicio dueño de la entidad."),
+                ["entity"] = Text("Entidad del publicador, p. ej. Customer."),
+                ["fields"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string" }, ["description"] = "Datos que se copian (además del Id), p. ej. [\"Name\", \"Email\"]. Por defecto, todos los datos simples del evento." },
+                ["apply"] = Apply(),
+            }, ["service", "publisher", "entity"], ReadOnly: false),
+        new("remove_replica", "Quitar una réplica",
+            "Quita la réplica (clase, tabla en el modelo y handler) y las suscripciones que solo ella usaba; tus handlers de esos eventos se quedan. Necesita una migración que borre la tabla. " + PlanNote,
+            new JsonObject
+            {
+                ["service"] = Service(),
+                ["publisher"] = Text("Nombre del servicio publicador, p. ej. Customers."),
+                ["entity"] = Text("Entidad, p. ej. Customer."),
+                ["apply"] = Apply(),
+            }, ["service", "publisher", "entity"], ReadOnly: false, Destructive: true),
         new("unsubscribe", "Dejar de escuchar eventos",
             "Quita una suscripción (el handler del usuario se conserva). " + PlanNote,
             new JsonObject
@@ -309,6 +345,11 @@ internal sealed class McpTools(string root, string? packageSource)
             "add_composition" => Cli(apply, ["relation", "compose", $"{Str(args, "entity")}.{Str(args, "property")}", Str(args, "type"),
                 "--path", Folder(args, "service"), .. Flag(args, "list", "--list"), .. Flag(args, "optional", "--optional")]),
             "remove_relation" => Cli(apply, ["relation", "remove", $"{Str(args, "entity")}.{Str(args, "property")}", "--path", Folder(args, "service")]),
+            "set_rules" => args["clear"]?.GetValue<bool>() == true
+                ? Cli(apply, ["rule", "clear", $"{Str(args, "owner")}.{Str(args, "property")}", "--path", Folder(args, "service")])
+                : Cli(apply, ["rule", "set", $"{Str(args, "owner")}.{Str(args, "property")}", "--path", Folder(args, "service"),
+                    .. Number(args, "minLength", "--min-length"), .. Number(args, "maxLength", "--max-length"), .. Optional(args, "format", "--format"),
+                    .. Optional(args, "pattern", "--pattern"), .. Optional(args, "example", "--example"), .. Number(args, "min", "--min"), .. Number(args, "max", "--max")]),
             "set_enum" => SetEnum(args, apply),
             "remove_enum" => Cli(apply, ["enum", "remove", Str(args, "name"), "--path", Folder(args, "service")]),
             "set_type" => SetType(args, apply),
@@ -326,12 +367,25 @@ internal sealed class McpTools(string root, string? packageSource)
                 .. (args["entities"] as JsonArray ?? []).Select(e => e!.GetValue<string>()), "--path", Folder(args, "service")]),
             "subscribe" => Cli(apply, ["subscribe", Folder(args, "publisher"), Str(args, "event"), "--path", Folder(args, "service")]),
             "unsubscribe" => Cli(apply, ["unsubscribe", Str(args, "publisher"), Str(args, "event"), "--path", Folder(args, "service")]),
+            "add_replica" => AddReplica(args, apply),
+            "remove_replica" => Cli(apply, ["replica", "remove", $"{Str(args, "publisher")}.{Str(args, "entity")}", "--path", Folder(args, "service")]),
             "sync_subscriptions" => Cli(apply, ["subscribe", "--sync", .. Flag(args, "prune", "--prune"), "--path", Folder(args, "service")]),
             "review_migration" => Cli(apply, ["migration", "review", "--path", Folder(args, "service")]),
             "generate_apphost" => AppHost(args, apply),
             "remove_service" => RemoveService(args, apply),
             _ => throw new StratumException($"Herramienta desconocida '{name}'."),
         };
+    }
+
+    /// <summary>add_replica: adds it, or changes its fields when the service has one of that entity already.</summary>
+    private ToolOutcome AddReplica(JsonObject args, bool apply)
+    {
+        var directory = Folder(args, "service");
+        var entity = Str(args, "entity");
+        var fields = args["fields"] is JsonArray list ? string.Join(", ", list.Select(f => f!.GetValue<string>())) : null;
+        var exists = (ServicePlanner.Load(directory).Replicas ?? []).Any(r => r.Entity.Equals(entity, StringComparison.OrdinalIgnoreCase));
+        return Cli(apply, ["replica", exists ? "fields" : "add", Folder(args, "publisher"), entity, "--path", directory,
+            .. fields is null ? Array.Empty<string>() : ["--fields", fields]]);
     }
 
     /// <summary>The specification (generated now from the model, so it's never stale) or one user story.</summary>
@@ -675,6 +729,14 @@ internal sealed class McpTools(string root, string? packageSource)
 
     private static string[] Optional(JsonObject args, string key, string option) =>
         args[key]?.GetValue<string>() is { Length: > 0 } value ? [option, value] : [];
+
+    /// <summary>A JSON number (or a numeric string) as a CLI option, invariant culture.</summary>
+    private static string[] Number(JsonObject args, string key, string option) => args[key] switch
+    {
+        JsonValue v when v.TryGetValue<decimal>(out var d) => [option, d.ToString(System.Globalization.CultureInfo.InvariantCulture)],
+        JsonValue v when v.TryGetValue<string>(out var text) && text.Length > 0 => [option, text],
+        _ => [],
+    };
 
     private static string[] Choice(JsonObject args, string key, string whenTrue, string whenFalse) =>
         args[key]?.GetValue<bool>() switch { true => [whenTrue], false => [whenFalse], null => [] };

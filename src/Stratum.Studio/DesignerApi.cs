@@ -87,7 +87,7 @@ internal static class DesignerApi
                     return new EntityDto(e.Name, [.. IntegrationEvents.Possible(d, e).Select(p =>
                         new EventDto(p.Name, p.EventClass, p.Topic, published.Contains(p.Name), p.Operation?.Name))]);
                 }).ToList();
-                var listens = (d.Subscriptions ?? []).Select(x => new ListenDto(x.Topic, x.EventClass, x.Service, x.Entity, x.Event, problems.GetValueOrDefault(x.Topic))).ToList();
+                var listens = (d.Subscriptions ?? []).Where(x => x.HasHandler).Select(x => new ListenDto(x.Topic, x.EventClass, x.Service, x.Entity, x.Event, problems.GetValueOrDefault(x.Topic))).ToList();
                 return new ServiceDto(s.RelativeDirectory, d.Service.Name, d.Architecture, d.Messaging?.Broker, entities, listens);
             })],
             layout.Services);

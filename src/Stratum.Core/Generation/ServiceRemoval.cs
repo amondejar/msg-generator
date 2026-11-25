@@ -52,13 +52,14 @@ public static class ServiceRemoval
 
             var current = other.Definition;
             var affected = (current.Subscriptions ?? []).Where(s => s.Service == name).ToList();
+            var replicas = (current.Replicas ?? []).Where(r => r.Service != name).ToList();
             if (affected.Count == 0)
             {
                 continue;
             }
 
             var remaining = (current.Subscriptions ?? []).Where(s => s.Service != name).ToList();
-            var updated = current with { Subscriptions = remaining.Count == 0 ? null : remaining };
+            var updated = current with { Subscriptions = remaining.Count == 0 ? null : remaining, Replicas = replicas.Count == 0 ? null : replicas };
             var plan = ServicePlanner.Plan(otherDirectory, current, updated, new GenerationOptions { Team = Templating.TeamTemplates.Find(otherDirectory) });
             consumers.Add(new ConsumerCleanup(current.Service.Name, otherDirectory, affected, plan));
         }
