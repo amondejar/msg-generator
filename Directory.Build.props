@@ -12,7 +12,7 @@
       Single source of truth for the Stratum version: the CLI, the Stratum.* packages and the
       version written into generated services (stratum.json, Directory.Packages.props) all come from here.
     -->
-    <Version>0.37.0</Version>
+    <Version>0.38.0</Version>
     <Authors>Stratum</Authors>
     <PackageTags>dotnet;microservices;aspnetcore;service-defaults;aspire;ddd;messaging;generator</PackageTags>
 

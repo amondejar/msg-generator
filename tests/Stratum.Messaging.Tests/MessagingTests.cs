@@ -225,6 +225,63 @@ public sealed class MessagingTests
     }
 
     [Fact]
+    public async Task AFailedMessageCanBeSentAgainAndOnlyTheFailedHandlersRunIt()
+    {
+        using var host = TestHosts.Create();
+        var probe = host.Services.GetRequiredService<Probe>();
+        probe.FailFirst(5);
+        await host.PublishAsync(new OrderCreated(Guid.NewGuid(), 10m));
+        var dispatcher = host.Services.GetRequiredService<OutboxDispatcher>();
+        var transport = host.Services.GetRequiredService<InMemoryTransport>();
+        var consumer = host.Services.GetRequiredService<IntegrationEventConsumer>();
+        var diagnostics = host.Services.GetRequiredService<MessagingDiagnostics>();
+        await dispatcher.DispatchPendingAsync();
+        var first = Assert.Single(transport.Sent);
+        Assert.Equal(ConsumeResult.DeadLetter, await consumer.HandleAsync(first, CancellationToken.None));
+
+        var outcome = await diagnostics.ResendAsync(Guid.Parse(first.MessageId), CancellationToken.None);
+
+        Assert.True(outcome.Ok, outcome.Message);
+        Assert.Equal(SentStatus.Pending, Assert.Single((await diagnostics.SnapshotAsync(TimeSpan.FromMinutes(5), 50, CancellationToken.None)).Sent).Status);
+        await dispatcher.DispatchPendingAsync();
+        var again = transport.Sent.Last();
+        Assert.Equal(first.MessageId, again.MessageId);
+        Assert.Equal(ConsumeResult.Completed, await consumer.HandleAsync(again, CancellationToken.None));
+        Assert.Single(probe.Received);
+        var row = Assert.Single((await diagnostics.SnapshotAsync(TimeSpan.FromMinutes(5), 50, CancellationToken.None)).Received);
+        Assert.Equal(ReceivedStatus.Processed, row.Status);
+
+        // Once processed, sending it again runs nothing (inbox).
+        await diagnostics.ResendAsync(Guid.Parse(first.MessageId), CancellationToken.None);
+        await dispatcher.DispatchPendingAsync();
+        await consumer.HandleAsync(transport.Sent.Last(), CancellationToken.None);
+        Assert.Single(probe.Received);
+        Assert.False((await diagnostics.ResendAsync(Guid.NewGuid(), CancellationToken.None)).Ok);
+    }
+
+    [Fact]
+    public async Task ATestEventGoesThroughTheOutboxLikeARealOne()
+    {
+        using var host = TestHosts.Create();
+        var diagnostics = host.Services.GetRequiredService<MessagingDiagnostics>();
+        var orderId = Guid.NewGuid();
+
+        var outcome = await diagnostics.PublishTestAsync("orders.order-created", new System.Text.Json.Nodes.JsonObject { ["orderId"] = orderId, ["total"] = 42.5m }, CancellationToken.None);
+
+        Assert.True(outcome.Ok, outcome.Message);
+        await host.Services.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync();
+        var sent = Assert.Single(host.Services.GetRequiredService<InMemoryTransport>().Sent);
+        Assert.Equal(outcome.MessageId, sent.MessageId);
+        var received = System.Text.Json.JsonSerializer.Deserialize<OrderCreated>(sent.Payload, EventTopology.JsonOptions)!;
+        Assert.Equal(orderId, received.OrderId);
+        Assert.Equal(42.5m, received.Total);
+        Assert.Equal(sent.MessageId, received.EventId.ToString());
+
+        Assert.False((await diagnostics.PublishTestAsync("nobody.nothing", null, CancellationToken.None)).Ok);
+        Assert.False((await diagnostics.PublishTestAsync("orders.order-created", new System.Text.Json.Nodes.JsonObject { ["total"] = "a lot" }, CancellationToken.None)).Ok);
+    }
+
+    [Fact]
     public void TheTraceIdComesFromTheTraceparent()
     {
         Assert.Equal("4bf92f3577b34da6a3ce929d0e0e4736", MessagingTelemetry.TraceIdOf("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"));

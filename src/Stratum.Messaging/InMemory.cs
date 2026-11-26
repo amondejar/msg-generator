@@ -191,6 +191,35 @@ public sealed class InMemoryJournal(InMemoryOutbox outbox) : IMessageJournal
 
         return Task.FromResult(removed + outbox.RemoveSentBefore(beforeUtc));
     }
+
+    public Task<bool> ResendAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var message = outbox.Messages.FirstOrDefault(m => m.Id == id);
+        if (message is not null)
+        {
+            OutboxRows.Requeue(message);
+        }
+
+        return Task.FromResult(message is not null);
+    }
+
+    public Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken)
+    {
+        outbox.Add(message);
+        return Task.CompletedTask;
+    }
+}
+
+internal static class OutboxRows
+{
+    /// <summary>Pending again, with no attempts: the dispatcher picks it up on its next round.</summary>
+    public static void Requeue(OutboxMessage message)
+    {
+        message.SentAt = null;
+        message.Attempts = 0;
+        message.NextAttemptAt = null;
+        message.LastError = null;
+    }
 }
 
 internal static class JournalRows

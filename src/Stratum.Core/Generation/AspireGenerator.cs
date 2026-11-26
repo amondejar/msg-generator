@@ -34,6 +34,29 @@ public static class AspireGenerator
         "bin", "obj", "node_modules", ".git", ".vs", ".idea", "artifacts", "TestResults",
     };
 
+    /// <summary>
+    /// Subfolders to look into for services: the ones you can't open (Windows protects some in your user folder, such as
+    /// "Temporary Internet Files"), links (junctions, which also make loops) and hidden or system ones are left out.
+    /// </summary>
+    internal static IEnumerable<string> Subdirectories(string directory)
+    {
+        try
+        {
+            return [.. Directory.EnumerateDirectories(directory, "*", SafeEnumeration)];
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
+        {
+            return [];
+        }
+    }
+
+    private static readonly EnumerationOptions SafeEnumeration = new()
+    {
+        IgnoreInaccessible = true,
+        RecurseSubdirectories = false,
+        AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.Hidden | FileAttributes.System,
+    };
+
     /// <param name="skipped">Receives the stratum.json files that could not be read (another tool's file, or broken):
     /// they are left out instead of failing the whole discovery.</param>
     public static IReadOnlyList<AspireService> Discover(string root, int maxDepth = 5, ICollection<string>? skipped = null)
@@ -85,7 +108,7 @@ public static class AspireGenerator
                 return;
             }
 
-            foreach (var child in Directory.EnumerateDirectories(directory))
+            foreach (var child in Subdirectories(directory))
             {
                 if (!SkippedFolders.Contains(Path.GetFileName(child)) && !Path.GetFileName(child).StartsWith('.') && !child.EndsWith(".AppHost", StringComparison.Ordinal))
                 {

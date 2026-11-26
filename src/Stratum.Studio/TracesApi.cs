@@ -20,7 +20,17 @@ internal static class TracesApi
 {
     public sealed record LinksDto(string? Dashboard, string? KafkaUi);
 
-    public sealed record ServiceDto(string Name, string Directory, string Url, string State, string? Message, string? Broker, IReadOnlyList<string> Problems);
+    public sealed record ServiceDto(string Name, string Directory, string Url, string State, string? Message, string? Broker, IReadOnlyList<string> Problems, IReadOnlyList<PublishableDto> Publishes);
+
+    /// <summary>An event the service publishes, with sample data for a test event.</summary>
+    public sealed record PublishableDto(string Topic, string Event, string Sample);
+
+    public sealed record ResendRequest(string Service, string MessageId);
+
+    public sealed record PublishRequest(string Service, string Topic, string Payload);
+
+    /// <summary>What the service answered (or why it couldn't be asked).</summary>
+    public sealed record ActionDto(bool Ok, string Message, string? MessageId);
 
     public sealed record ReportDto(string System, DateTime GeneratedAt, IReadOnlyList<ServiceDto> Services, IReadOnlyList<EventTrace> Events, LinksDto Links);
 
@@ -33,6 +43,64 @@ internal static class TracesApi
         app.MapGet("/traces", () => Results.Content(DesignerApi.Render("Stratum.Studio.Designer.traces.html"), "text/html; charset=utf-8"));
         app.MapGet("/traces/api/report", async (int? minutes, CancellationToken cancellationToken) =>
             Results.Json(await ReportAsync(options.Workspace, Math.Clamp(minutes ?? 60, 1, 60 * 24 * 7), cancellationToken).ConfigureAwait(false), Json));
+        app.MapPost("/traces/api/resend", async (ResendRequest request, CancellationToken cancellationToken) =>
+            Results.Json(Guid.TryParse(request.MessageId, out var id)
+                ? await CallAsync(options.Workspace, request.Service, $"/_stratum/messaging/resend/{id}", null, cancellationToken).ConfigureAwait(false)
+                : new ActionDto(false, I18n.L("Id de mensaje no válido.", "Invalid message id."), null), Json));
+        app.MapPost("/traces/api/publish", async (PublishRequest request, CancellationToken cancellationToken) =>
+        {
+            JsonObject? payload;
+            try
+            {
+                payload = JsonNode.Parse(string.IsNullOrWhiteSpace(request.Payload) ? "{}" : request.Payload) as JsonObject;
+            }
+            catch (JsonException ex)
+            {
+                return Results.Json(new ActionDto(false, I18n.L("El JSON no es válido: ", "The JSON isn't valid: ") + ex.Message, null), Json);
+            }
+
+            if (payload is null)
+            {
+                return Results.Json(new ActionDto(false, I18n.L("Los datos tienen que ser un objeto JSON { … }.", "The data must be a JSON object { … }."), null), Json);
+            }
+
+            var body = new JsonObject { ["topic"] = request.Topic, ["payload"] = payload };
+            return Results.Json(await CallAsync(options.Workspace, request.Service, "/_stratum/messaging/publish", body, cancellationToken).ConfigureAwait(false), Json);
+        });
+    }
+
+    /// <summary>POST to a running service of the system (its Development diagnostics).</summary>
+    private static async Task<ActionDto> CallAsync(string workspace, string service, string path, JsonObject? body, CancellationToken cancellationToken)
+    {
+        var found = AspireGenerator.Discover(workspace).FirstOrDefault(s => s.Definition.Service.Name == service);
+        if (found is null)
+        {
+            return new(false, I18n.L($"No encuentro el servicio {service} en el sistema.", $"Service {service} isn't in the system."), null);
+        }
+
+        var url = BaseUrl(Path.GetFullPath(Path.Combine(workspace, found.RelativeDirectory)), found.Definition);
+        try
+        {
+            using var content = body is null ? null : JsonContent.Create(body);
+            using var response = await Http.PostAsync(new Uri(url + path), content, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return new(false, I18n.L(
+                    $"{service} no tiene esta acción: actualiza sus paquetes a Stratum 0.38 (o posterior) y arráncalo en Development.",
+                    $"{service} doesn't have this action: upgrade its packages to Stratum 0.38 (or later) and run it in Development."), null);
+            }
+
+            var outcome = await response.Content.ReadFromJsonAsync<ActionDto>(Json, cancellationToken).ConfigureAwait(false);
+            return outcome ?? new(false, $"HTTP {(int)response.StatusCode}", null);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return new(false, I18n.L($"{service} no está arrancado (nada responde en {url}).", $"{service} isn't running (nothing answers on {url})."), null);
+        }
+        catch (Exception e) when (e is JsonException or NotSupportedException)
+        {
+            return new(false, e.Message, null);
+        }
     }
 
     private static async Task<ReportDto> ReportAsync(string workspace, int minutes, CancellationToken cancellationToken)
@@ -47,7 +115,8 @@ internal static class TracesApi
         return new ReportDto(
             AspireGenerator.DefaultSystemName(workspace),
             report.GeneratedAt,
-            [.. report.Services.Select(p => new ServiceDto(p.Name, p.Directory, p.Url, p.State, p.Message, p.Snapshot?.Broker, p.Snapshot?.Problems ?? []))],
+            [.. report.Services.Select(p => new ServiceDto(p.Name, p.Directory, p.Url, p.State, p.Message, p.Snapshot?.Broker, p.Snapshot?.Problems ?? [],
+                Publishable(withMessaging.FirstOrDefault(s => s.Definition.Service.Name == p.Name)?.Definition)))],
             report.Events,
             Links(workspace, withMessaging.Any(s => s.Definition.Messaging?.Broker == MessagingSettings.Kafka)));
     }
@@ -81,6 +150,9 @@ internal static class TracesApi
             return new(name, directory, url, ProbeState.Error, e.Message, null);
         }
     }
+
+    private static IReadOnlyList<PublishableDto> Publishable(ServiceDefinition? definition) =>
+        definition is null ? [] : [.. IntegrationEvents.Of(definition).Select(e => new PublishableDto(e.Topic, e.EventClass, EntityCodeGen.EventSample(definition, e)))];
 
     /// <summary>The service's http address in Development: its launchSettings.json (what Aspire uses too), else the port Stratum gave it.</summary>
     private static string BaseUrl(string directory, ServiceDefinition definition)

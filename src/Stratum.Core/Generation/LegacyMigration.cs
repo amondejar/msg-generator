@@ -80,7 +80,7 @@ public static partial class LegacyMigration
                 return;
             }
 
-            foreach (var child in Directory.EnumerateDirectories(directory).Where(d => !SkippedFolders.Contains(System.IO.Path.GetFileName(d))))
+            foreach (var child in AspireGenerator.Subdirectories(directory).Where(d => !SkippedFolders.Contains(System.IO.Path.GetFileName(d))))
             {
                 Walk(child, depth + 1);
             }
@@ -230,7 +230,7 @@ public static partial class LegacyMigration
             }
         }
 
-        foreach (var child in Directory.EnumerateDirectories(root).Where(d => !SkippedFolders.Contains(System.IO.Path.GetFileName(d))))
+        foreach (var child in AspireGenerator.Subdirectories(root).Where(d => !SkippedFolders.Contains(System.IO.Path.GetFileName(d))))
         {
             foreach (var file in Files(child))
             {

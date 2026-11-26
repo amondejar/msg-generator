@@ -133,4 +133,14 @@ public interface IMessageJournal
 
     /// <summary>Deletes journal rows and sent outbox messages older than <paramref name="beforeUtc"/> (pending ones are kept).</summary>
     Task<int> PurgeAsync(DateTime beforeUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts an outbox message back in the queue (sent or given up), as it was: the dispatcher sends it again with the
+    /// same id, so the handlers that already processed it skip it (inbox) and the ones that failed run again.
+    /// </summary>
+    /// <returns>False when the outbox no longer has it (purged after the trace retention).</returns>
+    Task<bool> ResendAsync(Guid id, CancellationToken cancellationToken);
+
+    /// <summary>Adds a message to the outbox and saves it now (test events of Stratum Studio).</summary>
+    Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken);
 }

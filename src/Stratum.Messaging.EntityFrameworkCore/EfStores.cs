@@ -121,4 +121,24 @@ internal sealed class EfJournal<TContext>(TContext context) : IMessageJournal
         var sent = await context.Set<OutboxMessage>().Where(m => m.SentAt != null && m.SentAt < beforeUtc).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
         return received + sent;
     }
+
+    public async Task<bool> ResendAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var message = await context.Set<OutboxMessage>().FindAsync([id], cancellationToken).ConfigureAwait(false);
+        if (message is null)
+        {
+            return false;
+        }
+
+        OutboxRows.Requeue(message);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    public async Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        context.Set<OutboxMessage>().Add(message);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
 }

@@ -62,6 +62,18 @@
   pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; font-size: 12.5px; max-height: 50vh; }
   .empty { padding: 40px 24px; color: var(--muted); text-align: center; line-height: 1.6; }
   .copy { cursor: pointer; } .copy:hover { color: var(--text); text-decoration: underline dotted; }
+  .btn.primary { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .notice { margin: 4px 0 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+  .notice.ok { background: rgba(52, 211, 153, .1); color: var(--ok); } .notice.err { background: rgba(248, 113, 113, .1); color: var(--err); }
+  .hint { color: var(--muted); font-size: 12.5px; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: 12px; padding: 18px 20px; width: min(640px, 92vw); }
+  dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  dialog h3 { margin: 0 0 6px; font-size: 16px; }
+  dialog label { display: block; font-size: 12.5px; color: var(--text-2); margin: 12px 0 4px; }
+  dialog select { width: 100%; }
+  dialog textarea { width: 100%; min-height: 220px; background: var(--bg); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; padding: 10px; font: 12.5px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; resize: vertical; }
+  dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -76,6 +88,7 @@
     <option value="360">{{Últimas 6 h::Last 6 h}}</option>
     <option value="1440">{{Últimas 24 h::Last 24 h}}</option>
   </select>
+  <button class="btn" id="open-test" title="{{Publica un evento con los datos que quieras, como si lo hubiera publicado el servicio::Publishes an event with the data you choose, as if the service had published it}}">{{Enviar evento de prueba::Send a test event}}</button>
   <button class="btn" id="pause">{{Pausar::Pause}}</button>
   <a class="btn" id="dashboard" target="_blank" rel="noopener" hidden>{{Dashboard de Aspire::Aspire dashboard}} ↗</a>
   <a class="btn" id="kafka" target="_blank" rel="noopener" hidden>Kafka UI ↗</a>
@@ -99,6 +112,22 @@
   </section>
   <section id="detail"></section>
 </div>
+<dialog id="test">
+  <h3>{{Enviar evento de prueba::Send a test event}}</h3>
+  <div class="hint">{{El servicio lo publica con un EventId nuevo: pasa por su outbox y el broker, y los servicios que lo escuchan lo procesan como uno real (también sus réplicas). Útil para probar un handler sin usar la API.::The service publishes it with a new EventId: it goes through its outbox and the broker, and the services that listen to it handle it as a real one (their replicas too). Handy to try a handler without using the API.}}</div>
+  <label for="test-service">{{Servicio que lo publica::Service that publishes it}}</label>
+  <select id="test-service"></select>
+  <label for="test-event">{{Evento::Event}}</label>
+  <select id="test-event"></select>
+  <label for="test-payload">{{Datos (JSON)::Data (JSON)}}</label>
+  <textarea id="test-payload" spellcheck="false"></textarea>
+  <div id="test-notice"></div>
+  <div class="buttons">
+    <button class="btn" id="test-sample" type="button">{{Datos de ejemplo::Sample data}}</button>
+    <button class="btn" id="test-close" type="button">{{Cerrar::Close}}</button>
+    <button class="btn primary" id="test-send" type="button">{{Enviar::Send}}</button>
+  </div>
+</dialog>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -110,6 +139,7 @@
   };
   const BROKER = { kafka: "Kafka", servicebus: "Service Bus", inMemory: "{{el broker en memoria::the in-memory broker}}" };
   let report = null, selected = null, live = true, timer = null, showPayload = false, busy = false;
+  const notices = {};   // messageId -> { ok, text }: result of the last action on that event
 
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const pad = (n, w = 2) => String(n).padStart(w, "0");
@@ -204,6 +234,10 @@
 
   function renderDetail() {
     const e = report.events.find(x => x.messageId === selected);
+    if (!e && selected && notices[selected]) {
+      $("detail").innerHTML = `<div class="notice ok">${esc(notices[selected].text)}</div><div class="empty mono">${esc(selected)}</div>`;
+      return;
+    }
     if (!e) {
       $("detail").innerHTML = `<div class="empty">{{Elige un evento para ver su recorrido: del servicio que lo publica al broker y a cada servicio que lo escucha.::Pick an event to follow it: from the service that publishes it to the broker and to every service that listens to it.}}</div>`;
       return;
@@ -247,7 +281,10 @@
         ${e.traceId ? `<span>trace id</span><span class="copy" data-copy="${esc(e.traceId)}">${esc(e.traceId)}</span>` : ""}
       </div>
       <div class="steps">${steps}</div>
+      ${notices[e.messageId] ? `<div class="notice ${notices[e.messageId].ok ? "ok" : "err"}" style="margin-top:16px">${esc(notices[e.messageId].text)}</div>` : ""}
       <div class="actions">
+        ${canResend(e) ? `<button class="btn small primary" id="resend" title="{{Vuelve a enviar el mismo mensaje (mismo id): los handlers que ya lo procesaron lo ignoran y los que fallaron lo ejecutan de nuevo.::Sends the same message again (same id): handlers that already processed it ignore it and the ones that failed run it again.}}">↻ {{Reintentar::Retry}}</button>` : ""}
+        ${e.payload && publishes(e.publisher, e.topic) ? `<button class="btn small" id="as-test">{{Enviar uno igual de prueba::Send a test copy}}</button>` : ""}
         ${e.payload ? `<button class="btn small" id="toggle-payload">${showPayload ? "{{Ocultar payload::Hide payload}}" : "{{Ver payload::Show payload}}"}</button>` : ""}
         ${e.traceId && links.dashboard ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(links.dashboard)}/traces/detail/${esc(e.traceId)}">{{Ver la traza en Aspire::Open the trace in Aspire}} ↗</a>` : ""}
         ${links.kafkaUi ? `<a class="btn small" target="_blank" rel="noopener" href="${esc(links.kafkaUi)}/ui/clusters/kafka/all-topics/${encodeURIComponent(e.topic)}/messages">{{Ver el topic en Kafka UI::Open the topic in Kafka UI}} ↗</a>` : ""}
@@ -255,7 +292,83 @@
       ${e.payload && showPayload ? `<pre class="mono">${esc(pretty(e.payload))}</pre>` : ""}
       ${e.traceId && links.dashboard ? `<p class="muted" style="font-size:12.5px">{{La traza de Aspire (con aspire run y la telemetría activada) añade el detalle de cada paso: la petición HTTP, el SQL y el tiempo de cada handler.::The Aspire trace (with aspire run and telemetry on) adds the detail of each step: the HTTP request, the SQL and each handler's time.}}</p>` : ""}`;
     $("toggle-payload")?.addEventListener("click", () => { showPayload = !showPayload; renderDetail(); });
+    $("resend")?.addEventListener("click", () => resend(e));
+    $("as-test")?.addEventListener("click", () => openTest(e.publisher, e.topic, testCopy(e.payload)));
   }
+
+  // Retry: the publisher sends the same message again (only while it's in its outbox: the trace retention).
+  const canResend = e => !!e.sent && (e.sent.status === "failed" || e.outcome === "error" || e.outcome === "warning");
+
+  async function resend(e) {
+    const button = $("resend");
+    if (button) button.disabled = true;
+    const result = await post("/traces/api/resend", { service: e.publisher, messageId: e.messageId });
+    notices[e.messageId] = { ok: result.ok, text: result.ok ? "{{Reenviado: en unos segundos verás el nuevo intento aquí.::Sent again: you'll see the new attempt here in a few seconds.}}" : result.message };
+    renderDetail();
+    load();
+  }
+
+  async function post(url, body) {
+    try {
+      const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      return await response.json();
+    } catch (ex) {
+      return { ok: false, message: ex.message };
+    }
+  }
+
+  // Test events
+  const publishes = (service, topic) => (report?.services.find(s => s.name === service)?.publishes || []).some(p => p.topic === topic);
+  const testCopy = payload => { try { const o = JSON.parse(payload); delete o.eventId; delete o.occurredAt; return JSON.stringify(o, null, 2); } catch { return payload; } };
+
+  function fillEvents(topic, payload) {
+    const service = report.services.find(s => s.name === $("test-service").value);
+    const events = service?.publishes || [];
+    $("test-event").innerHTML = events.map(p => `<option value="${esc(p.topic)}">${esc(p.event)} · ${esc(p.topic)}</option>`).join("");
+    if (topic) $("test-event").value = topic;
+    $("test-payload").value = payload ?? (events.find(p => p.topic === $("test-event").value)?.sample || "{}");
+    const running = service?.state === "ok";
+    $("test-notice").innerHTML = !service ? "" : !running
+      ? `<div class="notice err">${esc(service.name)} {{no está arrancado: arráncalo para poder enviar.::isn't running: start it to send.}}</div>`
+      : events.length === 0 ? `<div class="notice err">${esc(service.name)} {{no publica eventos.::publishes no events.}}</div>` : "";
+    $("test-send").disabled = !running || events.length === 0;
+  }
+
+  function openTest(service, topic, payload) {
+    const candidates = report.services.filter(s => (s.publishes || []).length > 0);
+    $("test-service").innerHTML = candidates.map(s => `<option>${esc(s.name)}</option>`).join("");
+    if (service) $("test-service").value = service;
+    else { const running = candidates.find(s => s.state === "ok"); if (running) $("test-service").value = running.name; }
+    if (candidates.length === 0) {
+      $("test-event").innerHTML = ""; $("test-payload").value = "";
+      $("test-notice").innerHTML = `<div class="notice err">{{Ningún servicio del sistema publica eventos.::No service of the system publishes events.}}</div>`;
+      $("test-send").disabled = true;
+    } else {
+      fillEvents(topic, payload);
+    }
+    $("test").showModal();
+  }
+
+  $("open-test").addEventListener("click", () => report && openTest());
+  $("test-service").addEventListener("change", () => fillEvents());
+  $("test-event").addEventListener("change", () => fillEvents($("test-event").value));
+  $("test-sample").addEventListener("click", () => fillEvents($("test-event").value));
+  $("test-close").addEventListener("click", () => $("test").close());
+  $("test-send").addEventListener("click", async () => {
+    $("test-send").disabled = true;
+    const service = $("test-service").value;
+    const result = await post("/traces/api/publish", { service, topic: $("test-event").value, payload: $("test-payload").value });
+    $("test-send").disabled = false;
+    if (!result.ok) {
+      $("test-notice").innerHTML = `<div class="notice err">${esc(result.message)}</div>`;
+      return;
+    }
+    $("test").close();
+    selected = result.messageId;
+    notices[result.messageId] = { ok: true, text: "{{Evento de prueba publicado: su recorrido aparecerá aquí en unos segundos.::Test event published: its journey shows up here in a few seconds.}}" };
+    $("search").value = ""; $("service").value = ""; $("outcome").value = "";
+    load();
+  });
 
   const pretty = json => { try { return JSON.stringify(JSON.parse(json), null, 2); } catch { return json; } };
 

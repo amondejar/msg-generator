@@ -637,11 +637,24 @@ Cada evento enseña su message id, correlation id y trace id, el payload, y enla
 (petición HTTP, SQL y tiempo de cada paso, con `aspire run` y la telemetría activada) y a su topic en Kafka UI. Se filtra
 por texto, servicio y estado.
 
+**Reintentar** y **enviar eventos de prueba** (0.38):
+
+- **↻ Reintentar** aparece en los eventos con errores (un handler en dead-letter, uno que no lo ha recibido, o un envío al
+  broker que se dio por perdido). El servicio que lo publicó vuelve a mandar **el mismo mensaje** (mismo id) desde su
+  outbox: los handlers que ya lo procesaron lo ignoran (inbox) y los que fallaron lo ejecutan otra vez. Arregla antes la
+  causa (el handler, la base de datos…). Funciona mientras el mensaje siga en el outbox (7 días).
+- **Enviar evento de prueba** (arriba) publica un evento del servicio que elijas con los datos que escribas (vienen
+  rellenos de ejemplo, con las reglas de validación). Recibe un EventId nuevo y pasa por el outbox y el broker, así que los
+  servicios que lo escuchan lo procesan como uno real (también sus réplicas): sirve para probar un handler sin usar la API.
+  **Enviar uno igual de prueba**, en el detalle de un evento, lo abre con sus datos para repetirlo o cambiarlo.
+
 Cómo funciona:
 
 - Cada servicio con mensajería expone, **solo en Development**, `GET /_stratum/messaging` (lo mapea `StratumWiring.g.cs`):
   sus últimos mensajes del outbox y de `msg_received`. El Studio los lee en el puerto de su `launchSettings.json`, el
   mismo con `aspire run` que con `dotnet run`.
+  Desde 0.38 también `POST /_stratum/messaging/resend/{id}` (reintentar) y `POST /_stratum/messaging/publish` (evento de
+  prueba: `{ "topic": "…", "payload": { … } }`); para tenerlos, pasa el servicio a 0.38 (`stratum upgrade`).
 - `msg_received` es el diario de lo que recibe cada handler, **también los fallos** (el inbox solo guarda lo procesado, para
   no repetirlo). Se escribe aparte de la transacción del handler y, si falla, el mensaje se procesa igual.
 - Los mensajes enviados y las filas del diario se borran a los 7 días (`Messaging:TraceRetention`); el diario se apaga con
@@ -891,4 +904,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 23. ✅ Publicar en nuget.org (prefijo `StratumKit.*`, la herramienta como `StratumKit.Cli`).
 24. ✅ Validaciones por propiedad (`stratum rule`): longitud, formato, patrón y rango en la API, el dominio, la columna y los tests.
 25. ✅ Réplicas de entidades de otros servicios (`stratum replica`), al día con sus eventos.
+26. ✅ Trazas de eventos: reintentar un mensaje fallido y enviar eventos de prueba desde el Studio.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

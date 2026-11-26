@@ -209,6 +209,23 @@ public sealed class EntityFrameworkTests : IAsyncLifetime
         Assert.Equal(0, await CountAsync<OutboxMessage>(m => m.SentAt != null));
     }
 
+    [Fact]
+    public async Task TestEventsAndResendsUseTheOutboxTable()
+    {
+        var diagnostics = _host.Services.GetRequiredService<MessagingDiagnostics>();
+        var outcome = await diagnostics.PublishTestAsync(
+            EventTopology.TopicOf<CustomerRenamed>(), new System.Text.Json.Nodes.JsonObject { ["customerId"] = Guid.NewGuid(), ["name"] = "Ana" }, CancellationToken.None);
+        Assert.True(outcome.Ok, outcome.Message);
+        Assert.Equal(1, await CountAsync<OutboxMessage>(m => m.SentAt == null));
+
+        await _host.Services.GetRequiredService<OutboxDispatcher>().DispatchPendingAsync();
+        Assert.Equal(0, await CountAsync<OutboxMessage>(m => m.SentAt == null));
+
+        Assert.True((await diagnostics.ResendAsync(Guid.Parse(outcome.MessageId!), CancellationToken.None)).Ok);
+        Assert.Equal(1, await CountAsync<OutboxMessage>(m => m.SentAt == null && m.Attempts == 0));
+        Assert.False((await diagnostics.ResendAsync(Guid.NewGuid(), CancellationToken.None)).Ok);
+    }
+
     private async Task<int> CountAsync<T>(System.Linq.Expressions.Expression<Func<T, bool>>? predicate = null)
         where T : class
     {

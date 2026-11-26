@@ -497,6 +497,19 @@ public static partial class EntityCodeGen
         return p.IsList ? $"[{one}]" : one;
     }
 
+    /// <summary>
+    /// JSON of an integration event with sample values (Stratum Studio → Event traces → test event): its Id and data,
+    /// as the event travels. EventId and OccurredAt are left out: the service gives the test event new ones.
+    /// </summary>
+    public static string EventSample(ServiceDefinition definition, PublishedEvent published)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(published);
+        var fields = IntegrationEvents.Payload(definition, published)
+            .Select(p => $"  \"{CamelJson(p.Name)}\": {(p.References is not null ? (p.IsList ? $"[\"{Guid.NewGuid()}\"]" : $"\"{Guid.NewGuid()}\"") : HttpValue(p, definition, [], "  "))}");
+        return "{\n" + string.Join(",\n", new[] { $"  \"id\": \"{Guid.NewGuid()}\"" }.Concat(fields)) + "\n}";
+    }
+
     private static readonly System.Text.Json.JsonSerializerOptions HttpJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     private static string CamelJson(string name) => char.ToLowerInvariant(name[0]) + name[1..];
