@@ -20,7 +20,8 @@ public sealed record {{Entity}}Dto(Guid Id, {{CommandParameters}}, DateTimeOffse
 
 public sealed record Get{{Entity}}(Guid Id) : IQuery<{{Entity}}Dto?>;
 
-public sealed record List{{Entities}}(int Page, int PageSize{{ListFilterRecordParameters}}) : IQuery<PagedResult<{{Entity}}Dto>>;
+/// <summary>A page of {{Entities}}: optionally of one parent, sorted (<see cref="{{Entity}}ListOptions"/>) and searched.</summary>
+public sealed record List{{Entities}}(int Page, int PageSize{{ListFilterRecordParameters}}, string? Sort = null, string? Search = null) : IQuery<PagedResult<{{Entity}}Dto>>;
 
 public sealed partial class Get{{Entity}}Handler(I{{Entity}}Repository repository) : IQueryHandler<Get{{Entity}}, {{Entity}}Dto?>
 {
@@ -33,20 +34,14 @@ public sealed partial class Get{{Entity}}Handler(I{{Entity}}Repository repositor
     }
 }
 
-public sealed partial class List{{Entities}}Handler(I{{Entity}}Repository repository{{ListIntegrityParameter}})
+public sealed partial class List{{Entities}}Handler(I{{Entity}}Lister lister)
     : IQueryHandler<List{{Entities}}, PagedResult<{{Entity}}Dto>>
 {
     public async Task<PagedResult<{{Entity}}Dto>> HandleAsync(List{{Entities}} query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        // @stratum:if hasReferences
-        var (items, total) = {{ListFilterActive}}
-            ? await integrity.ListAsync(query, cancellationToken)   // the rows of one parent (?customerId=…)
-            : await repository.ListAsync(query.Page, query.PageSize, cancellationToken);
-        // @stratum:else
-        var (items, total) = await repository.ListAsync(query.Page, query.PageSize, cancellationToken);
-        // @stratum:end
+        var (items, total) = await lister.ListAsync(query, cancellationToken);
         return new PagedResult<{{Entity}}Dto>([.. items.Select({{Entity}}Dto.From)], query.Page, query.PageSize, total);
     }
 }

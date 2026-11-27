@@ -19,13 +19,15 @@ namespace {{Service}}.Api.Features.{{Entities}};
 public static partial class {{Entity}}Endpoints
 {
     [McpServerTool(Name = "list_{{entities_snake}}", Title = "List {{Entities}}", ReadOnly = true, Idempotent = true, OpenWorld = false)]
-    [Description("Lists {{Entities}} (paged, oldest first).")]
+    [Description("Lists {{Entities}} (paged; oldest first unless sorted).")]
     public static async Task<string> ListTool(
         IQueryHandler<List{{Entities}}, PagedResult<{{Entity}}Dto>> handler,
         [Description("Page, from 1.")] int? page,
         [Description("Items per page.")] int? pageSize,{{McpListFilterParameterLines}}
+        [Description("Sort by: {{SortFieldsText}}; \"-\" in front for descending (optional).")] string? sort,
+        [Description("Text to look for in {{SearchFieldsText}}, ignoring case (optional).")] string? search,
         CancellationToken cancellationToken) =>
-        McpResults.ToJson(await List(handler, page, pageSize{{ListFilterArguments}}, cancellationToken));
+        McpResults.ToJson(await List(handler, page, pageSize{{ListFilterArguments}}, sort, search, cancellationToken));
 
     [McpServerTool(Name = "get_{{entity_snake}}", Title = "Get a {{Entity}}", ReadOnly = true, Idempotent = true, OpenWorld = false)]
     [Description("Gets one {{Entity}} by id.")]

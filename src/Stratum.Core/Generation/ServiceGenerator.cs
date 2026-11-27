@@ -179,6 +179,11 @@ public static class ServiceGenerator
             entityTokens[key] = value;
         }
 
+        foreach (var (key, value) in ListingCodeGen.Tokens(entity))
+        {
+            entityTokens[key] = value;
+        }
+
         var hasReferences = entity.References.Any();
         var referenced = ModelRules.Dependents(definition, entity.Name, includeSelf: true, blockingOnly: true).Count > 0;
         var operations = definition.Architecture == Architectures.CleanDdd ? entity.Operations ?? [] : [];
@@ -198,6 +203,7 @@ public static class ServiceGenerator
             "relations" => hasReferences || referenced,
             "hasOperations" => operations.Count > 0,
             "hasLists" => entity.Properties.Any(p => p.IsList),
+            "searchable" => ListingCodeGen.Searchable(entity).Count > 0,
             _ => isEnabled(feature),
         };
 
@@ -356,7 +362,7 @@ public static class ServiceGenerator
             _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new StratumException(
                 $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
                 "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents, hasEnums, hasTypes, hasModelTypes " +
-                "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, hasOperations, hasLists, integrationEvents, publishCreated/Updated/Deleted en plantillas de entidad)."),
+                "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, hasOperations, hasLists, searchable, integrationEvents, publishCreated/Updated/Deleted en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };
     }

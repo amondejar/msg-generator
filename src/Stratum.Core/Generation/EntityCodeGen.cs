@@ -378,6 +378,7 @@ public static partial class EntityCodeGen
             ["RepositoryRegistrations"] = string.Join("\n", entities.Select(e => $"        services.AddScoped<I{e.Name}Repository, {e.Name}Repository>();")
                 .Concat(entities.Where(e => e.References.Any() || ModelRules.Dependents(definition, e.Name, includeSelf: true, blockingOnly: true).Count > 0).Select(e =>
                     $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Integrity, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Integrity>();"))
+                .Concat(clean ? entities.Select(e => $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Lister, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Lister>();") : [])
                 .Concat(ReplicaCodeGen.Registrations(definition))),
             ["TypeDeclarations"] = TypeDeclarations(definition),
             ["TypeContracts"] = TypeContracts(definition),
@@ -440,6 +441,11 @@ public static partial class EntityCodeGen
             var item = $"{route}/{{{{{create}.response.body.$.id}}}}";
             var body = HttpBody(e.Properties, definition, ordered);
             text.Append($"\n### List {e.Plural}\nGET {route}?page=1&pageSize=20\n{{{{auth}}}}");
+            var searchable = ListingCodeGen.Searchable(e).FirstOrDefault();
+            text.Append(searchable is null
+                ? $"\n### List {e.Plural}, newest first\nGET {route}?sort=-createdAt\n{{{{auth}}}}"
+                : $"\n### Search {e.Plural} (text in {string.Join(", ", ListingCodeGen.Searchable(e).Select(p => p.Name))}) and sort them\n" +
+                  $"GET {route}?search={Uri.EscapeDataString(PropertyTypes.TextSample(searchable))}&sort={Camel(searchable.Name)}\n{{{{auth}}}}");
             text.Append($"\n### Create {e.Name}\n# @name {create}\nPOST {route}\n{{{{auth}}}}Content-Type: application/json\n\n{body}\n");
             text.Append($"\n### Get the {e.Name} created above\nGET {item}\n{{{{auth}}}}");
             text.Append($"\n### Replace the data of that {e.Name} (lists included)\nPUT {item}\n{{{{auth}}}}Content-Type: application/json\n\n{body}\n");
@@ -638,7 +644,7 @@ public static partial class EntityCodeGen
     };
 
     /// <summary>A verbatim C# string: @"^\d{5}$".</summary>
-    private static string Verbatim(string text) => "@\"" + text.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+    internal static string Verbatim(string text) => "@\"" + text.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     private static string InvalidArguments(IReadOnlyList<PropertyDefinition> props, IReadOnlyList<ItemTypeDefinition> types)
     {

@@ -69,6 +69,34 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
     }
 
     [Fact]
+    public async Task ListRejectsAnUnknownSort()
+    {
+        using var client = {{TestClient}};
+
+        var response = await client.GetAsync(new Uri($"{Collection}?sort=notAField", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+    // @stratum:if searchable
+
+    [Fact]
+    public async Task ListSearchesAndSorts()
+    {
+        using var client = {{TestClient}};
+        var item = await CreateAsync(client, await SampleRequestAsync(client));
+        var term = {{SearchTestTerm}};
+
+        var page = await client.GetFromJsonAsync<PagedResponse<{{Entity}}Response>>(
+            new Uri($"{Collection}?search={Uri.EscapeDataString(term.ToUpperInvariant())}&sort=-{{SearchTestSortName}}&pageSize={PagedResponse<{{Entity}}Response>.MaxPageSize}", UriKind.Relative));
+
+        Assert.NotNull(page);
+        Assert.Contains(page.Items, e => item.ToString().EndsWith($"/{e.Id}", StringComparison.Ordinal));
+        var values = page.Items.Select(e => e.{{SearchTestField}} ?? string.Empty).ToList();
+        Assert.True(values.SequenceEqual(values.OrderByDescending(v => v, StringComparer.Ordinal)), "sorted by -{{SearchTestSortName}}");
+    }
+    // @stratum:end
+
+    [Fact]
     public async Task DeleteRemovesIt()
     {
         using var client = {{TestClient}};

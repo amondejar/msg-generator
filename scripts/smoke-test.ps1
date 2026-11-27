@@ -387,6 +387,15 @@ public sealed partial class Product
     $patternFailed = $LASTEXITCODE -ne 0
     $null = Get-DotnetOutput $StratumDll rule set Product.Stock --min-length 3 --path $full   # expected to fail: length on a number
     if ($rulesOk -and $patternFailed -and $LASTEXITCODE -ne 0) { Pass 'validation rules: attributes (400), domain guards, column length, samples; bad rules rejected' } else { Fail 'validation rules' }
+    # Lists: ?sort=field|-field and ?search=text (vertical: ListOptions; clean-ddd: the Lister of Infrastructure).
+    $listOptions = Get-Content (Join-Path $rf 'Suppliers\SupplierListOptions.g.cs') -Raw
+    $listOk = $listOptions -like '*SortFields { get; } = `["name", "createdAt", "updatedAt"`]*' -and $listOptions -like '*rows.Where(e => e.Name.ToLower().Contains(term))*' `
+        -and (Get-Content (Join-Path $rf 'Suppliers\SupplierEndpoints.g.cs') -Raw) -like '*SupplierListOptions.Problems(sort, search)*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Products\ProductLister.g.cs') -Raw) -like '*"-price" => rows.OrderByDescending(e => e.Price)*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\RepositoryRegistration.g.cs') -Raw) -like '*IProductLister, global::Catalog.Infrastructure.Persistence.Products.ProductLister*' `
+        -and (Get-Content (Join-Path $full 'tests\Orders.Api.Tests\Features\SupplierEndpointsTests.g.cs') -Raw) -like '*ListSearchesAndSorts*' `
+        -and (Get-Content (Join-Path $full 'src\Orders.Api\Orders.Api.http') -Raw) -like '*search=sample&sort=name*'
+    if ($listOk) { Pass 'lists: sort (-field descending) and search in text fields, 400 for an unknown field' } else { Fail 'lists: sort and search' }
     # Operations on lists (clean-ddd): one item or a list of items as parameters, with a head start for the rule.
     Invoke-Dotnet $StratumDll entity operation add Bundle AddLine --params 'Line:BundleLine' --path $clean
     Invoke-Dotnet $StratumDll entity operation add Bundle ReplaceLines --params 'Lines:BundleLine[]' --path $clean

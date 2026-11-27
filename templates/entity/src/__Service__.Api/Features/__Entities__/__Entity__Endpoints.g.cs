@@ -25,7 +25,7 @@ public static partial class {{Entity}}Endpoints
 
         group.MapGet(string.Empty, List).WithName("List{{Entities}}")
             .WithSummary("List {{Entities}}")
-            .WithDescription("Pages of {{Entities}}, oldest first (page from 1, pageSize up to 100).");
+            .WithDescription("Pages of {{Entities}} (page from 1, pageSize up to 100). sort: {{SortFieldsText}} (\"-\" in front: descending; without it, oldest first). search: text in {{SearchFieldsText}}, ignoring case.");
         group.MapGet("/{id:guid}", Get).WithName("Get{{Entity}}")
             .WithSummary("Get a {{Entity}}")
             .WithDescription("Returns the {{Entity}} with that id, or 404.");
@@ -47,15 +47,19 @@ public static partial class {{Entity}}Endpoints
 
     static partial void MapCustomEndpoints(RouteGroupBuilder group);
 
-    private static async Task<Ok<PagedResponse<{{Entity}}Response>>> List(
-        {{Service}}DbContext db, int? page, int? pageSize, {{ListFilterParameters}}CancellationToken cancellationToken)
+    private static async Task<Results<Ok<PagedResponse<{{Entity}}Response>>, ValidationProblem>> List(
+        {{Service}}DbContext db, int? page, int? pageSize, {{ListFilterParameters}}string? sort, string? search, CancellationToken cancellationToken)
     {
-        var (p, size) = PagedResponse<{{Entity}}Response>.Normalize(page, pageSize);
+        if ({{Entity}}ListOptions.Problems(sort, search) is { } problems)
+        {
+            return TypedResults.ValidationProblem(problems);
+        }
 
-        var total = await db.{{Entities}}{{ListFilters}}.CountAsync(cancellationToken);
-        var items = await db.{{Entities}}{{ListFilters}}
-            .AsNoTracking()
-            .OrderBy(e => e.Id)   // UUID v7 → creation order, stable pagination
+        var (p, size) = PagedResponse<{{Entity}}Response>.Normalize(page, pageSize);
+        var rows = {{Entity}}ListOptions.Search(db.{{Entities}}{{ListFilters}}, search);
+
+        var total = await rows.CountAsync(cancellationToken);
+        var items = await {{Entity}}ListOptions.Sort(rows.AsNoTracking(), sort)
             .Skip((p - 1) * size)
             .Take(size)
             .ToListAsync(cancellationToken);

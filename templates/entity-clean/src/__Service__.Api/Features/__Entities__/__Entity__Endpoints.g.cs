@@ -24,7 +24,7 @@ public static partial class {{Entity}}Endpoints
 
         group.MapGet(string.Empty, List).WithName("List{{Entities}}")
             .WithSummary("List {{Entities}}")
-            .WithDescription("Pages of {{Entities}}, oldest first (page from 1, pageSize up to 100).");
+            .WithDescription("Pages of {{Entities}} (page from 1, pageSize up to 100). sort: {{SortFieldsText}} (\"-\" in front: descending; without it, oldest first). search: text in {{SearchFieldsText}}, ignoring case.");
         group.MapGet("/{id:guid}", Get).WithName("Get{{Entity}}")
             .WithSummary("Get a {{Entity}}")
             .WithDescription("Returns the {{Entity}} with that id, or 404.");
@@ -50,14 +50,21 @@ public static partial class {{Entity}}Endpoints
 
     static partial void MapCustomEndpoints(RouteGroupBuilder group);
 
-    private static async Task<Ok<PagedResponse<{{Entity}}Response>>> List(
+    private static async Task<Results<Ok<PagedResponse<{{Entity}}Response>>, ValidationProblem>> List(
         IQueryHandler<List{{Entities}}, PagedResult<{{Entity}}Dto>> handler,
         int? page,
         int? pageSize,{{ListFilterParameterLines}}
+        string? sort,
+        string? search,
         CancellationToken cancellationToken)
     {
+        if ({{Entity}}ListOptions.Problems(sort, search) is { } problems)
+        {
+            return TypedResults.ValidationProblem(problems);
+        }
+
         var (p, size) = PagedResponse<{{Entity}}Response>.Normalize(page, pageSize);
-        var result = await handler.HandleAsync(new List{{Entities}}(p, size{{ListFilterArguments}}), cancellationToken);
+        var result = await handler.HandleAsync(new List{{Entities}}(p, size{{ListFilterArguments}}, Sort: sort, Search: search), cancellationToken);
 
         return TypedResults.Ok(new PagedResponse<{{Entity}}Response>(
             [.. result.Items.Select({{Entity}}Response.From)], result.Page, result.PageSize, result.Total));

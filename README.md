@@ -167,6 +167,22 @@ mapeo EF extra en `Customize(builder)` y endpoints propios en `MapCustomEndpoint
 
 La entidad queda en `stratum.json`, así que `stratum new --from stratum.json` reconstruye el servicio con todas sus entidades.
 
+### Listados: paginar, ordenar y buscar
+
+El listado de cada entidad (`GET /api/v1/customers`) admite, además de `page` y `pageSize` (20 por defecto, 100 como
+máximo) y los filtros de sus referencias (`?customerId=`):
+
+| Parámetro | Ejemplo | Qué hace |
+| --- | --- | --- |
+| `sort` | `?sort=name`, `?sort=-createdAt` | Ordena por un dato simple de la entidad, `createdAt` o `updatedAt`; con `-` delante, descendente. Los empates (y sin `sort`) van por orden de creación, así que las páginas son estables. Un campo que no existe da 400 con la lista de los válidos. |
+| `search` | `?search=ana` | Los que contienen el texto en alguno de sus textos (sin distinguir mayúsculas). Una entidad sin textos da 400. |
+
+Se combinan: `GET /api/v1/customers?search=ana&sort=-createdAt&page=2`. Funciona igual en las herramientas MCP del
+servicio (`list_customers` con `sort` y `search`), la especificación y el `.http` lo documentan, y los tests generados
+lo comprueban. En vertical slice está en `CustomerListOptions.g.cs`; en clean-ddd, la query `ListCustomers` lleva `Sort` y
+`Search` y la resuelve `CustomerLister.g.cs` (Infrastructure). No se crean índices: si un listado grande se ordena o se
+busca mucho por un campo, añade el índice en `Customize(builder)` (`builder.HasIndex(e => e.Name)`).
+
 ## Cambiar entidades (`stratum entity`)
 
 ```bash
@@ -924,4 +940,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 25. ✅ Réplicas de entidades de otros servicios (`stratum replica`), al día con sus eventos.
 26. ✅ Trazas de eventos: reintentar un mensaje fallido y enviar eventos de prueba desde el Studio.
 27. ✅ Avisos de cambios que rompen contratos con los servicios que escuchan; cada handler va por su cuenta ante un fallo.
+28. ✅ Listados con orden (`?sort=-createdAt`) y búsqueda (`?search=ana`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

@@ -270,6 +270,13 @@ public static partial class SpecGenerator
         s.AppendLine("| Método | Ruta | Respuestas |");
         s.AppendLine("|---|---|---|");
         s.AppendLine($"| GET | `{route}?page=1&pageSize=20` | 200 lista paginada (20 por página por defecto, 100 como máximo) |");
+        var searchable = ListingCodeGen.Searchable(entity);
+        s.AppendLine($"| GET | `{route}?sort=-createdAt` | 200 ordenada por {string.Join(", ", ListingCodeGen.SortNames(entity).Select(n => $"`{n}`"))} (`-` delante: descendente; sin `sort`, la más antigua primero) · 400 si el campo no existe |");
+        if (searchable.Count > 0)
+        {
+            s.AppendLine($"| GET | `{route}?search=texto` | 200 con los que contienen el texto en {string.Join(", ", searchable.Select(p => p.Name))} (sin distinguir mayúsculas) |");
+        }
+
         foreach (var r in entity.References)
         {
             s.AppendLine($"| GET | `{route}?{Camel(r.Name)}={{id}}` | 200: {(r.IsOneToOne ? $"el {entity.Name} de un {r.References} (0 o 1)" : $"los {entity.Plural} de un {r.References}")}, paginados igual |");
@@ -614,6 +621,19 @@ public static partial class SpecGenerator
         s.AppendLine($"    Dado que hay 25 {entity.Plural}");
         s.AppendLine($"    Cuando envío GET {route}?page=2&pageSize=20");
         s.AppendLine("    Entonces la respuesta es 200 con 5 elementos y el total 25");
+        if (ListingCodeGen.Searchable(entity).FirstOrDefault() is { } text)
+        {
+            s.AppendLine();
+            s.AppendLine($"  Escenario: Buscar {entity.Plural}");
+            s.AppendLine($"    Dado un {entity.Name} con {text.Name} \"Ana López\" y otro con \"Luis Pérez\"");
+            s.AppendLine($"    Cuando envío GET {route}?search=ana&sort=-{Camel(text.Name)}");
+            s.AppendLine("    Entonces la respuesta es 200 solo con el de \"Ana López\"");
+        }
+
+        s.AppendLine();
+        s.AppendLine($"  Escenario: Ordenar por un campo que no existe");
+        s.AppendLine($"    Cuando envío GET {route}?sort=noExiste");
+        s.AppendLine("    Entonces la respuesta es 400 con los campos por los que se puede ordenar");
         s.AppendLine();
         s.AppendLine($"  Escenario: Modificar un {entity.Name}");
         s.AppendLine($"    Dado un {entity.Name} existente");

@@ -4,9 +4,6 @@
 // </auto-generated>
 #nullable enable
 using {{Service}}.Application.{{Entities}};
-// @stratum:if hasReferences
-using {{Service}}.Domain.{{Entities}};
-// @stratum:end
 using Microsoft.EntityFrameworkCore;
 
 namespace {{Service}}.Infrastructure.Persistence.{{Entities}};
@@ -19,20 +16,6 @@ internal sealed class {{Entity}}Integrity({{Service}}DbContext db) : I{{Entity}}
 {{ReferenceQueries}}
 
         return null;
-    }
-
-    public async Task<(IReadOnlyList<{{Entity}}> Items, int Total)> ListAsync(List{{Entities}} query, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(query);
-        var rows = db.{{Entities}}{{ListQueryFilters}};
-        var total = await rows.CountAsync(cancellationToken);
-        var items = await rows
-            .AsNoTracking()
-            .OrderBy(e => e.Id)   // UUID v7 → creation order, stable pagination
-            .Skip((query.Page - 1) * query.PageSize)
-            .Take(query.PageSize)
-            .ToListAsync(cancellationToken);
-        return (items, total);
     }
     // @stratum:end
     // @stratum:if hasUnique

@@ -283,6 +283,15 @@ grep -q '\[property: Required, MinLength(2), MaxLength(80)\] string Name' "$RF/S
   && ! "${MSG[@]}" rule set Supplier.Name --pattern '^[A-Z]+$' --path "$WORK/full" >/dev/null 2>&1 \
   && ! "${MSG[@]}" rule set Product.Stock --min-length 3 --path "$WORK/full" >/dev/null 2>&1 \
   && pass "validation rules: attributes (400), domain guards, column length, samples; bad rules rejected" || fail "validation rules"
+# Lists: ?sort=field|-field and ?search=text (vertical: ListOptions; clean-ddd: the Lister of Infrastructure).
+grep -q 'public static IReadOnlyList<string> SortFields { get; } = \["name", "createdAt", "updatedAt"\]' "$RF/Suppliers/SupplierListOptions.g.cs" \
+  && grep -q 'rows.Where(e => e.Name.ToLower().Contains(term))' "$RF/Suppliers/SupplierListOptions.g.cs" \
+  && grep -q 'SupplierListOptions.Problems(sort, search)' "$RF/Suppliers/SupplierEndpoints.g.cs" \
+  && grep -q '"-price" => rows.OrderByDescending(e => e.Price)' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Products/ProductLister.g.cs" \
+  && grep -q 'IProductLister, global::Catalog.Infrastructure.Persistence.Products.ProductLister' "$WORK/clean/src/Catalog.Infrastructure/Persistence/RepositoryRegistration.g.cs" \
+  && grep -q 'ListSearchesAndSorts' "$WORK/full/tests/Orders.Api.Tests/Features/SupplierEndpointsTests.g.cs" \
+  && grep -q 'search=sample&sort=name' "$WORK/full/src/Orders.Api/Orders.Api.http" \
+  && pass "lists: sort (-field descending) and search in text fields, 400 for an unknown field" || fail "lists: sort and search"
 # Operations on lists (clean-ddd): one item or a list of items as parameters, with a head start for the rule.
 "${MSG[@]}" entity operation add Bundle AddLine --params "Line:BundleLine" --path "$WORK/clean" >/dev/null
 "${MSG[@]}" entity operation add Bundle ReplaceLines --params "Lines:BundleLine[]" --path "$WORK/clean" >/dev/null
