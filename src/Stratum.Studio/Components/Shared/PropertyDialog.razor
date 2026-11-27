@@ -48,10 +48,7 @@
             <select @bind="Editor.Kind">
                 <option value="@EntityEditors.One">@L("Obligatorio", "Required")</option>
                 <option value="@EntityEditors.Optional">@L("Opcional", "Optional")</option>
-                @if (!Editor.IsReference)
-                {
-                    <option value="@EntityEditors.List">@L("Lista", "List")</option>
-                }
+                <option value="@EntityEditors.List">@(Editor.IsReference ? L("Lista (N–M)", "List (N–M)") : L("Lista", "List"))</option>
             </select>
         </label>
     </div>
@@ -61,16 +58,17 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
             <label class="field">
                 @L("Relación", "Relation")
-                <select value="@(Editor.OneToOne ? "1" : "N")" @onchange="SetRelation">
+                <select value="@(Editor.IsMany ? "M" : Editor.OneToOne ? "1" : "N")" @onchange="SetRelation">
                     <option value="N">@L($"1–N: un {target} tiene varios {Entity.Name}", $"1–N: a {target} has several {Entity.Name}")</option>
                     <option value="1">@L($"1–1: un {target} tiene un solo {Entity.Name}", $"1–1: a {target} has a single {Entity.Name}")</option>
+                    <option value="M">@L($"N–M: un {Entity.Name} tiene varios {target} y al revés", $"N–M: a {Entity.Name} has several {target} and the other way round")</option>
                 </select>
             </label>
             <label class="field">
                 @L($"Al borrar un {target}", $"When a {target} is deleted")
                 <select @bind="Editor.OnDelete">
                     <option value="@DeleteBehaviors.Restrict">@L("Impedirlo mientras lo use (409)", "Prevent it while in use (409)")</option>
-                    <option value="@DeleteBehaviors.Cascade">@L($"Borrar también este {Entity.Name}", $"Delete this {Entity.Name} too")</option>
+                    <option value="@DeleteBehaviors.Cascade">@(Editor.IsMany ? L($"Quitarlo de la lista de este {Entity.Name}", $"Take it out of this {Entity.Name}'s list") : L($"Borrar también este {Entity.Name}", $"Delete this {Entity.Name} too"))</option>
                     @if (Editor.EffectiveKind == EntityEditors.Optional)
                     {
                         <option value="@DeleteBehaviors.SetNull">@L($"Vaciar {Editor.Name}", $"Empty {Editor.Name}")</option>
@@ -78,7 +76,15 @@
                 </select>
             </label>
         </div>
+        @if (Editor.IsMany)
+        {
+            var many = ManyName(target);
+            <span class="hint">@L($"Se guarda la lista de ids de {target} (en la API, \"{Camel(many)}\": [...]); Stratum comprueba que existen todos. Para ver los {Entity.Plural} que tienen un {target}: GET ?{Camel(many[..^1])}=…", $"The list of {target} ids is stored (in the API, \"{Camel(many)}\": [...]); Stratum checks they all exist. To get the {Entity.Plural} that have a {target}: GET ?{Camel(many[..^1])}=…")</span>
+        }
+        else
+        {
         <span class="hint">@L($"Se guarda el id del {target}; Stratum comprueba que existe y lo aplica la base de datos (clave ajena{(Editor.OneToOne ? " con índice único" : string.Empty)}). Para ver los de un {target}: GET ?{Camel(Editor.Name.Trim().Length == 0 ? target + "Id" : Editor.Name.Trim())}=…", $"The {target}'s id is stored; Stratum checks it exists and the database enforces it (foreign key{(Editor.OneToOne ? " with a unique index" : string.Empty)}). To get the ones of a {target}: GET ?{Camel(Editor.Name.Trim().Length == 0 ? target + "Id" : Editor.Name.Trim())}=…")</span>
+        }
     }
     else if (Editor.IsItem)
     {
@@ -187,7 +193,36 @@
         Rules = Editor.ReadRules().Rules,
     };
 
-    private void SetRelation(ChangeEventArgs e) => Editor.OneToOne = e.Value?.ToString() == "1";
+    private void SetRelation(ChangeEventArgs e)
+    {
+        var kind = e.Value?.ToString();
+        Editor.OneToOne = kind == "1";
+        if (kind == "M")
+        {
+            Editor.Kind = EntityEditors.List;   // N–M: a list of ids, never optional
+            if (Editor.OnDelete == DeleteBehaviors.SetNull)
+            {
+                Editor.OnDelete = DeleteBehaviors.Restrict;
+            }
+        }
+        else if (Editor.Kind == EntityEditors.List)
+        {
+            Editor.Kind = EntityEditors.One;
+        }
+    }
+
+    /// <summary>The property name of an N–M relation as stratum.json keeps it (Tags → TagIds).</summary>
+    private string ManyName(string target)
+    {
+        try
+        {
+            return PropertyTypes.Parse($"{(Editor.Name.Trim().Length == 0 ? target : Editor.Name.Trim())}:{target}[]").Single().Name;
+        }
+        catch (StratumException)
+        {
+            return target + "Ids";   // a name still being typed
+        }
+    }
 
     private static string Camel(string name) => char.ToLowerInvariant(name[0]) + name[1..];
 

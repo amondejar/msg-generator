@@ -26,5 +26,10 @@ public interface I{{Entity}}Integrity
     /// <summary>Other entities still point to this {{Entity}}: it can't be deleted.</summary>
     Task<string?> InUseAsync(Guid id, CancellationToken cancellationToken);
     // @stratum:end
+    // @stratum:if unlinks
+
+    /// <summary>Takes this {{Entity}} out of the N–M lists that drop it on delete (saved with the delete).</summary>
+    Task UnlinkAsync(Guid id, CancellationToken cancellationToken);
+    // @stratum:end
 }
 // @stratum:end

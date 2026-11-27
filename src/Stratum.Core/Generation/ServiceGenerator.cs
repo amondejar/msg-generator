@@ -184,8 +184,9 @@ public static class ServiceGenerator
             entityTokens[key] = value;
         }
 
-        var hasReferences = entity.References.Any();
+        var hasReferences = entity.References.Any() || entity.Links.Any();
         var referenced = ModelRules.Dependents(definition, entity.Name, includeSelf: true, blockingOnly: true).Count > 0;
+        var unlinks = EntityCodeGen.Unlinks(definition, entity.Name).Count > 0;
         var operations = definition.Architecture == Architectures.CleanDdd ? entity.Operations ?? [] : [];
 
         bool EntityConditions(string feature) => feature switch
@@ -200,7 +201,10 @@ public static class ServiceGenerator
             "hasRequiredReferences" => entity.References.Any(p => !p.Nullable),
             "referenced" => referenced,
             "hasUnique" => entity.References.Any(p => p.IsOneToOne),
-            "relations" => hasReferences || referenced,
+            "relations" => hasReferences || referenced || unlinks,
+            "unlinks" => unlinks,
+            "hasLinks" => entity.Links.Any(),
+            "deleteChecks" => referenced || unlinks,
             "hasOperations" => operations.Count > 0,
             "hasLists" => entity.Properties.Any(p => p.IsList),
             "searchable" => ListingCodeGen.Searchable(entity).Count > 0,
@@ -362,7 +366,7 @@ public static class ServiceGenerator
             _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new StratumException(
                 $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
                 "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents, hasEnums, hasTypes, hasModelTypes " +
-                "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, hasOperations, hasLists, searchable, integrationEvents, publishCreated/Updated/Deleted en plantillas de entidad)."),
+                "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, unlinks, deleteChecks, hasLinks, hasOperations, hasLists, searchable, integrationEvents, publishCreated/Updated/Deleted en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };
     }

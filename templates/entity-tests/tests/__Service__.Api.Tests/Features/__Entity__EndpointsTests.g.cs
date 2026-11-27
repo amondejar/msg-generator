@@ -159,6 +159,23 @@ public sealed partial class {{Entity}}EndpointsTests(ApiFactory factory) : IClas
         // @stratum:end
     }
     // @stratum:end
+    // @stratum:if hasLinks
+
+    [Fact]
+    public async Task UnknownIdInAManyToManyListIsRejected()
+    {
+        using var client = {{TestClient}};
+        var request = (await SampleRequestAsync(client)) with { {{FirstLink}} = [Guid.NewGuid()] };
+
+        var response = await client.PostAsJsonAsync(Collection, request);
+
+        // @stratum:if cleanDdd
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        // @stratum:else
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        // @stratum:end
+    }
+    // @stratum:end
 
     /// <summary>POST and the URI of the new {{Entity}}.</summary>
     private static async Task<Uri> CreateAsync(HttpClient client, {{Entity}}Request request)

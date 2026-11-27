@@ -145,11 +145,11 @@
     <div id="plan" class="plan"></div>
     <h3>{{Cómo se usa::How to use it}}</h3>
     <div class="hint">
-      {{<b>Relacionar:</b> arrastra el <b>⊕</b> de una entidad hasta otra: la primera guarda el id de la segunda (Address → Customer: «una dirección es de un cliente»). Eliges 1–N o 1–1 y qué pasa al borrar.<br />
+      {{<b>Relacionar:</b> arrastra el <b>⊕</b> de una entidad hasta otra: la primera guarda el id de la segunda (Address → Customer: «una dirección es de un cliente»). Eliges 1–N, 1–1 o N–M (una lista de ids: un cliente con varias etiquetas) y qué pasa al borrar.<br />
       <b>Composición:</b> arrastra el ⊕ hasta un tipo de elemento (▤): forma parte de la entidad, uno (columnas en su tabla) o una lista (tabla propia).<br />
       <b>Cambiar o quitar:</b> pulsa la fila de la relación o su línea.<br />
       <b>Mover:</b> arrastra la cabecera; el fondo para desplazarte; rueda para el zoom.<br />
-      Nada se escribe hasta <b>Guardar y cerrar</b>; después, crea la migración.::<b>Relate:</b> drag an entity's <b>⊕</b> to another one: the first stores the id of the second (Address → Customer: «an address belongs to a customer»). You choose 1–N or 1–1 and what deleting does.<br />
+      Nada se escribe hasta <b>Guardar y cerrar</b>; después, crea la migración.::<b>Relate:</b> drag an entity's <b>⊕</b> to another one: the first stores the id of the second (Address → Customer: «an address belongs to a customer»). You choose 1–N, 1–1 or N–M (a list of ids: a customer with several tags) and what deleting does.<br />
       <b>Composition:</b> drag the ⊕ to an item type (▤): it becomes part of the entity, one (columns in its table) or a list (own table).<br />
       <b>Change or remove:</b> click the relation's row or its line.<br />
       <b>Move:</b> drag the header; the background to pan; the wheel to zoom.<br />
@@ -182,7 +182,7 @@
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const service = new URLSearchParams(location.search).get("service") || "";
   const T = {
-    restrict: "{{impedir::prevent}}", cascade: "{{en cascada::cascade}}", setNull: "{{vaciar::set empty}}",
+    restrict: "{{impedir::prevent}}", cascade: "{{en cascada::cascade}}", setNull: "{{vaciar::set empty}}", unlink: "{{se quita de la lista::leaves the list}}",
     optional: "{{opcional::optional}}", list: "{{lista::list}}",
   };
 
@@ -214,7 +214,7 @@
       const card = find(c.entity);
       if (!card) continue;
       const i = card.properties.findIndex((p) => p.name.toLowerCase() === String(c.property).toLowerCase());
-      if (c.kind === "relation") card.properties.push({ name: c.property, type: c.target, kind: "reference", target: c.target, optional: c.optional, oneToOne: c.oneToOne, onDelete: c.onDelete || "restrict", added: true });
+      if (c.kind === "relation") card.properties.push({ name: c.property, type: c.target, kind: "reference", target: c.target, optional: c.optional, oneToOne: c.oneToOne, list: !!c.many, onDelete: c.onDelete || "restrict", added: true });
       if (c.kind === "composition") card.properties.push({ name: c.property, type: c.target + (c.list ? "[]" : ""), kind: "item", target: c.target, list: c.list, optional: c.optional, added: true });
       if (c.kind === "updateRelation" && i >= 0) Object.assign(card.properties[i], { optional: c.optional, oneToOne: c.oneToOne, onDelete: c.onDelete, changed: true });
       if (c.kind === "remove" && i >= 0) card.properties[i].removed = true;
@@ -225,8 +225,8 @@
   function describe(c) {
     switch (c.kind) {
       case "entity": return `{{Nueva entidad::New entity}} ${c.entity}`;
-      case "relation": return `${c.entity}.${c.property} → ${c.target} (${c.oneToOne ? "1–1" : "1–N"}${c.optional ? ", " + T.optional : ""}, ${T[c.onDelete || "restrict"]})`;
-      case "updateRelation": return `${c.entity}.${c.property}: ${c.oneToOne ? "1–1" : "1–N"}${c.optional ? ", " + T.optional : ""}, ${T[c.onDelete || "restrict"]}`;
+      case "relation": return `${c.entity}.${c.property} → ${c.target} (${c.many ? "N–M" : c.oneToOne ? "1–1" : "1–N"}${c.optional ? ", " + T.optional : ""}, ${c.many && c.onDelete === "cascade" ? T.unlink : T[c.onDelete || "restrict"]})`;
+      case "updateRelation": return `${c.entity}.${c.property}: ${c.many ? "N–M" : c.oneToOne ? "1–1" : "1–N"}${c.optional ? ", " + T.optional : ""}, ${c.many && c.onDelete === "cascade" ? T.unlink : T[c.onDelete || "restrict"]}`;
       case "composition": return `${c.entity}.${c.property} ◆ ${c.target}${c.list ? "[]" : ""}`;
       default: return `{{Quitar::Remove}} ${c.entity}.${c.property}`;
     }
@@ -301,7 +301,7 @@
     let cls = "";
     if (p.kind === "reference") {
       cls = " rel";
-      type = `→ ${esc(p.target)} ${p.oneToOne ? "1–1" : "N–1"}${p.optional ? "?" : ""}`;
+      type = p.list ? `→ ${esc(p.target)}[] N–M` : `→ ${esc(p.target)} ${p.oneToOne ? "1–1" : "N–1"}${p.optional ? "?" : ""}`;
     } else if (p.kind === "item") {
       cls = " item";
       type = `◆ ${esc(p.target)}${p.list ? "[]" : ""}${p.optional ? "?" : ""}`;
@@ -353,10 +353,10 @@
     const card = m.entities.find((c) => c.name === selection.entity);
     const p = card && card.properties.find((x) => x.name === selection.property);
     if (!p) { selection = null; bar.className = ""; return; }
-    const what = p.kind === "reference" ? `<b>${esc(card.name)}.${esc(p.name)}</b> → ${esc(p.target)} · ${p.oneToOne ? "1–1" : "1–N"}${p.optional ? " · " + T.optional : ""} · {{al borrar::on delete}}: ${T[p.onDelete || "restrict"]}`
+    const what = p.kind === "reference" ? `<b>${esc(card.name)}.${esc(p.name)}</b> → ${esc(p.target)} · ${p.list ? "N–M" : p.oneToOne ? "1–1" : "1–N"}${p.optional ? " · " + T.optional : ""} · {{al borrar::on delete}}: ${p.list && p.onDelete === "cascade" ? T.unlink : T[p.onDelete || "restrict"]}`
       : `<b>${esc(card.name)}.${esc(p.name)}</b> ◆ ${esc(p.target)}${p.list ? "[]" : ""}`;
     bar.innerHTML = `<span>${what}</span>${p.kind === "reference" && !p.added ? '<button class="btn" id="act-edit">{{Cambiar…::Change…}}</button>' : ""}<button class="btn" id="act-remove" style="color: var(--err)">{{Quitar::Remove}}</button><button class="icon" id="act-close">✕</button>`;
-    if ($("act-edit")) $("act-edit").onclick = () => relationDialog({ entity: card.name, property: p.name, target: p.target, oneToOne: p.oneToOne, optional: p.optional, onDelete: p.onDelete || "restrict" }, true);
+    if ($("act-edit")) $("act-edit").onclick = () => relationDialog({ entity: card.name, property: p.name, target: p.target, oneToOne: p.oneToOne, many: !!p.list, optional: p.optional, onDelete: p.onDelete || "restrict" }, true);
     $("act-remove").onclick = () => {
       const pending = changes.findIndex((c) => (c.kind === "relation" || c.kind === "composition") && c.entity === card.name && c.property === p.name);
       if (pending >= 0) { changes.splice(pending, 1); selection = null; changed(); }
@@ -397,8 +397,8 @@
       html += `<path class="hit" d="${d}" data-entity="${esc(owner.name)}" data-property="${esc(p.name)}" />`;
       if (p.kind === "reference") {
         const near = right ? 14 : -22, far = right ? -26 : 14;
-        html += `<text x="${x1 + near}" y="${y1 - 6}" class="${p.added ? "pending" : ""}">${p.oneToOne ? "1" : "N"}</text>`;
-        html += `<text x="${(self ? b.x + b.w : x2) + (self ? 6 : far)}" y="${y2 - 6}" class="${p.added ? "pending" : ""}">${p.optional ? "0..1" : "1"}</text>`;
+        html += `<text x="${x1 + near}" y="${y1 - 6}" class="${p.added ? "pending" : ""}">${p.list ? "N" : p.oneToOne ? "1" : "N"}</text>`;
+        html += `<text x="${(self ? b.x + b.w : x2) + (self ? 6 : far)}" y="${y2 - 6}" class="${p.added ? "pending" : ""}">${p.list ? "M" : p.optional ? "0..1" : "1"}</text>`;
       }
     }
     svg.innerHTML = `<defs><marker id="diamond" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path d="M1 6 L6 1 L11 6 L6 11 z" fill="#A78BFA" /></marker></defs>${html}`;
@@ -430,6 +430,7 @@
       <label>{{Relación::Relation}}<select id="r-kind">
         <option value="N">{{1–N: un ::1–N: a }}${esc(r.target)} {{tiene varios ::has several }}${esc(r.entity)}</option>
         <option value="1">{{1–1: un ::1–1: a }}${esc(r.target)} {{tiene un solo ::has a single }}${esc(r.entity)}</option>
+        <option value="M">{{N–M: un ::N–M: a }}${esc(r.entity)} {{tiene varios ::has several }}${esc(r.target)} {{y al revés::and the other way round}}</option>
       </select></label>
       <label class="check"><input type="checkbox" id="r-optional" /> {{Opcional (puede no tener ::Optional (it may have no }}${esc(r.target)})</label>
       <label>{{Al borrar un ::When a }}${esc(r.target)}{{:: is deleted}}<select id="r-delete">
@@ -441,18 +442,37 @@
       <div class="err" id="r-err"></div>`;
     openDialog(editing ? "{{Cambiar la relación::Change the relation}}" : "{{Nueva relación::New relation}}", body, () => {
       const name = $("r-name").value.trim();
-      const optional = $("r-optional").checked, onDelete = $("r-delete").value, oneToOne = $("r-kind").value === "1";
+      const many = $("r-kind").value === "M";
+      const optional = !many && $("r-optional").checked, onDelete = $("r-delete").value, oneToOne = $("r-kind").value === "1";
       if (!/^[A-Za-z][A-Za-z0-9]*$/.test(name)) { $("r-err").textContent = "{{El nombre: solo letras y números, empezando por letra.::The name: only letters and digits, starting with a letter.}}"; return false; }
       if (onDelete === "setNull" && !optional) { $("r-err").textContent = "{{«Vaciar» solo vale para una relación opcional.::«Set empty» only works for an optional relation.}}"; return false; }
-      if (r.target === r.entity && onDelete !== "restrict") { $("r-err").textContent = "{{Con la propia entidad solo se puede impedir el borrado.::With the same entity the delete can only be prevented.}}"; return false; }
-      if (editing) addChange({ kind: "updateRelation", entity: r.entity, property: r.property, oneToOne, optional, onDelete });
-      else addChange({ kind: "relation", entity: r.entity, property: name, target: r.target, oneToOne, optional, onDelete });
+      if (many && onDelete === "setNull") { $("r-err").textContent = "{{En N–M, al borrar se impide o se quita de la lista.::In N–M, deleting is prevented or it leaves the list.}}"; return false; }
+      if (!many && r.target === r.entity && onDelete !== "restrict") { $("r-err").textContent = "{{Con la propia entidad solo se puede impedir el borrado.::With the same entity the delete can only be prevented.}}"; return false; }
+      if (editing) addChange({ kind: "updateRelation", entity: r.entity, property: r.property, oneToOne, optional, onDelete, many });
+      else addChange({ kind: "relation", entity: r.entity, property: name, target: r.target, oneToOne, optional, onDelete, many });
     });
-    $("r-kind").value = r.oneToOne ? "1" : "N";
+    $("r-kind").value = r.many ? "M" : r.oneToOne ? "1" : "N";
+    // N–M is a list: never optional; deleting the target prevents it or takes it out of the list. Kind can't change later.
+    const manyState = () => {
+      const many = $("r-kind").value === "M";
+      $("r-optional").disabled = many;
+      $("r-delete").querySelector('[value="cascade"]').textContent = many ? "{{Quitarlo de la lista de cada ::Take it out of the list of each }}" + r.entity : "{{Borrar también sus ::Delete its }}" + r.entity + "{{:: too}}";
+      $("r-delete").querySelector('[value="setNull"]').disabled = many;
+      if (!editing) {
+        const n = $("r-name");
+        if (many && n.value === r.target + "Id") n.value = r.target + "Ids";
+        if (!many && n.value === r.target + "Ids") n.value = r.target + "Id";
+        sig();
+      }
+    };
+    if (editing) {
+      for (const o of $("r-kind").options) o.disabled = r.many ? o.value !== "M" : o.value === "M";
+    }
     $("r-optional").checked = !!r.optional || r.target === r.entity;
     $("r-delete").value = r.onDelete || "restrict";
     const sig = () => { $("r-sig").textContent = `${r.entity}.${$("r-name").value.trim() || "?"} → ${r.target}`; };
     $("r-name").addEventListener("input", sig); sig();
+    $("r-kind").addEventListener("change", manyState); manyState();
     if ($("r-swap")) $("r-swap").onclick = () => { closeDialog(); relationDialog({ entity: r.target, property: r.entity + "Id", target: r.entity, onDelete: "restrict" }, false); };
   }
 

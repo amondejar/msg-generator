@@ -17,12 +17,13 @@ public sealed record EntityChange(
     bool Optional = false,
     string? OnDelete = null,
     bool List = false,
-    string? Properties = null)
+    string? Properties = null,
+    bool Many = false)
 {
     public string Describe() => Kind switch
     {
         "entity" => $"Nueva entidad {Entity} ({Properties})",
-        "relation" => $"{Entity}.{Property} → {Target} ({(OneToOne ? "1–1" : "1–N")}{(Optional ? ", opcional" : string.Empty)})",
+        "relation" => $"{Entity}.{Property} → {Target} ({(Many ? "N–M" : OneToOne ? "1–1" : "1–N")}{(Optional ? ", opcional" : string.Empty)})",
         "updateRelation" => $"{Entity}.{Property}: {(OneToOne ? "1–1" : "1–N")}{(Optional ? ", opcional" : string.Empty)}, al borrar {OnDelete}",
         "composition" => $"{Entity}.{Property} ◆ {Target}{(List ? "[]" : string.Empty)}",
         "remove" => $"Quitar {Entity}.{Property}",
@@ -53,7 +54,7 @@ public static class EntityDesigner
                 {
                     "entity" => AddEntity(updated, change),
                     "relation" => Relations.Add(updated, change.Entity, change.Property, Required(change.Target, "la entidad destino"),
-                        change.OneToOne, change.Optional, change.OnDelete),
+                        change.OneToOne, change.Optional, change.OnDelete, change.Many),
                     "updateRelation" => Relations.Update(updated, change.Entity, Required(change.Property, "la propiedad"),
                         change.OneToOne, change.Optional, change.OnDelete ?? DeleteBehaviors.Restrict),
                     "composition" => Relations.AddComposition(updated, change.Entity, Required(change.Property, "la propiedad"),

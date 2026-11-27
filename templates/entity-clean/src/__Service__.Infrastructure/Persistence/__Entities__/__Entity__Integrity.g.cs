@@ -42,5 +42,12 @@ internal sealed class {{Entity}}Integrity({{Service}}DbContext db) : I{{Entity}}
         return null;
     }
     // @stratum:end
+    // @stratum:if unlinks
+
+    public async Task UnlinkAsync(Guid id, CancellationToken cancellationToken)
+    {
+{{UnlinkStatements}}
+    }
+    // @stratum:end
 }
 // @stratum:end

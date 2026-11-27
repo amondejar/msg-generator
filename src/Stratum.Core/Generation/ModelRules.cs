@@ -30,6 +30,29 @@ public static partial class ModelRules
 
         foreach (var entity in definition.Entities)
         {
+            foreach (var link in entity.Links)
+            {
+                if (!names.Contains(link.References!))
+                {
+                    var similar = definition.Entities.FirstOrDefault(e => e.Name.Equals(link.References, StringComparison.OrdinalIgnoreCase));
+                    throw new StratumException(similar is not null
+                        ? $"{entity.Name}.{link.Name} apunta a '{link.References}': ¿querías decir '{similar.Name}'?"
+                        : $"{entity.Name}.{link.Name}: no hay ninguna entidad ni tipo de elemento '{link.References}' " +
+                          $"(entidades: {(names.Count == 0 ? "ninguna" : string.Join(", ", names))}; tipos: {string.Join(", ", (definition.Types ?? []).Select(t => t.Name).DefaultIfEmpty("ninguno"))}). " +
+                          $"Una lista de otra entidad es una relación N–M ({link.Name}:{link.References}[]); una lista de objetos propios necesita antes su tipo (stratum type add).");
+                }
+
+                if (link.Unique == true)
+                {
+                    throw new StratumException($"{entity.Name}.{link.Name}: una relación N–M no puede ser 1–1.");
+                }
+
+                if (link.DeleteBehavior is not (DeleteBehaviors.Restrict or DeleteBehaviors.Cascade))
+                {
+                    throw new StratumException($"{entity.Name}.{link.Name}: al borrar un {link.References}, una relación N–M puede impedirlo (restrict) o quitarlo de la lista (cascade).");
+                }
+            }
+
             foreach (var reference in entity.References)
             {
                 if (!names.Contains(reference.References!))
@@ -317,7 +340,7 @@ public static partial class ModelRules
         ArgumentNullException.ThrowIfNull(definition);
         return [.. definition.Entities
             .Where(e => includeSelf || e.Name != entity)
-            .SelectMany(e => e.References.Where(r => r.References == entity && (!blockingOnly || r.DeleteBehavior == DeleteBehaviors.Restrict)).Select(r => (e, r)))];
+            .SelectMany(e => e.References.Concat(e.Links).Where(r => r.References == entity && (!blockingOnly || r.DeleteBehavior == DeleteBehaviors.Restrict)).Select(r => (e, r)))];
     }
 
     /// <summary>"Confirm" + no event name → "OrderConfirmed". Parameters with the same rules as --props.</summary>
@@ -429,6 +452,11 @@ public static partial class ModelRules
 
             foreach (var parameter in operation.Parameters.Where(p => p.References is not null))
             {
+                if (parameter.IsList)
+                {
+                    throw new StratumException($"{entity.Name}.{operation.Name}: el parámetro {parameter.Name} es una lista de {parameter.References}; las operaciones no admiten listas de referencias (usa una lista de guid).");
+                }
+
                 if (!definition.Entities.Any(e => e.Name == parameter.References))
                 {
                     throw new StratumException($"{entity.Name}.{operation.Name}: el parámetro {parameter.Name} apunta a '{parameter.References}', que no es una entidad de este servicio.");

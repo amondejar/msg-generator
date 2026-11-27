@@ -199,8 +199,11 @@ public static partial class EntityEditors
             return (PropertyDraft.Fitting(rules, Type, EffectiveKind == List), null);
         }
 
-        /// <summary>What Kind really is: references are never lists.</summary>
-        public string EffectiveKind => IsReference && Kind == List ? One : Kind;
+        /// <summary>What Kind really is (a reference as a list is an N–M relation).</summary>
+        public string EffectiveKind => Kind;
+
+        /// <summary>An N–M relation: a list of ids of another entity.</summary>
+        public bool IsMany => IsReference && Kind == List;
 
         public static PropertyEditor New(EntityDraft entity) =>
             new() { Name = string.Empty, Type = "string", Kind = One };
@@ -239,12 +242,17 @@ public static partial class EntityEditors
                 return L($"{entity.Name} ya tiene una propiedad {Name.Trim()}.", $"{entity.Name} already has a property {Name.Trim()}.");
             }
 
-            if (IsReference && OnDelete == DeleteBehaviors.SetNull && EffectiveKind != Optional)
+            if (IsMany && OnDelete == DeleteBehaviors.SetNull)
+            {
+                return L("En una relación N–M, al borrar se impide o se quita de la lista.", "In an N–M relation, deleting is prevented or it leaves the list.");
+            }
+
+            if (IsReference && !IsMany && OnDelete == DeleteBehaviors.SetNull && EffectiveKind != Optional)
             {
                 return L("«Vaciar» solo vale para una relación opcional: márcala como opcional o elige otra opción al borrar.", "«Set empty» only works for an optional relation: make it optional or choose another delete option.");
             }
 
-            if (IsReference && TypeName(Type) == entity.Name && OnDelete != DeleteBehaviors.Restrict)
+            if (IsReference && !IsMany && TypeName(Type) == entity.Name && OnDelete != DeleteBehaviors.Restrict)
             {
                 return L("Una relación con la propia entidad solo puede impedir el borrado (SQL Server rechaza los ciclos en cascada).", "A relation to the same entity can only prevent the delete (SQL Server rejects cascade cycles).");
             }
@@ -271,7 +279,7 @@ public static partial class EntityEditors
             target.Type = Type;
             target.List = EffectiveKind == List;
             target.Nullable = EffectiveKind == Optional;
-            target.OneToOne = IsReference && OneToOne;
+            target.OneToOne = IsReference && !IsMany && OneToOne;
             target.OnDelete = IsReference ? OnDelete : DeleteBehaviors.Restrict;
             target.Rules = ReadRules().Rules;
             if (Original is null)
@@ -291,6 +299,9 @@ public static partial class EntityEditors
         ? p.IsList
             ? L($"Tabla propia de {item} · se reemplaza entera", $"Own table of {item} · replaced as a whole")
             : L($"Columnas de {item} en esta tabla", $"Columns of {item} in this table") + (p.Nullable ? L(" · opcional", " · optional") : string.Empty)
+        : p.References is { } linked && p.IsList
+        ? L($"N–M · lista de ids de {linked} (comprueba que existen) · ", $"N–M · list of {linked} ids (checked to exist) · ")
+            + (p.OnDelete == DeleteBehaviors.Cascade ? L($"al borrar un {linked} se quita de la lista", $"deleting a {linked} takes it out of the list") : L($"impide borrar un {linked} en uso", $"prevents deleting a {linked} in use"))
         : p.IsList
         ? (p.Enum is not null ? L("Lista de textos", "List of texts") : L("Columna JSON · vacía por defecto", "JSON column · empty by default"))
         : p.References is { } target

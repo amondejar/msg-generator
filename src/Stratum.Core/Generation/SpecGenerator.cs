@@ -277,6 +277,11 @@ public static partial class SpecGenerator
             s.AppendLine($"| GET | `{route}?search=texto` | 200 con los que contienen el texto en {string.Join(", ", searchable.Select(p => p.Name))} (sin distinguir mayúsculas) |");
         }
 
+        foreach (var l in entity.Links)
+        {
+            s.AppendLine($"| GET | `{route}?{Camel(EntityCodeGen.LinkFilter(l))}={{id}}` | 200: los {entity.Plural} que tienen ese {l.References} en {l.Name}, paginados igual |");
+        }
+
         foreach (var r in entity.References)
         {
             s.AppendLine($"| GET | `{route}?{Camel(r.Name)}={{id}}` | 200: {(r.IsOneToOne ? $"el {entity.Name} de un {r.References} (0 o 1)" : $"los {entity.Plural} de un {r.References}")}, paginados igual |");
@@ -285,7 +290,9 @@ public static partial class SpecGenerator
         s.AppendLine($"| GET | `{route}/{{id}}` | 200 · 404 |");
         s.AppendLine($"| POST | `{route}` | 201 con `Location` · 400 |");
         s.AppendLine($"| PUT | `{route}/{{id}}` | 204 · 400 · 404 |");
-        var effects = string.Concat(DeleteEffects(d, entity).Select(x => x.Property.DeleteBehavior == DeleteBehaviors.Cascade
+        var effects = string.Concat(DeleteEffects(d, entity).Select(x => x.Property.IsLink
+            ? $" · lo quita de {x.Entity.Name}.{x.Property.Name}"
+            : x.Property.DeleteBehavior == DeleteBehaviors.Cascade
             ? $" · borra también sus {x.Entity.Plural} ({x.Entity.Name}.{x.Property.Name})"
             : $" · deja vacío {x.Entity.Name}.{x.Property.Name}"));
         s.AppendLine($"| DELETE | `{route}/{{id}}` | 204 · 404{(ReferencedBy(d, entity).Count > 0 ? " · 409 si lo usan otras entidades" : string.Empty)}{effects} |");
@@ -372,7 +379,7 @@ public static partial class SpecGenerator
     }
 
     private static string TypeLabel(PropertyDefinition p) =>
-        p.References is { } target ? $"guid → {target}"
+        p.References is { } target ? (p.IsList ? $"guid[] → {target} (N–M)" : $"guid → {target}")
         : p.Type == PropertyTypes.ObjectType ? $"{p.Of}{(p.IsList ? "[]" : string.Empty)}"
         : p.Enum is { } en ? $"{en}{(p.IsList ? "[]" : string.Empty)}"
         : $"{p.Type}{(p.IsList ? "[]" : string.Empty)}";
@@ -382,6 +389,12 @@ public static partial class SpecGenerator
         if (p.Type == PropertyTypes.ObjectType)
         {
             return p.IsList ? $"lista de {p.Of}: tabla propia; `PUT` la reemplaza entera" : $"un {p.Of}: sus columnas en la misma tabla{(p.Nullable ? string.Empty : " · obligatorio")}";
+        }
+
+        if (p.IsLink)
+        {
+            return $"N–M: lista de ids de {p.References} (vacía por defecto); todos tienen que existir (si no, 400) · " +
+                   (p.DeleteBehavior == DeleteBehaviors.Cascade ? $"al borrar un {p.References} se quita de la lista" : $"un {p.References} no se puede borrar mientras esté en alguna lista (409)");
         }
 
         if (p.IsList)
@@ -607,8 +620,8 @@ public static partial class SpecGenerator
         foreach (var p in entity.Properties.Where(p => p.References is not null))
         {
             s.AppendLine();
-            s.AppendLine($"  Escenario: {p.Name} apunta a un {p.References} que no existe");
-            s.AppendLine($"    Cuando envío POST {route} con un {p.Name} que no es de ningún {p.References}");
+            s.AppendLine(p.IsLink ? $"  Escenario: {p.Name} incluye un {p.References} que no existe" : $"  Escenario: {p.Name} apunta a un {p.References} que no existe");
+            s.AppendLine(p.IsLink ? $"    Cuando envío POST {route} con un id en {p.Name} que no es de ningún {p.References}" : $"    Cuando envío POST {route} con un {p.Name} que no es de ningún {p.References}");
             s.AppendLine($"    Entonces la respuesta es 400 con el error de {p.Name}");
         }
 

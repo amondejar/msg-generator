@@ -60,8 +60,8 @@ public sealed class PropertyDraft
 
     public string? Item => Type.StartsWith(ItemPrefix, StringComparison.Ordinal) ? Type[ItemPrefix.Length..] : null;
 
-    /// <summary>Never references.</summary>
-    public bool IsList => List && References is null;
+    /// <summary>A list; with a reference, an N–M relation ("TagIds:Tag[]").</summary>
+    public bool IsList => List;
 
     public PropertyDefinition ToDefinition()
     {
@@ -69,11 +69,18 @@ public sealed class PropertyDraft
         var list = IsList ? true : (bool?)null;
         var nullable = Nullable && !IsList;
         return References is { } target
-            ? new PropertyDefinition
-            {
-                Name = name, Type = "guid", Nullable = nullable, References = target,
-                Unique = OneToOne, OnDelete = OnDelete == DeleteBehaviors.SetNull && !nullable ? DeleteBehaviors.Restrict : OnDelete,
-            }
+            ? IsList
+                ? new PropertyDefinition
+                {
+                    // N–M: Tags → TagIds, like --props "Tags:Tag[]".
+                    Name = PropertyTypes.Parse($"{(name.Length == 0 ? target : name)}:{target}[]").Single().Name, Type = "guid", References = target, List = true,
+                    OnDelete = OnDelete == DeleteBehaviors.Cascade ? DeleteBehaviors.Cascade : DeleteBehaviors.Restrict,
+                }
+                : new PropertyDefinition
+                {
+                    Name = name, Type = "guid", Nullable = nullable, References = target,
+                    Unique = OneToOne, OnDelete = OnDelete == DeleteBehaviors.SetNull && !nullable ? DeleteBehaviors.Restrict : OnDelete,
+                }
             : Item is { } item
                 ? new PropertyDefinition { Name = name, Type = PropertyTypes.ObjectType, List = list, Nullable = nullable, Of = item }
                 : Enum is { } enumName

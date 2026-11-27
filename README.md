@@ -218,7 +218,7 @@ El tipo de una propiedad puede ser otra entidad del servicio (`Customer:Customer
 - En el Studio, el tipo de la propiedad ofrece `→ Customer`.
 - Entre servicios no hay claves ajenas: guarda el Id como `guid` y mantén los datos con [eventos](#escuchar-eventos-de-otro-servicio).
 
-### Relaciones: 1–N, 1–1 y composición (`stratum relation`)
+### Relaciones: 1–N, 1–1, N–M y composición (`stratum relation`)
 
 Una referencia es por defecto **1–N** (muchos `Order` para un `Customer`). Además se puede elegir:
 
@@ -231,6 +231,27 @@ Una referencia es por defecto **1–N** (muchos `Order` para un `Customer`). Ade
 | `--optional` | La clave ajena admite `null`. |
 
 Cada referencia añade un filtro al listado: `GET /api/v1/orders?customerId={id}` (también en las herramientas MCP).
+
+Una relación **N–M** es una lista de ids de otra entidad: un `Customer` tiene varias `Tag` y una `Tag` está en varios
+`Customer`.
+
+```bash
+stratum add entity Customer --props "Name:string, Tags:Tag[]"        # Tags:Tag[] → la propiedad TagIds
+stratum relation add Customer Tag --many                              # lo mismo sobre una entidad existente
+stratum relation add Customer.Favorites Customer --many --on-delete cascade
+```
+
+| Qué | Cómo |
+| --- | --- |
+| API | `"tagIds": ["…", "…"]` en la petición y la respuesta (sin elementos, lista vacía). El `PUT` la reemplaza entera. |
+| Comprobación | Todos los ids tienen que existir: 400 en vertical slice, 422 en clean-ddd. |
+| Filtro | `GET /api/v1/customers?tagId={id}`: los clientes que tienen esa etiqueta (también en MCP). |
+| Al borrar una `Tag` | `restrict` (por defecto): 409 mientras algún cliente la tenga. `cascade`: se quita de las listas que la tengan. |
+| Base de datos | La lista se guarda en una columna de la entidad (JSON; en PostgreSQL, un array `uuid[]`), como las listas de valores: no hay tabla intermedia ni clave ajena, así que la integridad la comprueba la API. |
+
+Una N–M no es opcional ni 1–1. En el Studio se elige en la relación (**N–M**) o con el valor **Lista (N–M)** de una
+propiedad `→ Tag`; en el diseñador de entidades, al arrastrar el ⊕. En MCP, `add_relation` con `many`. Quitar un id de
+la lista por un borrado en cascada no publica el evento `CustomerUpdated`.
 
 La **composición** mete un tipo de elemento dentro de la entidad: un solo elemento va en columnas de la misma tabla
 (`OwnsOne`, p. ej. `Address_Street`), una lista va en su propia tabla (`OwnsMany`, ver [Listas](#listas)).
@@ -941,4 +962,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 26. ✅ Trazas de eventos: reintentar un mensaje fallido y enviar eventos de prueba desde el Studio.
 27. ✅ Avisos de cambios que rompen contratos con los servicios que escuchan; cada handler va por su cuenta ante un fallo.
 28. ✅ Listados con orden (`?sort=-createdAt`) y búsqueda (`?search=ana`).
+29. ✅ Relaciones N–M (`Tags:Tag[]`, `stratum relation add Customer Tag --many`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

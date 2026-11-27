@@ -4,12 +4,13 @@ namespace Stratum.Core.Generation;
 
 /// <summary>
 /// A relation between two entities of the same service: <see cref="Entity"/>.<see cref="Property"/> points to
-/// <see cref="Target"/> (Address.CustomerId → Customer). 1–N by default; 1–1 when <see cref="OneToOne"/>.
+/// <see cref="Target"/> (Address.CustomerId → Customer). 1–N by default; 1–1 when <see cref="OneToOne"/>; N–M when
+/// <see cref="Many"/> (Customer.TagIds → Tag: a list of ids).
 /// </summary>
-public sealed record Relation(string Entity, string Property, string Target, bool OneToOne, bool Optional, string OnDelete)
+public sealed record Relation(string Entity, string Property, string Target, bool OneToOne, bool Optional, string OnDelete, bool Many = false)
 {
-    /// <summary>"1–N" or "1–1" (or "0..1–N" style is left to the UI).</summary>
-    public string Kind => OneToOne ? "1-1" : "1-N";
+    /// <summary>"1-N", "1-1" or "N-M".</summary>
+    public string Kind => Many ? "N-M" : OneToOne ? "1-1" : "1-N";
 }
 
 /// <summary>An item type inside an entity: one (ShippingAddress:Address) or a list (Lines:OrderLine[]).</summary>
@@ -25,8 +26,8 @@ public static class Relations
     public static IReadOnlyList<Relation> Of(ServiceDefinition definition)
     {
         ArgumentNullException.ThrowIfNull(definition);
-        return [.. definition.Entities.SelectMany(e => e.References.Select(p =>
-            new Relation(e.Name, p.Name, p.References!, p.IsOneToOne, p.Nullable, p.DeleteBehavior)))];
+        return [.. definition.Entities.SelectMany(e => e.References.Concat(e.Links).Select(p =>
+            new Relation(e.Name, p.Name, p.References!, p.IsOneToOne, p.Nullable, p.DeleteBehavior, p.IsLink)))];
     }
 
     public static IReadOnlyList<Composition> CompositionsOf(ServiceDefinition definition)
@@ -36,17 +37,26 @@ public static class Relations
             new Composition(e.Name, p.Name, p.Of!, p.IsList, p.Nullable)))];
     }
 
-    /// <summary>"Customer" → "CustomerId"; "Owner" → "OwnerId".</summary>
-    public static string DefaultProperty(string target) => target + "Id";
+    /// <summary>"Customer" → "CustomerId"; "Owner" → "OwnerId"; N–M: "Tag" → "TagIds".</summary>
+    public static string DefaultProperty(string target, bool many = false) => target + (many ? "Ids" : "Id");
 
-    /// <summary>Entity.Property points to Target (a new property of Entity).</summary>
+    /// <summary>
+    /// Entity.Property points to Target (a new property of Entity). With <paramref name="many"/>, an N–M relation: a
+    /// list of ids of Target (Customer.TagIds: a customer has several tags, a tag is in several customers).
+    /// </summary>
     public static ServiceDefinition Add(ServiceDefinition definition, string entity, string? property, string target,
-        bool oneToOne = false, bool optional = false, string? onDelete = null)
+        bool oneToOne = false, bool optional = false, string? onDelete = null, bool many = false)
     {
         ArgumentNullException.ThrowIfNull(definition);
         var owner = ServicePlanner.FindEntity(definition, entity);
         var parent = ServicePlanner.FindEntity(definition, target);
-        var name = Normalize(property ?? DefaultProperty(parent.Name));
+        if (many && (oneToOne || optional || DeleteBehaviors.Normalize(onDelete ?? DeleteBehaviors.Restrict) == DeleteBehaviors.SetNull))
+        {
+            throw new StratumException("Una relación N–M (--many) es una lista: no es 1–1 ni opcional (sin elementos es una lista vacía), y al borrar puede impedirlo (restrict) o quitarlo de la lista (cascade).");
+        }
+
+        var name = Normalize(property is null ? DefaultProperty(parent.Name, many)
+            : many ? PropertyTypes.Parse($"{property}:{parent.Name}[]").Single().Name : property);
         if (owner.Properties.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
         {
             throw new StratumException($"{owner.Name} ya tiene una propiedad {name}. Elige otro nombre o cambia esa relación (stratum relation update {owner.Name}.{name}).");
@@ -60,6 +70,7 @@ public static class Relations
             References = parent.Name,
             Unique = oneToOne ? true : null,
             OnDelete = Behavior(onDelete),
+            List = many ? true : null,
         };
         return Replace(definition, owner, [.. owner.Properties, reference]);
     }
@@ -71,6 +82,11 @@ public static class Relations
         ArgumentNullException.ThrowIfNull(definition);
         var owner = ServicePlanner.FindEntity(definition, entity);
         var current = FindReference(owner, property);
+        if (current.IsLink && (oneToOne == true || optional == true))
+        {
+            throw new StratumException($"{owner.Name}.{current.Name} es N–M (una lista): no puede ser 1–1 ni opcional.");
+        }
+
         var updated = current with
         {
             Unique = (oneToOne ?? current.IsOneToOne) ? true : null,
@@ -169,6 +185,15 @@ public static class Relations
                 if (reference.DeleteBehavior == DeleteBehaviors.Cascade && old?.DeleteBehavior != DeleteBehaviors.Cascade)
                 {
                     warnings.Add($"{entity.Name}.{reference.Name}: al borrar un {reference.References} se borrarán también sus {entity.Plural} (en cascada, en la base de datos).");
+                }
+            }
+
+            foreach (var link in entity.Links)
+            {
+                var old = before.Properties.FirstOrDefault(p => p.Name == link.Name);
+                if (old is not null && !old.IsLink)
+                {
+                    warnings.Add($"{entity.Name}.{link.Name} pasa a ser N–M: la columna cambia de tipo y la migración puede perder lo que tenga. Revísala.");
                 }
             }
 

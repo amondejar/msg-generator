@@ -133,7 +133,7 @@ else
                                     <small class="hint" style="color: var(--ok)">@L("nueva", "new")</small>
                                 }
                             </span>
-                            <span class="mono">@(p.References is { } t ? $"→ {t}{(p.OneToOne ? " (1–1)" : string.Empty)}" : p.Item is { } it ? $"▤ {it}{(p.IsList ? "[]" : string.Empty)}" : p.Enum is { } en ? "# " + en : p.Type)</span>
+                            <span class="mono">@(p.References is { } t ? $"→ {t}{(p.IsList ? "[] (N–M)" : p.OneToOne ? " (1–1)" : string.Empty)}" : p.Item is { } it ? $"▤ {it}{(p.IsList ? "[]" : string.Empty)}" : p.Enum is { } en ? "# " + en : p.Type)</span>
                             <span>@(p.IsList ? L("Lista", "List") : p.Nullable ? L("Opcional", "Optional") : L("Obligatorio", "Required"))</span>
                             <span class="hint">@EntityEditors.Generates(p)</span>
                             @if (entity.CanEdit)

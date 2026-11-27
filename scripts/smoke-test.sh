@@ -649,6 +649,20 @@ grep -q 'migrationBuilder.RenameColumn' "$MF" && ! grep -q 'name: "Title",' <<<"
   && ! grep -q pendingRenames "$MIG/stratum.json" \
   && pass "review turns drop + add into RenameColumn and clears pendingRenames" || { cat "$MF"; fail "migration review"; }
 
+echo "▶ N–M relations"
+"${MSG[@]}" relation add Supplier Product --many --on-delete cascade --path "$WORK/full" >/dev/null
+"${MSG[@]}" relation add Product Category --many --path "$WORK/clean" >/dev/null
+grep -q '"name": "ProductIds"' "$WORK/full/stratum.json" \
+  && grep -q 'e.ProductIds.Contains(productId.Value)' "$RF/Suppliers/SupplierEndpoints.g.cs" \
+  && grep -q 'var foundProductIds = await db.Products.Where(e => request.ProductIds.Contains(e.Id))' "$RF/Suppliers/SupplierEndpoints.g.cs" \
+  && grep -q 'row.ProductIds.Remove(id);' "$RF/Products/ProductEndpoints.g.cs" \
+  && grep -q 'UnknownIdInAManyToManyListIsRejected' "$WORK/full/tests/Orders.Api.Tests/Features/SupplierEndpointsTests.g.cs" \
+  && "${MSG[@]}" relation list --path "$WORK/full" | grep -q "Supplier.ProductIds → Product\[\]   N–M, al borrar Product: se quita de la lista" \
+  && grep -q 'e.CategoryIds.Contains(id)' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Categories/CategoryIntegrity.g.cs" \
+  && grep -q 'e.CategoryIds.Contains(query.CategoryId.Value)' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Products/ProductLister.g.cs" \
+  && ! "${MSG[@]}" relation add Product Category --many --optional --path "$WORK/clean" >/dev/null 2>&1 \
+  && pass "N–M relations: list of ids checked to exist, ?productId= filter, restrict (409) or leave the list on delete" || fail "N–M relations"
+
 echo "▶ Team templates (.stratum)"
 TEAM="$WORK/team"; mkdir -p "$TEAM/services"
 "${MSG[@]}" templates eject service/src/__Service__.Api/Program.cs --path "$TEAM" >/dev/null

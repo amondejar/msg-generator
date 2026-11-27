@@ -627,6 +627,20 @@ namespace Catalog.Infrastructure.Migrations
         Pass 'review turns drop + add into RenameColumn and clears pendingRenames'
     } else { $fixed | Out-Host; Fail 'migration review' }
 
+    Step 'N-M relations'
+    Invoke-Dotnet $StratumDll relation add Supplier Product --many --on-delete cascade --path $full
+    Invoke-Dotnet $StratumDll relation add Product Category --many --path $clean
+    $supplierEndpoints = Get-Content (Join-Path $rf 'Suppliers\SupplierEndpoints.g.cs') -Raw
+    $manyOk = (Get-Content (Join-Path $full 'stratum.json') -Raw) -like '*"name": "ProductIds"*' `
+        -and $supplierEndpoints -like '*e.ProductIds.Contains(productId.Value)*' `
+        -and $supplierEndpoints -like '*var foundProductIds = await db.Products.Where(e => request.ProductIds.Contains(e.Id))*' `
+        -and (Get-Content (Join-Path $rf 'Products\ProductEndpoints.g.cs') -Raw) -like '*row.ProductIds.Remove(id);*' `
+        -and (Get-Content (Join-Path $full 'tests\Orders.Api.Tests\Features\SupplierEndpointsTests.g.cs') -Raw) -like '*UnknownIdInAManyToManyListIsRejected*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Categories\CategoryIntegrity.g.cs') -Raw) -like '*e.CategoryIds.Contains(id)*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Products\ProductLister.g.cs') -Raw) -like '*e.CategoryIds.Contains(query.CategoryId.Value)*'
+    $null = Get-DotnetOutput $StratumDll relation add Product Category --many --optional --path $clean   # expected to fail: N-M is never optional
+    if ($manyOk -and $LASTEXITCODE -ne 0) { Pass 'N-M relations: list of ids checked to exist, ?productId= filter, restrict (409) or leave the list on delete' } else { Fail 'N-M relations' }
+
     Step 'Team templates (.stratum)'
     $team = Join-Path $Work 'team'
     New-Item -ItemType Directory -Path (Join-Path $team 'services') | Out-Null

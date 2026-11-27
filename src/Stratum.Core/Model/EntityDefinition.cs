@@ -115,8 +115,13 @@ public sealed record EntityDefinition
     /// <summary>Business operations of the aggregate (clean-ddd only).</summary>
     public IReadOnlyList<EntityOperation>? Operations { get; init; }
 
+    /// <summary>References to one row of another entity (1–N, 1–1): a foreign key column.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    public IEnumerable<PropertyDefinition> References => Properties.Where(p => p.References is not null);
+    public IEnumerable<PropertyDefinition> References => Properties.Where(p => p.References is not null && !p.IsList);
+
+    /// <summary>N–M relations: a list of ids of another entity ("TagIds:Tag[]").</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IEnumerable<PropertyDefinition> Links => Properties.Where(p => p.IsLink);
 
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsEditable => Layout >= CurrentLayout;
@@ -183,6 +188,10 @@ public sealed record PropertyDefinition
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsObject => !IsList && Type == PropertyTypes.ObjectType;
 
+    /// <summary>An N–M relation: a list of ids of another entity of the service ("TagIds:Tag[]").</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsLink => References is not null && IsList;
+
     /// <summary>A reference that allows one row per target (1–1).</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsOneToOne => References is not null && Unique == true;
@@ -198,7 +207,7 @@ public static class DeleteBehaviors
     /// <summary>The delete is refused while rows point to it (409 with who uses it).</summary>
     public const string Restrict = "restrict";
 
-    /// <summary>The rows that point to it are deleted too (in the database).</summary>
+    /// <summary>The rows that point to it are deleted too (in the database); in an N–M relation, only the link goes.</summary>
     public const string Cascade = "cascade";
 
     /// <summary>The reference of the rows that point to it is emptied (optional references only).</summary>

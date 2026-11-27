@@ -87,10 +87,10 @@ internal static partial class Cli
           stratum replica list | add <carpeta del publicador> <Entidad> [--fields "Name, Email"]
                         | fields <carpeta del publicador> <Entidad> --fields ... | remove <Publicador>.<Entidad>  [--path] [--dry-run]
                                                  Copia local de una entidad de otro servicio, al día con sus eventos
-          stratum relation list | add <Entidad>[.<Propiedad>] <Destino> [--one-to-one] [--optional] [--on-delete restrict|cascade|set-null]
+          stratum relation list | add <Entidad>[.<Propiedad>] <Destino> [--one-to-one | --many] [--optional] [--on-delete restrict|cascade|set-null]
                          | update <Entidad>.<Propiedad> [--one-to-one|--one-to-many] [--optional|--required] [--on-delete ...]
                          | compose <Entidad>.<Propiedad> <TipoDeElemento> [--list] [--optional] | remove <Entidad>.<Propiedad>  [--path] [--dry-run]
-                                                 Relaciones entre entidades del servicio (1–N, 1–1, composición)
+                                                 Relaciones entre entidades del servicio (1–N, 1–1, N–M, composición)
           stratum spec [--path <servicio o sistema>] [--dry-run]
                                                  Especificación e historias de usuario en docs/ (para personas y modelos)
           stratum --version
@@ -2059,7 +2059,7 @@ internal static partial class Cli
     /// <summary>"stratum relation": 1–N and 1–1 relations (references) and compositions (item types) of a service.</summary>
     private static int RelationCommand(string[] args, TextWriter output)
     {
-        const string usage = "Uso: stratum relation list | add <Entidad>[.<Propiedad>] <Destino> [--one-to-one] [--optional] [--on-delete restrict|cascade|set-null] " +
+        const string usage = "Uso: stratum relation list | add <Entidad>[.<Propiedad>] <Destino> [--one-to-one | --many] [--optional] [--on-delete restrict|cascade|set-null] " +
                              "| update <Entidad>.<Propiedad> [--one-to-one|--one-to-many] [--optional|--required] [--on-delete ...] " +
                              "| compose <Entidad>.<Propiedad> <TipoDeElemento> [--list] [--optional] | remove <Entidad>.<Propiedad>  [--path <servicio>] [--dry-run]";
         if (args.Length == 0 || args[0] is not ("list" or "add" or "update" or "compose" or "remove"))
@@ -2070,7 +2070,7 @@ internal static partial class Cli
         var action = args[0];
         var positional = new List<string>();
         var path = ".";
-        bool dryRun = false, list = false;
+        bool dryRun = false, list = false, many = false;
         bool? oneToOne = null, optional = null;
         string? onDelete = null;
         for (var i = 1; i < args.Length; i++)
@@ -2084,6 +2084,7 @@ internal static partial class Cli
                 case "--optional": optional = true; break;
                 case "--required": optional = false; break;
                 case "--list": list = true; break;
+                case "--many": many = true; break;
                 case "--on-delete": onDelete = Value(args, ref i, args[i]); break;
                 default:
                     if (args[i].StartsWith('-'))
@@ -2109,7 +2110,9 @@ internal static partial class Cli
 
             foreach (var r in relations)
             {
-                output.WriteLine($"{r.Entity}.{r.Property} → {r.Target}   {(r.OneToOne ? "1–1" : "1–N")}{(r.Optional ? ", opcional" : string.Empty)}, al borrar {r.Target}: {r.OnDelete}");
+                output.WriteLine(r.Many
+                    ? $"{r.Entity}.{r.Property} → {r.Target}[]   N–M, al borrar {r.Target}: {(r.OnDelete == DeleteBehaviors.Cascade ? "se quita de la lista" : r.OnDelete)}"
+                    : $"{r.Entity}.{r.Property} → {r.Target}   {(r.OneToOne ? "1–1" : "1–N")}{(r.Optional ? ", opcional" : string.Empty)}, al borrar {r.Target}: {r.OnDelete}");
             }
 
             foreach (var c in compositions)
@@ -2135,7 +2138,7 @@ internal static partial class Cli
         ServiceDefinition updated = action switch
         {
             "add" => Relations.Add(current, entity, property, positional.Count > 1 ? positional[1] : throw new StratumException($"Falta la entidad destino. {usage}"),
-                oneToOne ?? false, optional ?? false, onDelete),
+                oneToOne ?? false, optional ?? false, onDelete, many),
             "update" => Relations.Update(current, entity, property ?? throw new StratumException($"Indica la propiedad: {entity}.<Propiedad>. {usage}"), oneToOne, optional, onDelete),
             "compose" => Relations.AddComposition(current, entity, property ?? throw new StratumException($"Indica la propiedad: {entity}.<Propiedad>. {usage}"),
                 positional.Count > 1 ? positional[1] : throw new StratumException($"Falta el tipo de elemento. {usage}"), list, optional ?? false),

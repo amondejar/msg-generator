@@ -353,11 +353,6 @@ public static partial class PropertyTypes
             }
             else if (!Map.ContainsKey(type))
             {
-                if (list && char.IsUpper(rawType[0]))
-                {
-                    throw new StratumException($"'{part}': no hay ningún tipo de elemento '{rawType}'. Créalo antes (stratum type add {rawType} --props \"...\") o, si es otra entidad, usa una referencia en la entidad hija.");
-                }
-
                 if (!char.IsUpper(rawType[0]))
                 {
                     throw new StratumException($"Tipo '{rawType}' no soportado en '{part}'. Tipos: {string.Join(", ", All)} (con [] para una lista: Tags:string[]), o el nombre de otra entidad del servicio para una referencia (CustomerId:Customer).");
@@ -365,7 +360,16 @@ public static partial class PropertyTypes
 
                 references = rawType;
                 type = "guid";
-                if (!name.EndsWith("Id", StringComparison.Ordinal))
+                if (list)
+                {
+                    // N–M: a list of ids of another entity ("Tags:Tag[]" → TagIds). If it is no entity, the model says so.
+                    name = name.EndsWith("Ids", StringComparison.Ordinal) ? name
+                        : name == Pluralize(rawType) || name == rawType ? rawType + "Ids"
+                        : name.EndsWith("Id", StringComparison.Ordinal) ? name + "s"
+                        : name.EndsWith('s') ? name[..^1] + "Ids"
+                        : name + "Ids";
+                }
+                else if (!name.EndsWith("Id", StringComparison.Ordinal))
                 {
                     name += "Id";
                 }

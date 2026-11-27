@@ -175,6 +175,10 @@ public static partial class {{Entity}}Endpoints
         }
 
         // @stratum:end
+        // @stratum:if unlinks
+        await UnlinkAsync(id, db, cancellationToken);
+
+        // @stratum:end
         // @stratum:if publishDeleted
         // The delete and its event in one transaction (ExecuteDelete doesn't go through SaveChanges).
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -213,6 +217,16 @@ public static partial class {{Entity}}Endpoints
 {{UniqueChecks}}
 
         return errors.Count == 0 ? null : TypedResults.ValidationProblem(errors);
+    }
+    // @stratum:end
+    // @stratum:if unlinks
+
+    /// <summary>N–M relations that drop this {{Entity}} when it is deleted (on delete: cascade): it leaves their lists.</summary>
+    private static async Task UnlinkAsync(Guid id, {{Service}}DbContext db, CancellationToken cancellationToken)
+    {
+{{UnlinkStatements}}
+
+        await db.SaveChangesAsync(cancellationToken);
     }
     // @stratum:end
     // @stratum:if referenced

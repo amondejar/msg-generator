@@ -90,7 +90,7 @@ public sealed partial class Update{{Entity}}Handler(
 
 public sealed partial class Delete{{Entity}}Handler(
     I{{Entity}}Repository repository,
-    // @stratum:if referenced
+    // @stratum:if deleteChecks
     I{{Entity}}Integrity integrity,
     // @stratum:end
     IUnitOfWork unitOfWork)
@@ -111,6 +111,10 @@ public sealed partial class Delete{{Entity}}Handler(
         {
             throw new DomainException(inUse);
         }
+
+        // @stratum:end
+        // @stratum:if unlinks
+        await integrity.UnlinkAsync(command.Id, cancellationToken);   // it leaves the N–M lists that have it (same save)
 
         // @stratum:end
 

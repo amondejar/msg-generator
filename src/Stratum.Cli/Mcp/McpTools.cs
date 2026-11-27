@@ -91,7 +91,7 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["apply"] = Apply(),
             }, ["service", "name"], ReadOnly: false, Destructive: true),
         new("add_relation", "Relacionar dos entidades",
-            "Añade a una entidad una referencia a otra del mismo servicio (clave ajena): 1–N por defecto (muchos Order para un Customer) o 1–1 con oneToOne (índice único). onDelete decide qué pasa al borrar el destino: restrict (por defecto, no deja borrarlo mientras se use), cascade (borra los dependientes) o setNull (solo con optional). El listado gana el filtro ?<propiedad>=. Necesita una migración después. " + PlanNote,
+            "Añade a una entidad una referencia a otra del mismo servicio (clave ajena): 1–N por defecto (muchos Order para un Customer), 1–1 con oneToOne (índice único) o N–M con many (una lista de ids: Customer.TagIds, un cliente con varias etiquetas y una etiqueta en varios clientes). onDelete decide qué pasa al borrar el destino: restrict (por defecto, no deja borrarlo mientras se use), cascade (borra los dependientes; en N–M, lo quita de las listas) o setNull (solo con optional). El listado gana el filtro ?<propiedad>= (en N–M, ?tagId=). Necesita una migración después. " + PlanNote,
             new JsonObject
             {
                 ["service"] = Service(),
@@ -99,6 +99,7 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["target"] = Text("Entidad a la que apunta, p. ej. Customer."),
                 ["property"] = Text("Nombre de la propiedad (por defecto <Destino>Id, p. ej. CustomerId)."),
                 ["oneToOne"] = Bool("1–1: como mucho una entidad por cada destino."),
+                ["many"] = Bool("N–M: una lista de ids del destino (por defecto la propiedad es <Destino>Ids)."),
                 ["optional"] = Bool("La referencia admite null."),
                 ["onDelete"] = Enum("Qué pasa al borrar el destino.", "restrict", "cascade", "setNull"),
                 ["apply"] = Apply(),
@@ -337,7 +338,7 @@ internal sealed class McpTools(string root, string? packageSource)
                 .. Flag(args, "deleteOwnFiles", "--delete-own-files")]),
             "import_openapi" => ImportOpenApi(args, apply),
             "add_relation" => Cli(apply, ["relation", "add", Optional(args, "property", "") is [_, var property] ? $"{Str(args, "entity")}.{property}" : Str(args, "entity"),
-                Str(args, "target"), "--path", Folder(args, "service"), .. Flag(args, "oneToOne", "--one-to-one"), .. Flag(args, "optional", "--optional"),
+                Str(args, "target"), "--path", Folder(args, "service"), .. Flag(args, "oneToOne", "--one-to-one"), .. Flag(args, "many", "--many"), .. Flag(args, "optional", "--optional"),
                 .. Optional(args, "onDelete", "--on-delete")]),
             "update_relation" => Cli(apply, ["relation", "update", $"{Str(args, "entity")}.{Str(args, "property")}", "--path", Folder(args, "service"),
                 .. Choice(args, "oneToOne", "--one-to-one", "--one-to-many"), .. Choice(args, "optional", "--optional", "--required"),

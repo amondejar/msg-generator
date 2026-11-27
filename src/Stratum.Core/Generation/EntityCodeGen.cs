@@ -99,7 +99,9 @@ public static partial class EntityCodeGen
         var service = definition.Service.Name;
         var clean = definition.Architecture == Architectures.CleanDdd;
         var references = entity.References.ToList();
+        var links = entity.Links.ToList();
         var dependents = ModelRules.Dependents(definition, entity.Name, includeSelf: true, blockingOnly: true);
+        var unlinks = Unlinks(definition, entity.Name);
         var unique = references.Where(r => r.IsOneToOne).ToList();
         var operations = entity.Operations ?? [];
 
@@ -114,6 +116,16 @@ public static partial class EntityCodeGen
             return r.Nullable
                 ? $"        if ({value} is {{ }} {variable} && !await db.{target}.AnyAsync(e => e.Id == {variable}, cancellationToken))\n        {{\n{onMissing}\n        }}"
                 : $"        if (!await db.{target}.AnyAsync(e => e.Id == {value}, cancellationToken))\n        {{\n{onMissing}\n        }}";
+        }
+
+        // N–M: every id of the list exists (one query per relation).
+        string LinkCheck(PropertyDefinition l, string value, string onMissing)
+        {
+            var target = Plural(definition, l.References!);
+            var missing = "missing" + l.Name;
+            return $"        if ({value} is {{ Count: > 0 }})\n        {{\n" +
+                   $"            var found{l.Name} = await db.{target}.Where(e => {value}.Contains(e.Id)).Select(e => e.Id).ToListAsync(cancellationToken);\n" +
+                   $"            if ({value}.Except(found{l.Name}).ToList() is {{ Count: > 0 }} {missing})\n            {{\n{onMissing.Replace("{MISSING}", missing, StringComparison.Ordinal)}\n            }}\n        }}";
         }
 
         var required = RequiredReferenceClosure(definition, entity);
@@ -137,31 +149,45 @@ public static partial class EntityCodeGen
                 : $"        if (await db.{entity.Plural}.AnyAsync(e => e.{r.Name} == {Camel(r.Name)} && e.Id != id, cancellationToken))\n        {{\n            return \"Ya hay un {entity.Name} para ese {r.References} (relación 1–1).\";\n        }}")),
 
             // GET /api/v1/<entities>?customerId=…: the rows of one parent (the "N" of a 1–N, or the one of a 1–1).
-            ["ListFilterParameters"] = string.Concat(references.Select(r => $"Guid? {Camel(r.Name)}, ")),
-            ["ListFilterParameterLines"] = string.Concat(references.Select(r => $"\n        Guid? {Camel(r.Name)},")),
-            ["ListFilters"] = string.Concat(references.Select(r => $".Where(e => {Camel(r.Name)} == null || e.{r.Name} == {Camel(r.Name)})")),
-            ["McpListFilterParameters"] = string.Concat(references.Select(r => $"[Description(\"Only the {entity.Plural} of this {r.References} (optional).\")] Guid? {Camel(r.Name)}, ")),
-            ["McpListFilterParameterLines"] = string.Concat(references.Select(r => $"\n        [Description(\"Only the {entity.Plural} of this {r.References} (optional).\")] Guid? {Camel(r.Name)},")),
-            ["ListFilterArguments"] = string.Concat(references.Select(r => $", {Camel(r.Name)}")),
-            ["ListFilterRecordParameters"] = string.Concat(references.Select(r => $", Guid? {r.Name} = null")),
+            // N–M: ?tagId=… (the rows whose list has it).
+            ["ListFilterParameters"] = string.Concat(references.Select(r => $"Guid? {Camel(r.Name)}, ").Concat(links.Select(l => $"Guid? {Camel(LinkFilter(l))}, "))),
+            ["ListFilterParameterLines"] = string.Concat(references.Select(r => $"\n        Guid? {Camel(r.Name)},").Concat(links.Select(l => $"\n        Guid? {Camel(LinkFilter(l))},"))),
+            ["ListFilters"] = string.Concat(references.Select(r => $".Where(e => {Camel(r.Name)} == null || e.{r.Name} == {Camel(r.Name)})")
+                .Concat(links.Select(l => $".Where(e => {Camel(LinkFilter(l))} == null || e.{l.Name}.Contains({Camel(LinkFilter(l))}.Value))"))),
+            ["McpListFilterParameters"] = string.Concat(references.Select(r => $"[Description(\"Only the {entity.Plural} of this {r.References} (optional).\")] Guid? {Camel(r.Name)}, ")
+                .Concat(links.Select(l => $"[Description(\"Only the {entity.Plural} that have this {l.References} (optional).\")] Guid? {Camel(LinkFilter(l))}, "))),
+            ["McpListFilterParameterLines"] = string.Concat(references.Select(r => $"\n        [Description(\"Only the {entity.Plural} of this {r.References} (optional).\")] Guid? {Camel(r.Name)},")
+                .Concat(links.Select(l => $"\n        [Description(\"Only the {entity.Plural} that have this {l.References} (optional).\")] Guid? {Camel(LinkFilter(l))},"))),
+            ["ListFilterArguments"] = string.Concat(references.Select(r => $", {Camel(r.Name)}").Concat(links.Select(l => $", {Camel(LinkFilter(l))}"))),
+            ["ListFilterRecordParameters"] = string.Concat(references.Select(r => $", Guid? {r.Name} = null").Concat(links.Select(l => $", Guid? {LinkFilter(l)} = null"))),
             ["ListFilterActive"] = string.Join(" || ", references.Select(r => $"query.{r.Name} is not null")),
-            ["ListQueryFilters"] = string.Concat(references.Select(r => $".Where(e => query.{r.Name} == null || e.{r.Name} == query.{r.Name})")),
+            ["ListQueryFilters"] = string.Concat(references.Select(r => $".Where(e => query.{r.Name} == null || e.{r.Name} == query.{r.Name})")
+                .Concat(links.Select(l => $".Where(e => query.{LinkFilter(l)} == null || e.{l.Name}.Contains(query.{LinkFilter(l)}.Value))"))),
             ["ListIntegrityParameter"] = references.Count > 0 ? $", I{entity.Name}Integrity integrity" : string.Empty,
 
             // Vertical slice: checks inside the endpoints.
             ["ReferenceChecks"] = string.Join("\n\n", references.Select(r => Check(r, $"request.{r.Name}",
-                $"            errors[\"{r.Name}\"] = [$\"No existe ningún {r.References} con Id {{request.{r.Name}}}.\"];"))),
+                $"            errors[\"{r.Name}\"] = [$\"No existe ningún {r.References} con Id {{request.{r.Name}}}.\"];"))
+                .Concat(links.Select(l => LinkCheck(l, $"request.{l.Name}",
+                    $"                errors[\"{l.Name}\"] = [$\"No existe ningún {l.References} con Id {{string.Join(\", \", {{MISSING}})}}.\"];")))),
             ["DependentChecks"] = string.Join("\n\n", dependents.Select(d =>
-                $"        if (await db.{d.Entity.Plural}.AnyAsync(e => e.{d.Property.Name} == id, cancellationToken))\n        {{\n            return \"{d.Entity.Plural} ({d.Entity.Name}.{d.Property.Name})\";\n        }}")),
+                $"        if (await db.{d.Entity.Plural}.AnyAsync(e => {(d.Property.IsLink ? $"e.{d.Property.Name}.Contains(id)" : $"e.{d.Property.Name} == id")}, cancellationToken))\n        {{\n            return \"{d.Entity.Plural} ({d.Entity.Name}.{d.Property.Name})\";\n        }}")),
+
+            // N–M with onDelete cascade: deleting this row takes it out of the lists that have it.
+            ["UnlinkStatements"] = string.Join("\n\n", unlinks.Select(u =>
+                $"        foreach (var row in await db.{u.Entity.Plural}.Where(e => e.{u.Property.Name}.Contains(id)).ToListAsync(cancellationToken))\n        {{\n            row.{u.Property.Name}.Remove(id);\n        }}")),
 
             // Clean + DDD: I<Entity>Integrity (Application) and its implementation (Infrastructure).
-            ["ReferenceParameters"] = string.Join(", ", references.Select(r => $"{PropertyTypes.ToCSharp(r)} {Camel(r.Name)}")),
-            ["ReferenceArguments"] = string.Join(", ", references.Select(r => $"command.{r.Name}")),
+            ["ReferenceParameters"] = string.Join(", ", references.Concat(links).Select(r => $"{PropertyTypes.ToCSharp(r)} {Camel(r.Name)}")),
+            ["ReferenceArguments"] = string.Join(", ", references.Concat(links).Select(r => $"command.{r.Name}")),
             ["ReferenceQueries"] = string.Join("\n\n", references.Select(r => Check(r, Camel(r.Name),
-                $"            return $\"No existe ningún {r.References} con Id {{{Camel(r.Name)}}}.\";"))),
+                $"            return $\"No existe ningún {r.References} con Id {{{Camel(r.Name)}}}.\";"))
+                .Concat(links.Select(l => LinkCheck(l, Camel(l.Name),
+                    $"                return $\"No existe ningún {l.References} con Id {{string.Join(\", \", {{MISSING}})}}.\";")))),
 
             // Tests: referenced rows are created through the API first (required references only; optional → null).
             ["FirstRequiredReference"] = references.FirstOrDefault(r => !r.Nullable)?.Name ?? string.Empty,
+            ["FirstLink"] = links.FirstOrDefault()?.Name ?? string.Empty,
             ["TestSampleArguments"] = TestSample(entity.Properties, definition.Types),
             ["TestChangedArguments"] = TestSample(entity.Properties, definition.Types, changed: true),
             ["TestReferenceHelpers"] = string.Join("\n\n", required.Select(target =>
@@ -328,7 +354,7 @@ public static partial class EntityCodeGen
 
     /// <summary>Named arguments of a sample request for the API tests.</summary>
     private static string TestSample(IEnumerable<PropertyDefinition> properties, IReadOnlyList<ItemTypeDefinition>? types, bool changed = false) =>
-        string.Join(",\n", properties.Select(p => $"        {p.Name}: {(p.References is null ? PropertyTypes.Sample(p, types, contract: true, changed: changed) : p.Nullable ? "null" : $"await Create{p.References}Async(client)")}"));
+        string.Join(",\n", properties.Select(p => $"        {p.Name}: {(p.References is null ? PropertyTypes.Sample(p, types, contract: true, changed: changed) : p.IsList ? "[]" : p.Nullable ? "null" : $"await Create{p.References}Async(client)")}"));
 
     /// <summary>Entities a sample of <paramref name="entity"/> needs created first, dependencies before dependents.</summary>
     private static List<string> RequiredReferenceClosure(ServiceDefinition definition, EntityDefinition entity)
@@ -376,7 +402,8 @@ public static partial class EntityCodeGen
             ["DomainUsings"] = string.Join("\n", entities.Select(e => $"using {service}.Domain.{e.Plural};")),
             ["InfrastructureUsings"] = string.Join("\n", entities.Select(e => $"using {service}.Infrastructure.Persistence.{e.Plural};")),
             ["RepositoryRegistrations"] = string.Join("\n", entities.Select(e => $"        services.AddScoped<I{e.Name}Repository, {e.Name}Repository>();")
-                .Concat(entities.Where(e => e.References.Any() || ModelRules.Dependents(definition, e.Name, includeSelf: true, blockingOnly: true).Count > 0).Select(e =>
+                .Concat(entities.Where(e => e.References.Any() || e.Links.Any() || Unlinks(definition, e.Name).Count > 0
+                                            || ModelRules.Dependents(definition, e.Name, includeSelf: true, blockingOnly: true).Count > 0).Select(e =>
                     $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Integrity, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Integrity>();"))
                 .Concat(clean ? entities.Select(e => $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Lister, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Lister>();") : [])
                 .Concat(ReplicaCodeGen.Registrations(definition))),
@@ -419,7 +446,7 @@ public static partial class EntityCodeGen
                 return;
             }
 
-            foreach (var target in e.References.Select(r => entities.FirstOrDefault(x => x.Name == r.References)).OfType<EntityDefinition>())
+            foreach (var target in e.References.Concat(e.Links).Select(r => entities.FirstOrDefault(x => x.Name == r.References)).OfType<EntityDefinition>())
             {
                 Visit(target, path);
             }
@@ -476,7 +503,8 @@ public static partial class EntityCodeGen
     {
         if (p.References is { } target)
         {
-            return created.Any(e => e.Name == target) ? $"\"{{{{create{target}.response.body.$.id}}}}\"" : "null";
+            var id = created.Any(e => e.Name == target) ? $"\"{{{{create{target}.response.body.$.id}}}}\"" : null;
+            return p.IsList ? (id is null ? "[]" : $"[{id}]") : id ?? "null";
         }
 
         if (p.Type == PropertyTypes.ObjectType)
@@ -566,6 +594,20 @@ public static partial class EntityCodeGen
 
     /// <summary>"OrderLine" → "order-line" (topics, routes).</summary>
     public static string Kebab(string name) => WordBoundary().Replace(name, "-$1").ToLowerInvariant();
+
+    /// <summary>N–M lists that drop <paramref name="entity"/> when it is deleted (onDelete cascade).</summary>
+    public static IReadOnlyList<(EntityDefinition Entity, PropertyDefinition Property)> Unlinks(ServiceDefinition definition, string entity)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        return [.. definition.Entities.SelectMany(e => e.Links.Where(l => l.References == entity && l.DeleteBehavior == DeleteBehaviors.Cascade).Select(l => (e, l)))];
+    }
+
+    /// <summary>The list filter of an N–M relation: TagIds → TagId (GET ?tagId=…).</summary>
+    public static string LinkFilter(PropertyDefinition link)
+    {
+        ArgumentNullException.ThrowIfNull(link);
+        return link.Name.EndsWith("Ids", StringComparison.Ordinal) ? link.Name[..^1] : link.Name + "Id";
+    }
 
     internal static string Camel(string name)
     {
