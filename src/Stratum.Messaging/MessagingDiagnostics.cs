@@ -225,9 +225,10 @@ public sealed class MessagingDiagnostics(IServiceScopeFactory scopes, IServicePr
         return _eventTypes;
     }
 
+    /// <summary>.NET's own assemblies: they hold no integration events (any other one may, even a "Stratum.*" one).</summary>
     private static bool IsFramework(string name) =>
-        name.StartsWith("System", StringComparison.Ordinal) || name.StartsWith("Microsoft", StringComparison.Ordinal)
-        || name.StartsWith("Stratum.Messaging", StringComparison.Ordinal) || name is "netstandard" or "mscorlib";
+        name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("Microsoft.", StringComparison.Ordinal)
+        || name is "System" or "netstandard" or "mscorlib";
 
     private static IEnumerable<Type> Types(Assembly assembly)
     {
