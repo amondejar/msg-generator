@@ -9,8 +9,9 @@ namespace Stratum.Messaging;
 
 /// <summary>
 /// Receives the events of the registered handlers and runs each handler once per event (inbox), in its own
-/// DI scope, retrying with growing waits. After <see cref="MessagingOptions.MaxHandlerAttempts"/> the message
-/// goes to the dead-letter queue.
+/// DI scope, retrying with growing waits. Handlers are independent: one that gives up doesn't stop the others.
+/// When one gave up (after <see cref="MessagingOptions.MaxHandlerAttempts"/>) the message goes to the dead-letter
+/// queue; sending it again only runs the handlers that didn't process it (inbox).
 /// </summary>
 public sealed partial class IntegrationEventConsumer(
     IServiceScopeFactory scopes,
@@ -26,6 +27,7 @@ public sealed partial class IntegrationEventConsumer(
         ArgumentNullException.ThrowIfNull(envelope);
         var settings = options.Value;
         var receivedAt = time.GetUtcNow().UtcDateTime;
+        var result = ConsumeResult.Completed;
 
         foreach (var handler in registry.For(envelope.Topic))
         {
@@ -39,13 +41,15 @@ public sealed partial class IntegrationEventConsumer(
                 LogUnreadable(logger, ex, envelope.Topic, envelope.MessageId);
                 MessagingTelemetry.Processed(envelope.Topic, handler.Consumer, ReceivedStatus.Unreadable, 0);
                 await JournalAsync(envelope, handler.Consumer, ReceivedStatus.Unreadable, 1, 0, ex.Message, receivedAt, cancellationToken).ConfigureAwait(false);
-                return ConsumeResult.DeadLetter;
+                result = ConsumeResult.DeadLetter;
+                continue;
             }
 
             if (integrationEvent is null)
             {
                 await JournalAsync(envelope, handler.Consumer, ReceivedStatus.Unreadable, 1, 0, "Empty payload (null).", receivedAt, cancellationToken).ConfigureAwait(false);
-                return ConsumeResult.DeadLetter;
+                result = ConsumeResult.DeadLetter;
+                continue;
             }
 
             for (var attempt = 1; ; attempt++)
@@ -92,7 +96,8 @@ public sealed partial class IntegrationEventConsumer(
                         LogDeadLetter(logger, ex, envelope.Topic, envelope.MessageId, handler.Consumer, attempt);
                         MessagingTelemetry.Processed(envelope.Topic, handler.Consumer, ReceivedStatus.DeadLettered, elapsed);
                         await JournalAsync(envelope, handler.Consumer, ReceivedStatus.DeadLettered, attempt, elapsed, Describe(ex), receivedAt, cancellationToken).ConfigureAwait(false);
-                        return ConsumeResult.DeadLetter;
+                        result = ConsumeResult.DeadLetter;   // the next handlers still run
+                        break;
                     }
 
                     activity?.SetTag("stratum.messaging.outcome", ReceivedStatus.Retrying);
@@ -104,7 +109,7 @@ public sealed partial class IntegrationEventConsumer(
             }
         }
 
-        return ConsumeResult.Completed;
+        return result;
     }
 
     private static int Elapsed(long started) => (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(started).TotalMilliseconds);

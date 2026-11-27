@@ -558,6 +558,24 @@ stratum events map                                         # quién publica y qu
   el registro del inbox.
 - En el Studio: **Servicio → Eventos que escucha** (elegir de los eventos que publican los demás servicios, actualizar el
   contrato cuando cambia) y **Sistema → Mapa de eventos**.
+- El handler de cada servicio va por su cuenta: si uno se rinde (dead-letter), los demás handlers del mismo servicio
+  procesan el evento igual, y al reintentarlo solo se ejecuta el que falló.
+
+#### Cambios que rompen contratos
+
+Al cambiar las entidades o los eventos de un servicio, Stratum compara lo que publicará con lo que espera cada servicio
+del sistema que lo escucha (su copia del contrato) y lo avisa en el plan, antes de aplicar (CLI, Studio y MCP):
+
+```text
+⚠ Cambio que rompe el contrato con Addresses:
+  ✕ CustomerCreated.Email cambia de string a int y Addresses lo usa (lo copia su réplica): no podrá leer el evento (irá a dead-letter).
+  · CustomerCreated añade Vip: Addresses lo ignora hasta que actualice su copia del contrato.
+  Después: stratum subscribe --sync en Addresses (o «Actualizar contrato» en su Mensajería), y revisa sus handlers. ...
+```
+
+Rompe el contrato quitar o renombrar un dato que el otro servicio usa, cambiar su tipo, hacerlo opcional cuando el otro lo
+espera siempre o dejar de publicar el evento. Añadir datos o hacer obligatorio uno opcional es compatible. Los servicios
+del sistema son los de la carpeta que contiene al servicio (como en `stratum aspire`).
 
 ### Réplicas de entidades de otros servicios (`stratum replica`)
 
@@ -905,4 +923,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 24. ✅ Validaciones por propiedad (`stratum rule`): longitud, formato, patrón y rango en la API, el dominio, la columna y los tests.
 25. ✅ Réplicas de entidades de otros servicios (`stratum replica`), al día con sus eventos.
 26. ✅ Trazas de eventos: reintentar un mensaje fallido y enviar eventos de prueba desde el Studio.
+27. ✅ Avisos de cambios que rompen contratos con los servicios que escuchan; cada handler va por su cuenta ante un fallo.
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

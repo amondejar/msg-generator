@@ -225,6 +225,26 @@ public sealed class MessagingTests
     }
 
     [Fact]
+    public async Task AHandlerThatGivesUpDoesntStopTheOthers()
+    {
+        using var host = TestHosts.Create(m => m
+            .AddHandler<OrderCreated, BrokenOrderHandler>()
+            .AddHandler<OrderCreated, AuditOrderHandler>()
+            .Configure(o => o.MaxHandlerAttempts = 2), services: s => s.AddSingleton<AuditLog>());
+        var consumer = host.Services.GetRequiredService<IntegrationEventConsumer>();
+        var order = new OrderCreated(Guid.NewGuid(), 5m);
+
+        var result = await consumer.HandleAsync(Envelope(order), CancellationToken.None);
+
+        Assert.Equal(ConsumeResult.DeadLetter, result);
+        Assert.Single(host.Services.GetRequiredService<Probe>().Received);
+        Assert.Single(host.Services.GetRequiredService<AuditLog>().Orders);   // after the broken one, it ran anyway
+        var rows = (await host.Services.GetRequiredService<MessagingDiagnostics>().SnapshotAsync(TimeSpan.FromMinutes(5), 50, CancellationToken.None)).Received;
+        Assert.Equal(ReceivedStatus.DeadLettered, rows.Single(r => r.Consumer == typeof(BrokenOrderHandler).FullName).Status);
+        Assert.Equal(ReceivedStatus.Processed, rows.Single(r => r.Consumer == typeof(AuditOrderHandler).FullName).Status);
+    }
+
+    [Fact]
     public async Task AFailedMessageCanBeSentAgainAndOnlyTheFailedHandlersRunIt()
     {
         using var host = TestHosts.Create();
@@ -297,4 +317,24 @@ public sealed class MessagingTests
         Payload = System.Text.Json.JsonSerializer.Serialize(e, EventTopology.JsonOptions),
         OccurredAt = e.OccurredAt,
     };
+}
+
+public sealed class AuditLog
+{
+    public System.Collections.Concurrent.ConcurrentQueue<Guid> Orders { get; } = new();
+}
+
+public sealed class BrokenOrderHandler : IIntegrationEventHandler<OrderCreated>
+{
+    public Task HandleAsync(OrderCreated integrationEvent, MessageContext context, CancellationToken cancellationToken) =>
+        throw new InvalidOperationException("broken on purpose");
+}
+
+public sealed class AuditOrderHandler(AuditLog log) : IIntegrationEventHandler<OrderCreated>
+{
+    public Task HandleAsync(OrderCreated integrationEvent, MessageContext context, CancellationToken cancellationToken)
+    {
+        log.Orders.Enqueue(integrationEvent.OrderId);
+        return Task.CompletedTask;
+    }
 }

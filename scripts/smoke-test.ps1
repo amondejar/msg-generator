@@ -544,6 +544,13 @@ await app.RunAsync().ConfigureAwait(false);
     $keptForReplica = (Get-Content (Join-Path $fs 'stratum.json') -Raw) -like '*"handler": false*'
     Invoke-Dotnet $StratumDll subscribe $clean Product.Created --path $fs
     if ($replicaOk -and $badFieldFailed -and $keptForReplica) { Pass 'replicas: table, handler of Created/Updated/Deleted, reader in clean-ddd; your handlers stay apart' } else { Fail 'replicas' }
+    # Contract changes: the publisher is warned about the services that listen (field retyped, event no longer published).
+    $contract = (Get-DotnetOutput $StratumDll entity update Product --props 'Title:string, Price:string, Stock:int, Size:Dimensions?' --path $clean --dry-run) -join "`n"
+    $contractOff = (Get-DotnetOutput $StratumDll events off Product --path $clean --dry-run) -join "`n"
+    $compatible = (Get-DotnetOutput $StratumDll entity update Product --props 'Title:string, Price:decimal, Stock:int, Size:Dimensions?, Color:string?' --path $clean --dry-run) -join "`n"
+    if ($contract -like '*Shop*ProductCreated.Price*decimal*string*' -and $contractOff -like '*ProductUpdated*Shop*' -and $contractOff -like '*subscribe --sync --prune*Shop*' -and $compatible -like '*Shop*') {
+        Pass 'contract changes: the publisher is warned about what breaks in the services that listen'
+    } else { Fail 'contract changes' }
 
     Step 'Guided migrations (stratum migration review)'
     $mig = Join-Path $Work 'migration'

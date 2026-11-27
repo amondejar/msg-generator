@@ -571,6 +571,14 @@ grep -q 'IIntegrationEventHandler<ProductDeleted>' "$CR" && grep -q 'builder.ToT
   && "${MSG[@]}" unsubscribe Catalog Product.Created --path "$FS" >/dev/null && grep -q '"handler": false' "$FS/stratum.json" \
   && "${MSG[@]}" subscribe "$WORK/clean" Product.Created --path "$FS" >/dev/null \
   && pass "replicas: table, handler of Created/Updated/Deleted, reader in clean-ddd; your handlers stay apart" || fail "replicas"
+# Contract changes: the publisher is warned about the services that listen (field retyped, event no longer published).
+"${MSG[@]}" entity update Product --props "Title:string, Price:string, Stock:int, Size:Dimensions?" --path "$WORK/clean" --dry-run > "$WORK/contract.txt" 2>&1
+"${MSG[@]}" events off Product --path "$WORK/clean" --dry-run > "$WORK/contract-off.txt" 2>&1
+grep -q "Cambio que rompe el contrato con Shop" "$WORK/contract.txt" \
+  && grep -q "ProductCreated.Price cambia de decimal a string y Shop lo usa (lo copia su réplica)" "$WORK/contract.txt" \
+  && grep -q "deja de publicar ProductUpdated y Shop lo escucha" "$WORK/contract-off.txt" && grep -q "subscribe --sync --prune en Shop" "$WORK/contract-off.txt" \
+  && "${MSG[@]}" entity update Product --props "Title:string, Price:decimal, Stock:int, Size:Dimensions?, Color:string?" --path "$WORK/clean" --dry-run | grep -q "Cambio compatible para Shop" \
+  && pass "contract changes: the publisher is warned about what breaks in the services that listen" || fail "contract changes"
 
 echo "▶ Guided migrations (stratum migration review)"
 MIG="$WORK/migration"; cp -r "$WORK/clean" "$MIG"

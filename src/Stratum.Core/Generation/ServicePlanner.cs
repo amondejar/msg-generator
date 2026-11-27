@@ -747,7 +747,25 @@ public static class ServicePlanner
     /// Project files get missing items added and the items of disabled features removed.
     /// </remarks>
     /// <param name="deleteOwnFiles">Also delete the user's (modified) files of removed entities.</param>
-    public static ChangePlan Plan(string directory, ServiceDefinition current, ServiceDefinition updated, GenerationOptions? options = null, bool deleteOwnFiles = false)
+    /// <summary>
+    /// The services next to this one (its system: the folder that holds it, as "stratum aspire" sees it), to warn the
+    /// ones that listen to its events. Empty when it can't be read.
+    /// </summary>
+    public static IReadOnlyList<ServiceDefinition> SystemAround(string directory)
+    {
+        try
+        {
+            var parent = Path.GetDirectoryName(Path.GetFullPath(directory));
+            return parent is null ? [] : [.. AspireGenerator.Discover(parent, 3).Select(s => s.Definition)];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or StratumException)
+        {
+            return [];
+        }
+    }
+
+    public static ChangePlan Plan(string directory, ServiceDefinition current, ServiceDefinition updated, GenerationOptions? options = null, bool deleteOwnFiles = false,
+        IEnumerable<ServiceDefinition>? system = null)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(updated);
@@ -976,6 +994,10 @@ public static class ServicePlanner
 
         warnings.AddRange(CheckReferences(directory, current, updated));
         warnings.AddRange(Relations.Warnings(current, updated));
+        if (ContractChanges.Changed(current, updated))
+        {
+            warnings.AddRange(ContractChanges.Warnings(ContractChanges.Impacts(current, updated, system ?? SystemAround(directory))));
+        }
         warnings.AddRange(CheckWiring(directory, service, current.Features));
 
         return new ChangePlan(directory, changes, warnings);

@@ -613,12 +613,12 @@ public sealed class StudioState(StudioOptions options) : IDisposable
         var options = new GenerationOptions { Team = Team };
         if (!draft.ConvertWiring)
         {
-            return ServicePlanner.Plan(directory, current, updated, options, draft.DeleteOwnFiles);
+            return ServicePlanner.Plan(directory, current, updated, options, draft.DeleteOwnFiles, Services.Select(s => s.Definition));
         }
 
         // Program.cs rewritten to use StratumWiring.g.cs, plus whatever else changed (features, entities).
         var conversion = ServicePlanner.ConvertWiring(directory, current, options);
-        var plan = ServicePlanner.Plan(directory, current, updated, options, draft.DeleteOwnFiles);
+        var plan = ServicePlanner.Plan(directory, current, updated, options, draft.DeleteOwnFiles, Services.Select(s => s.Definition));
         var converted = conversion.Changes.Select(c => c.Path).ToHashSet(StringComparer.Ordinal);
         return plan with
         {
