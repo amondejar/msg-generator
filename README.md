@@ -145,6 +145,31 @@ aspire run                 # o: dotnet run --project Shop.AppHost  (requiere Doc
 
 AppHost en Aspire 13.6.5 (la línea validada con .NET 10). Para pasar a Aspire 17: `aspire update`.
 
+### Desplegar el sistema (`stratum deploy`)
+
+Opcional. El sistema puede desplegarse con Docker Compose, en Azure Container Apps o en los dos: Stratum prepara el
+AppHost y `aspire deploy` (el CLI de Aspire) hace el resto con los mismos servicios, bases de datos y broker que en local.
+
+```bash
+stratum deploy add docker        # Docker Compose
+stratum deploy add azure         # Azure Container Apps
+stratum deploy                   # qué destinos tiene y cómo desplegar
+stratum deploy remove docker
+```
+
+| Destino | Qué se despliega | Cómo |
+| --- | --- | --- |
+| Docker Compose | Los servicios (imágenes de .NET), PostgreSQL / SQL Server y Kafka como contenedores, con volúmenes. | `aspire deploy` hace `docker compose up` en esa máquina; `aspire publish -o deploy/docker` genera solo `docker-compose.yaml` y `.env` para otro servidor. |
+| Azure Container Apps | Cada servicio en Container Apps, **Azure Database for PostgreSQL** (flexible server, con usuario y contraseña) o **Azure SQL**, **Azure Service Bus** real (los servicios entran con su identidad administrada) y Kafka como contenedor. | `az login` y `aspire deploy`: pide suscripción, región y contraseñas, crea los recursos y despliega. |
+
+- Con los dos destinos, la variable `STRATUM_DEPLOY` elige: `$env:STRATUM_DEPLOY = "azure"` antes de `aspire deploy`.
+  Con uno solo, no hace falta.
+- `aspire run` no cambia: en local todo sigue en contenedores.
+- Docker Compose no admite Azure Service Bus (su emulador es solo para desarrollo): usa Kafka o despliega en Azure.
+- En Azure, Kafka corre en un contenedor sin disco persistente: para producción en Azure, mejor Service Bus.
+- Los servicios aplican sus migraciones al arrancar, como en local. Se guarda en el AppHost (`<StratumDeploy>` del
+  `.csproj`) y lo respeta cada `stratum aspire`. En el Studio: **Ejecutar → Despliegue**. Asistentes de IA: `set_deploy`.
+
 ## `stratum add entity`
 
 Por cada entidad genera la entidad (Id UUID v7, `CreatedAt`, `UpdatedAt`), su `IEntityTypeConfiguration`, los DTOs con validación
@@ -963,4 +988,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 27. ✅ Avisos de cambios que rompen contratos con los servicios que escuchan; cada handler va por su cuenta ante un fallo.
 28. ✅ Listados con orden (`?sort=-createdAt`) y búsqueda (`?search=ana`).
 29. ✅ Relaciones N–M (`Tags:Tag[]`, `stratum relation add Customer Tag --many`).
+30. ✅ Despliegue opcional con Docker Compose o Azure Container Apps (`stratum deploy`, `aspire deploy`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

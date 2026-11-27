@@ -284,6 +284,14 @@ internal sealed class McpTools(string root, string? packageSource)
             "Genera o actualiza el AppHost de Aspire con todos los servicios, sus bases de datos y el broker (Kafka o emulador de Service Bus con topics y suscripciones). " + PlanNote,
             new JsonObject { ["name"] = Text("Nombre del sistema (AppHost <name>.AppHost). Por defecto el que ya tenga o el de la carpeta."), ["apply"] = Apply() },
             [], ReadOnly: false),
+        new("set_deploy", "Destinos de despliegue del sistema",
+            "Activa o desactiva dónde puede desplegarse el sistema con \"aspire deploy\": docker (Docker Compose en un servidor con Docker) o azure (Azure Container Apps, con Azure Database for PostgreSQL o Azure SQL y Service Bus). Se pueden tener los dos; entonces la variable STRATUM_DEPLOY elige al desplegar. Docker no admite Azure Service Bus. Sin apply muestra los destinos actuales. " + PlanNote,
+            new JsonObject
+            {
+                ["add"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray("docker", "azure") }, ["description"] = "Destinos que se activan." },
+                ["remove"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray("docker", "azure") }, ["description"] = "Destinos que se quitan." },
+                ["apply"] = Apply(),
+            }, [], ReadOnly: false),
         new("remove_service", "Eliminar un servicio",
             "Elimina un servicio y lo que cuelga de él: suscripciones de otros servicios, AppHost, stratum.workspace.json y su carpeta (salvo keepFiles). Irreversible fuera de git. " + PlanNote,
             new JsonObject
@@ -373,6 +381,7 @@ internal sealed class McpTools(string root, string? packageSource)
             "sync_subscriptions" => Cli(apply, ["subscribe", "--sync", .. Flag(args, "prune", "--prune"), "--path", Folder(args, "service")]),
             "review_migration" => Cli(apply, ["migration", "review", "--path", Folder(args, "service")]),
             "generate_apphost" => AppHost(args, apply),
+            "set_deploy" => SetDeploy(args, apply),
             "remove_service" => RemoveService(args, apply),
             _ => throw new StratumException($"Herramienta desconocida '{name}'."),
         };
@@ -667,6 +676,33 @@ internal sealed class McpTools(string root, string? packageSource)
         }
 
         return Run(["aspire", "--path", root, .. Optional(args, "name", "--name")]);
+    }
+
+    private ToolOutcome SetDeploy(JsonObject args, bool apply)
+    {
+        static string[] Targets(JsonObject args, string key) => args[key] is JsonArray list ? [.. list.Select(t => t!.GetValue<string>())] : [];
+        var add = Targets(args, "add");
+        var remove = Targets(args, "remove");
+        if (!apply || (add.Length == 0 && remove.Length == 0))
+        {
+            var output = new StringWriter();
+            global::Stratum.Cli.Cli.Run(["deploy", "list", "--path", root], output);
+            return new(output.ToString().TrimEnd() + (add.Length + remove.Length == 0 ? string.Empty
+                : $"\nSe {(add.Length > 0 ? "activaría " + string.Join(", ", add) : string.Empty)}{(add.Length > 0 && remove.Length > 0 ? " y se " : string.Empty)}{(remove.Length > 0 ? "quitaría " + string.Join(", ", remove) : string.Empty)}. Repite con \"apply\": true."));
+        }
+
+        var text = new StringBuilder();
+        if (add.Length > 0)
+        {
+            text.Append(Run(["deploy", "add", .. add, "--path", root]).Text).AppendLine();
+        }
+
+        if (remove.Length > 0)
+        {
+            text.Append(Run(["deploy", "remove", .. remove, "--path", root]).Text);
+        }
+
+        return new(text.ToString().TrimEnd());
     }
 
     private ToolOutcome RemoveService(JsonObject args, bool apply)

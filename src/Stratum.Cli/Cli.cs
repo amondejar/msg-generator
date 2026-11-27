@@ -84,6 +84,8 @@ internal static partial class Cli
           stratum rule list | set <Entidad|Tipo>.<Propiedad> [--min-length N] [--max-length N] [--format email|url|phone|none]
                      [--pattern <regex>] [--example <valor>] [--min N] [--max N] | clear <Entidad|Tipo>.<Propiedad> [--path] [--dry-run]
                                          Validación de una propiedad: longitud, formato, patrón, rango (API 400, dominio y columna)
+          stratum deploy [list] | add docker|azure | remove docker|azure  [--path <sistema>]
+                                                 Dónde se despliega el sistema (Docker Compose, Azure Container Apps)
           stratum replica list | add <carpeta del publicador> <Entidad> [--fields "Name, Email"]
                         | fields <carpeta del publicador> <Entidad> --fields ... | remove <Publicador>.<Entidad>  [--path] [--dry-run]
                                                  Copia local de una entidad de otro servicio, al día con sus eventos
@@ -169,6 +171,7 @@ internal static partial class Cli
             "subscribe" => Subscribe(args[1..], output, subscribe: true),
             "unsubscribe" => Subscribe(args[1..], output, subscribe: false),
             "aspire" => Aspire(args[1..], output),
+            "deploy" => Deploy(args[1..], output),
             "templates" => Templates(args[1..], output),
             "import" => Import(args[1..], output),
             "enum" => Enums(args[1..], output),
@@ -690,6 +693,108 @@ internal static partial class Cli
         output.WriteLine("  aspire run                                    # o: dotnet run --project " + result.AppHostName);
         output.WriteLine("  El dashboard muestra servicios, trazas, métricas y logs de todos ellos.");
         return 0;
+    }
+
+    private static int Deploy(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum deploy [list] | add docker|azure | remove docker|azure  [--path <carpeta del sistema>]";
+        var root = ".";
+        var positional = new List<string>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path": root = Value(args, ref i, args[i]); break;
+                default:
+                    if (args[i].StartsWith('-'))
+                    {
+                        throw new StratumException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    positional.Add(args[i].ToLowerInvariant());
+                    break;
+            }
+        }
+
+        if (ServiceGenerator.FindDefinition(root) is not null)
+        {
+            throw new StratumException("Esta carpeta es un servicio. El despliegue es del sistema: ejecútalo en la carpeta que contiene tus servicios (o usa --path).");
+        }
+
+        var action = positional.Count == 0 ? "list" : positional[0];
+        var name = AspireGenerator.DefaultSystemName(root);
+        var current = AspireGenerator.Deploy(root, name);
+        if (action == "list")
+        {
+            if (current.Count == 0)
+            {
+                output.WriteLine("El sistema no tiene destinos de despliegue. Añade uno: stratum deploy add docker (Docker Compose) o stratum deploy add azure (Azure Container Apps).");
+                return 0;
+            }
+
+            PrintDeploy(output, current);
+            return 0;
+        }
+
+        if (action is not ("add" or "remove") || positional.Count < 2)
+        {
+            throw new StratumException(usage);
+        }
+
+        var targets = positional[1..];
+        foreach (var target in targets.Where(t => !AspireGenerator.DeployTargets.Contains(t)))
+        {
+            throw new StratumException($"No conozco el destino '{target}'. Destinos: {string.Join(", ", AspireGenerator.DeployTargets)}.");
+        }
+
+        var updated = action == "add" ? current.Union(targets).ToList() : current.Except(targets).ToList();
+        var services = AspireGenerator.Discover(root);
+        var result = AspireGenerator.Generate(root, name, services, updated);
+        output.WriteLine($"✔ {result.AppHostName}: {(updated.Count == 0 ? "sin destinos de despliegue" : "despliega en " + string.Join(" y ", updated.Select(DeployName)))}");
+        foreach (var file in result.Created)
+        {
+            output.WriteLine($"  + {file}");
+        }
+
+        foreach (var file in result.Updated)
+        {
+            output.WriteLine($"  ~ {file}");
+        }
+
+        if (updated.Count > 0)
+        {
+            output.WriteLine();
+            PrintDeploy(output, updated);
+        }
+
+        return 0;
+    }
+
+    private static string DeployName(string target) => target == AspireGenerator.DeployDocker ? "Docker Compose" : "Azure Container Apps";
+
+    private static void PrintDeploy(TextWriter output, IReadOnlyList<string> targets)
+    {
+        output.WriteLine("Para desplegar, con el CLI de Aspire (aspire), desde la carpeta del sistema:");
+        foreach (var target in targets)
+        {
+            output.WriteLine();
+            output.WriteLine($"  {DeployName(target)}:");
+            if (targets.Count > 1)
+            {
+                output.WriteLine($"    $env:STRATUM_DEPLOY = \"{target}\"        # PowerShell (bash: export STRATUM_DEPLOY={target})");
+            }
+
+            if (target == AspireGenerator.DeployDocker)
+            {
+                output.WriteLine("    aspire deploy                       # docker compose up en esta máquina (pide las contraseñas)");
+                output.WriteLine("    aspire publish -o deploy/docker     # solo docker-compose.yaml y .env, para llevarlos a otro servidor");
+            }
+            else
+            {
+                output.WriteLine("    az login");
+                output.WriteLine("    aspire deploy                       # pide suscripción, región y contraseñas; crea los recursos y despliega");
+            }
+        }
     }
 
     private static int Upgrade(string[] args, TextWriter output)

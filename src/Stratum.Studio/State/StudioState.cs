@@ -603,6 +603,21 @@ public sealed class StudioState(StudioOptions options) : IDisposable
         return result;
     }
 
+    /// <summary>Where the system deploys (the AppHost's StratumDeploy): docker, azure or none.</summary>
+    public IReadOnlyList<string> DeployTargets =>
+        ExistingAppHost is { } appHost ? AspireGenerator.Deploy(Workspace, appHost[..^".AppHost".Length]) : [];
+
+    /// <summary>Turns a deploy target on or off (and generates the AppHost if it doesn't exist yet).</summary>
+    public AspireResult SetDeploy(string systemName, string target, bool on)
+    {
+        var targets = DeployTargets.Where(t => t != target).Concat(on ? [target] : []).ToList();
+        var name = ExistingAppHost is { } appHost ? appHost[..^".AppHost".Length] : ServiceName.Normalize(systemName);
+        var result = AspireGenerator.Generate(Workspace, name, [.. AspireGenerator.Discover(Workspace)], targets);
+        Reload();
+        Changed?.Invoke();
+        return result;
+    }
+
     public string? ExistingAppHost =>
         Directory.EnumerateDirectories(Workspace, "*.AppHost").Select(Path.GetFileName).FirstOrDefault();
 

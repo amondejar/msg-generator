@@ -29,6 +29,42 @@ public static class AspireGenerator
     /// <summary>Latest 13.x: the line validated with .NET 10. Bump with "aspire update" when you want to.</summary>
     public const string AspireVersion = "13.6.5";
 
+    /// <summary>Aspire.Hosting.Azure.Sql has no 13.6.5.</summary>
+    public const string AspireAzureSqlVersion = "13.6.4";
+
+    /// <summary>Where "aspire deploy" can take the system ("stratum deploy").</summary>
+    public const string DeployDocker = "docker";
+
+    public const string DeployAzure = "azure";
+
+    public static readonly IReadOnlyList<string> DeployTargets = [DeployDocker, DeployAzure];
+
+    /// <summary>The deploy targets of the system: the &lt;StratumDeploy&gt; property of its AppHost (none without it).</summary>
+    public static IReadOnlyList<string> Deploy(string root, string appHostName)
+    {
+        var csproj = Path.Combine(root, $"{appHostName}.AppHost", $"{appHostName}.AppHost.csproj");
+        if (!File.Exists(csproj) || System.Text.RegularExpressions.Regex.Match(File.ReadAllText(csproj), "<StratumDeploy>(?<t>[^<]*)</StratumDeploy>") is not { Success: true } match)
+        {
+            return [];
+        }
+
+        return [.. DeployTargets.Where(t => match.Groups["t"].Value.Split(';', ',', ' ').Contains(t, StringComparer.OrdinalIgnoreCase))];
+    }
+
+    /// <summary>Why a target doesn't fit the system (null when it does).</summary>
+    public static string? DeployProblem(string target, IReadOnlyList<AspireService> services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        if (!DeployTargets.Contains(target))
+        {
+            return $"No conozco el destino '{target}'. Destinos: {string.Join(", ", DeployTargets)}.";
+        }
+
+        return target == DeployDocker && UsesServiceBus(services)
+            ? "Azure Service Bus no funciona en Docker Compose (su emulador es solo para desarrollo): despliega en Azure, o usa Kafka en los servicios que quieras llevar a Docker."
+            : null;
+    }
+
     private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase)
     {
         "bin", "obj", "node_modules", ".git", ".vs", ".idea", "artifacts", "TestResults",
@@ -156,7 +192,8 @@ public static class AspireGenerator
         }
     }
 
-    public static AspireResult Generate(string root, string appHostName, IReadOnlyList<AspireService> services)
+    /// <param name="deploy">Deploy targets to set (null keeps the ones the AppHost has).</param>
+    public static AspireResult Generate(string root, string appHostName, IReadOnlyList<AspireService> services, IReadOnlyList<string>? deploy = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ServiceName.Validate(appHostName);
@@ -170,6 +207,15 @@ public static class AspireGenerator
         if (duplicated is not null)
         {
             throw new StratumException($"Hay varios servicios llamados '{duplicated.Key}': {string.Join(", ", duplicated.Select(s => s.RelativeDirectory))}.");
+        }
+
+        deploy = [.. DeployTargets.Where((deploy ?? Deploy(root, appHostName)).Contains)];
+        foreach (var target in deploy)
+        {
+            if (DeployProblem(target, services) is { } problem)
+            {
+                throw new StratumException(problem);
+            }
         }
 
         var appHost = $"{appHostName}.AppHost";
@@ -200,7 +246,7 @@ public static class AspireGenerator
         }
 
         var csprojPath = $"{appHost}/{appHost}.csproj";
-        var csproj = Csproj(root, appHostName, services);
+        var csproj = Csproj(root, appHostName, services, deploy);
         if (File.Exists(Path.Combine(root, csprojPath)))
         {
             // Services that left the system (removed or moved): their *.Api project references go too.
@@ -214,6 +260,16 @@ public static class AspireGenerator
                 existing,
                 "[ \t]*<ProjectReference Include=\"(?<p>[^\"]+\\.Api\\.csproj)\"\\s*/>[ \t]*\r?\n?",
                 m => current.Contains(m.Groups["p"].Value) ? m.Value : string.Empty);
+
+            // Deploy targets ("stratum deploy"): their packages and the <StratumDeploy> property follow the targets.
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
+                "[ \t]*<PackageReference Include=\"Aspire\\.Hosting\\.(Docker|Azure\\.AppContainers|Azure\\.PostgreSQL|Azure\\.Sql)\"[^>]*/>[ \t]*\r?\n?", string.Empty);
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "[ \t]*<StratumDeploy>[^<]*</StratumDeploy>[ \t]*\r?\n?", string.Empty);
+            if (deploy.Count > 0
+                && System.Text.RegularExpressions.Regex.Match(cleaned, "([ \t]*)<OutputType>Exe</OutputType>(\r?\n)") is { Success: true } exe)
+            {
+                cleaned = cleaned.Insert(exe.Index + exe.Length, $"{exe.Groups[1].Value}<StratumDeploy>{string.Join(';', deploy)}</StratumDeploy>{exe.Groups[2].Value}");
+            }
 
             // AppHosts from before 0.35.1: opt out of a Directory.Packages.props found in a parent folder (NU1008).
             if (!cleaned.Contains("<ManagePackageVersionsCentrally>", StringComparison.Ordinal)
@@ -281,13 +337,13 @@ public static class AspireGenerator
             }
         }
 
-        Overwrite($"{appHost}/StratumServices.g.cs", StratumServices(services, appHostName));
+        Overwrite($"{appHost}/StratumServices.g.cs", StratumServices(services, appHostName, deploy));
         Overwrite($"{appHostName}.slnx", Solution(root, appHost, services));
 
         return new AspireResult(appHost, services, created, updated);
     }
 
-    private static string Csproj(string root, string name, IReadOnlyList<AspireService> services)
+    private static string Csproj(string root, string name, IReadOnlyList<AspireService> services, IReadOnlyList<string> deploy)
     {
         var providers = services.Select(s => s.Definition.Persistence?.Provider).Where(p => p is not null).Distinct().ToList();
         var packages = new StringBuilder();
@@ -311,6 +367,28 @@ public static class AspireGenerator
             packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Azure.ServiceBus\" Version=\"{AspireVersion}\" />\n");
         }
 
+        if (deploy.Contains(DeployDocker))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Docker\" Version=\"{AspireVersion}\" />\n");
+        }
+
+        if (deploy.Contains(DeployAzure))
+        {
+            packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Azure.AppContainers\" Version=\"{AspireVersion}\" />\n");
+            if (providers.Contains(PersistenceSettings.Postgres))
+            {
+                packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Azure.PostgreSQL\" Version=\"{AspireVersion}\" />\n");
+            }
+
+            if (providers.Contains(PersistenceSettings.SqlServer))
+            {
+                packages.Append($"    <PackageReference Include=\"Aspire.Hosting.Azure.Sql\" Version=\"{AspireAzureSqlVersion}\" />\n");
+            }
+        }
+
+        var deployProperty = deploy.Count == 0 ? string.Empty
+            : $"    <!-- Where \"aspire deploy\" takes the system: stratum deploy add|remove docker|azure. -->\n    <StratumDeploy>{string.Join(';', deploy)}</StratumDeploy>\n";
+
         // Relative to the AppHost folder; absolute for a service on another drive.
         var projects = string.Concat(services.Select(s =>
             $"    <ProjectReference Include=\"{Path.GetRelativePath(Path.GetFullPath(Path.Combine(root, $"{name}.AppHost")), Path.GetFullPath(Path.Combine(root, s.ApiProject))).Replace('/', '\\')}\" />\n"));
@@ -322,7 +400,7 @@ public static class AspireGenerator
 
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <!-- Its packages carry their versions: a Directory.Packages.props in a parent folder doesn't apply. -->
+            {deployProperty}    <!-- Its packages carry their versions: a Directory.Packages.props in a parent folder doesn't apply. -->
                 <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
                 <TargetFramework>net10.0</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
@@ -367,33 +445,85 @@ public static class AspireGenerator
             """;
     }
 
-    private static string StratumServices(IReadOnlyList<AspireService> services, string appHostName)
+    private static string StratumServices(IReadOnlyList<AspireService> services, string appHostName, IReadOnlyList<string> deploy)
     {
         var body = new StringBuilder();
         var providers = services.Select(s => s.Definition.Persistence?.Provider).Where(p => p is not null).Distinct().ToList();
+        var azure = deploy.Contains(DeployAzure);
+
+        if (deploy.Count > 0)
+        {
+            // "aspire publish" / "aspire deploy" take the system where STRATUM_DEPLOY says (aspire run ignores it).
+            body.Append("        var deploy = builder.ExecutionContext.IsPublishMode ? StratumDeploy.Target(builder.Configuration) : null;\n");
+            if (deploy.Contains(DeployDocker))
+            {
+                body.Append("        if (deploy == StratumDeploy.Docker)\n        {\n")
+                    .Append("            builder.AddDockerComposeEnvironment(\"compose\");   // aspire deploy: docker compose up (aspire publish: only the files)\n        }\n\n");
+            }
+
+            if (azure)
+            {
+                body.Append("        if (deploy == StratumDeploy.Azure)\n        {\n")
+                    .Append("            builder.AddAzureContainerAppEnvironment(\"aca\");   // aspire deploy: Azure Container Apps (az login first)\n        }\n\n");
+            }
+        }
 
         if (providers.Contains(PersistenceSettings.Postgres))
         {
-            body.Append("        var postgres = builder.AddPostgres(\"postgres\")\n")
-                .Append("            .WithDataVolume()\n")
-                .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+            if (azure)
+            {
+                // Azure: Azure Database for PostgreSQL (flexible server) instead of a container; locally and in Docker, a container.
+                body.Append("        var azurePostgres = deploy == StratumDeploy.Azure ? builder.AddAzurePostgresFlexibleServer(\"postgres\").WithPasswordAuthentication() : null;\n")
+                    .Append("        var postgres = azurePostgres is null\n")
+                    .Append("            ? builder.AddPostgres(\"postgres\").WithDataVolume().WithLifetime(ContainerLifetime.Persistent)\n")
+                    .Append("            : null;\n\n");
+            }
+            else
+            {
+                body.Append("        var postgres = builder.AddPostgres(\"postgres\")\n")
+                    .Append("            .WithDataVolume()\n")
+                    .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+            }
         }
 
         if (providers.Contains(PersistenceSettings.SqlServer))
         {
-            body.Append("        var sqlserver = builder.AddSqlServer(\"sqlserver\")\n")
-                .Append("            .WithDataVolume()\n")
-                .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+            if (azure)
+            {
+                // Azure: Azure SQL Database (the services connect with their managed identity); locally and in Docker, a container.
+                body.Append("        var azureSql = deploy == StratumDeploy.Azure ? builder.AddAzureSqlServer(\"sqlserver\") : null;\n")
+                    .Append("        var sqlserver = azureSql is null\n")
+                    .Append("            ? builder.AddSqlServer(\"sqlserver\").WithDataVolume().WithLifetime(ContainerLifetime.Persistent)\n")
+                    .Append("            : null;\n\n");
+            }
+            else
+            {
+                body.Append("        var sqlserver = builder.AddSqlServer(\"sqlserver\")\n")
+                    .Append("            .WithDataVolume()\n")
+                    .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+            }
         }
 
         if (UsesKafka(services))
         {
             // One broker for the whole system; Kafka UI (link in the dashboard, fixed port for Stratum Studio's event
             // traces) shows topics and messages.
-            body.Append("        var kafka = builder.AddKafka(\"kafka\")\n")
-                .Append($"            .WithKafkaUI(ui => ui.WithHostPort({KafkaUiPort(appHostName)}))\n")
-                .Append("            .WithDataVolume()\n")
-                .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+            if (deploy.Count == 0)
+            {
+                body.Append("        var kafka = builder.AddKafka(\"kafka\")\n")
+                    .Append($"            .WithKafkaUI(ui => ui.WithHostPort({KafkaUiPort(appHostName)}))\n")
+                    .Append("            .WithDataVolume()\n")
+                    .Append("            .WithLifetime(ContainerLifetime.Persistent);\n\n");
+            }
+            else
+            {
+                // Deployed, Kafka is one more container (Kafka UI only locally).
+                body.Append("        var kafka = builder.AddKafka(\"kafka\");\n")
+                    .Append("        if (deploy is null)\n        {\n")
+                    .Append($"            kafka.WithKafkaUI(ui => ui.WithHostPort({KafkaUiPort(appHostName)})).WithLifetime(ContainerLifetime.Persistent);\n        }}\n\n")
+                    .Append(azure ? "        if (deploy != StratumDeploy.Azure)\n        {\n            kafka.WithDataVolume();   // Azure Files doesn't suit Kafka: deployed to Azure, its data lives in the container\n        }\n\n"
+                                  : "        kafka.WithDataVolume();\n\n");
+            }
         }
 
         if (UsesServiceBus(services))
@@ -442,7 +572,11 @@ public static class AspireGenerator
             if (provider is not null)
             {
                 var server = provider == PersistenceSettings.Postgres ? "postgres" : "sqlserver";
-                body.Append($"        var {variable}Db = {server}.AddDatabase(\"{service.ResourceName}-db\");\n");
+                body.Append(azure
+                    ? $"        IResourceBuilder<global::Aspire.Hosting.ApplicationModel.IResourceWithConnectionString> {variable}Db = {(provider == PersistenceSettings.Postgres ? "azurePostgres" : "azureSql")} is {{ }} azure{variable}\n" +
+                      $"            ? azure{variable}.AddDatabase(\"{service.ResourceName}-db\")\n" +
+                      $"            : {server}!.AddDatabase(\"{service.ResourceName}-db\");\n"
+                    : $"        var {variable}Db = {server}.AddDatabase(\"{service.ResourceName}-db\");\n");
             }
 
             body.Append($"        var {variable} = builder.AddProject<Projects.{service.Name}_Api>(\"{service.ResourceName}\")\n");
@@ -501,9 +635,41 @@ public static class AspireGenerator
             {
             {{properties}}
             }
-
+            {{(deploy.Count == 0 ? string.Empty : DeployHelper(deploy))}}
             """;
     }
+
+    private static string DeployHelper(IReadOnlyList<string> deploy) => $$"""
+
+        /// <summary>
+        /// Where "aspire publish" and "aspire deploy" take the system: the STRATUM_DEPLOY variable
+        /// ({{string.Join(" or ", deploy)}}){{(deploy.Count == 1 ? $"; without it, {deploy[0]}" : string.Empty)}}. Change the targets with "stratum deploy".
+        /// </summary>
+        internal static class StratumDeploy
+        {
+            public const string Docker = "docker";
+
+            public const string Azure = "azure";
+
+            public static readonly string[] Targets = [{{string.Join(", ", deploy.Select(d => d == DeployDocker ? "Docker" : "Azure"))}}];
+
+            public static string Target(global::Microsoft.Extensions.Configuration.IConfiguration configuration)
+            {
+                var target = configuration["STRATUM_DEPLOY"]?.Trim().ToLowerInvariant();
+                if (string.IsNullOrEmpty(target))
+                {
+                    return Targets.Length == 1
+                        ? Targets[0]
+                        : throw new InvalidOperationException($"Elige dónde desplegar: STRATUM_DEPLOY = {string.Join(" o ", Targets)} (PowerShell: $env:STRATUM_DEPLOY = \"{Targets[0]}\").");
+                }
+
+                return Targets.Contains(target)
+                    ? target
+                    : throw new InvalidOperationException($"STRATUM_DEPLOY = '{target}': este sistema despliega en {string.Join(" o ", Targets)} (stratum deploy add para otro).");
+            }
+        }
+
+        """;
 
     private static string Solution(string root, string appHost, IReadOnlyList<AspireService> services)
     {

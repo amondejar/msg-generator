@@ -51,4 +51,13 @@ public sealed class AzureServiceBusTests
         Assert.Contains("UseDevelopmentEmulator=true", options.ConnectionString, StringComparison.Ordinal);
         Assert.IsType<AzureServiceBusTransport>(host.Services.GetRequiredService<IMessageTransport>());
     }
+
+    [Theory]
+    [InlineData("Endpoint=sb://shop.servicebus.windows.net/;SharedAccessKeyName=root;SharedAccessKey=abc=", null)]
+    [InlineData("Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;", null)]
+    [InlineData("Endpoint=sb://shop.servicebus.windows.net/", "shop.servicebus.windows.net")]
+    [InlineData("https://shop.servicebus.windows.net:443/", "shop.servicebus.windows.net")]
+    [InlineData("shop.servicebus.windows.net", "shop.servicebus.windows.net")]
+    public void WithoutAKeyTheServiceSignsInWithItsIdentity(string connection, string? expected) =>
+        Assert.Equal(expected, AzureServiceBusTransport.Namespace(connection));
 }

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
@@ -19,7 +20,9 @@ public sealed partial class AzureServiceBusTransport(IOptions<AzureServiceBusOpt
     internal const string OccurredAtProperty = "msg-occurred-at";
     internal const string TraceParentProperty = "traceparent";
 
-    private readonly Lazy<ServiceBusClient> _client = new(() => new ServiceBusClient(ConnectionString(options.Value)));
+    private readonly Lazy<ServiceBusClient> _client = new(() => Namespace(ConnectionString(options.Value)) is { } fullyQualified
+        ? new ServiceBusClient(fullyQualified, new DefaultAzureCredential())
+        : new ServiceBusClient(ConnectionString(options.Value)));
     private readonly ConcurrentDictionary<string, ServiceBusSender> _senders = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Task> _entities = new(StringComparer.Ordinal);
 
@@ -99,7 +102,9 @@ public sealed partial class AzureServiceBusTransport(IOptions<AzureServiceBusOpt
 
         return _entities.GetOrAdd($"{topic}|{subscription}", async _ =>
         {
-            var admin = new ServiceBusAdministrationClient(connection);
+            var admin = Namespace(connection) is { } fullyQualified
+                ? new ServiceBusAdministrationClient(fullyQualified, new DefaultAzureCredential())
+                : new ServiceBusAdministrationClient(connection);
             if (!(await admin.TopicExistsAsync(topic).ConfigureAwait(false)).Value)
             {
                 await admin.CreateTopicAsync(topic).ConfigureAwait(false);
@@ -147,6 +152,29 @@ public sealed partial class AzureServiceBusTransport(IOptions<AzureServiceBusOpt
             CorrelationId = message.CorrelationId,
             TraceParent = Property(TraceParentProperty),
         };
+    }
+
+    /// <summary>
+    /// The namespace (ns.servicebus.windows.net) when the connection string has no key: deployed to Azure, Aspire gives
+    /// only the endpoint and the service signs in with its managed identity (DefaultAzureCredential). Null with a key
+    /// (SharedAccessKey) or the emulator: the connection string is used as it is.
+    /// </summary>
+    internal static string? Namespace(string connection)
+    {
+        if (connection.Contains("SharedAccessKey", StringComparison.OrdinalIgnoreCase)
+            || connection.Contains("SharedAccessSignature", StringComparison.OrdinalIgnoreCase)
+            || connection.Contains("UseDevelopmentEmulator=true", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var endpoint = connection.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part => part.Split('=', 2))
+            .FirstOrDefault(pair => pair.Length == 2 && pair[0].Equals("Endpoint", StringComparison.OrdinalIgnoreCase))?[1]
+            ?? connection.Trim();
+        return Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ? uri.Host
+            : endpoint.Contains('.', StringComparison.Ordinal) && !endpoint.Contains('=', StringComparison.Ordinal) ? endpoint.TrimEnd('/')
+            : null;
     }
 
     private static string ConnectionString(AzureServiceBusOptions options) =>

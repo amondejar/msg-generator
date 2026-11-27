@@ -700,6 +700,22 @@ namespace Catalog.Infrastructure.Migrations
     if ($hostCode -like '*AddAzureServiceBus("servicebus")*' -and $hostCode -like '*AddServiceBusSubscription("notifications-orders-order-created", "notifications")*' -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -like '*Aspire.Hosting.Azure.ServiceBus*' -and (Get-Content (Join-Path $notifications 'src\Notifications.Api\StratumWiring.g.cs') -Raw) -like '*UseAzureServiceBus*' -and $map -like '*no le llegar*') {
         Pass 'Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported'
     } else { $map | Out-Host; Fail 'Azure Service Bus' }
+    # Deployment (stratum deploy): optional targets in the AppHost, for "aspire deploy".
+    $dsys = Join-Path $Work 'system-docker'
+    New-Item -ItemType Directory -Path $dsys -Force | Out-Null
+    Copy-Item (Join-Path $sys 'orders'), (Join-Path $sys 'billing') -Destination $dsys -Recurse
+    Invoke-Dotnet $StratumDll aspire --path $dsys --name Store
+    Invoke-Dotnet $StratumDll deploy add docker --path $dsys
+    Invoke-Dotnet $StratumDll deploy add azure --path $sys
+    $storeProj = Get-Content (Join-Path $dsys 'Store.AppHost\Store.AppHost.csproj') -Raw
+    $shopProj = Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw
+    $shopHost = Get-Content (Join-Path $sys 'Shop.AppHost\StratumServices.g.cs') -Raw
+    $deployOk = $storeProj -like '*<StratumDeploy>docker</StratumDeploy>*' -and $storeProj -like '*Aspire.Hosting.Docker*' `
+        -and (Get-Content (Join-Path $dsys 'Store.AppHost\StratumServices.g.cs') -Raw) -like '*AddDockerComposeEnvironment("compose")*' `
+        -and $shopProj -like '*<StratumDeploy>azure</StratumDeploy>*' -and $shopProj -like '*Aspire.Hosting.Azure.AppContainers*' -and $shopProj -like '*Aspire.Hosting.Azure.Sql*' `
+        -and $shopHost -like '*AddAzureContainerAppEnvironment("aca")*' -and $shopHost -like '*AddAzurePostgresFlexibleServer("postgres").WithPasswordAuthentication()*'
+    $null = Get-DotnetOutput $StratumDll deploy add docker --path $sys   # expected to fail: Service Bus only deploys to Azure
+    if ($deployOk -and $LASTEXITCODE -ne 0) { Pass 'deploy: Docker Compose and Azure Container Apps as optional targets of the AppHost (Service Bus only to Azure)' } else { Fail 'deploy targets' }
     Invoke-Dotnet $StratumDll events asyncapi --path $sys
     $spec = Get-Content (Join-Path $sys 'asyncapi.yaml') -Raw
     if ($spec -like '*asyncapi: "3.1.0"*' -and $spec -like '*address: orders.order-created*' -and $spec -like '*action: receive*') {
@@ -984,7 +1000,8 @@ components:
         Invoke-Dotnet build (Join-Path $Work $s) -c Release -v q -nologo;           Pass "$s builds"
         Invoke-Dotnet test  (Join-Path $Work $s) -c Release --no-build -v q -nologo; Pass "$s tests pass"
     }
-    Invoke-Dotnet build (Join-Path $sys 'Shop.AppHost') -c Release -v q -nologo; Pass 'Aspire AppHost builds'
+    Invoke-Dotnet build (Join-Path $sys 'Shop.AppHost') -c Release -v q -nologo; Pass 'Aspire AppHost builds (deploys to Azure)'
+    Invoke-Dotnet build (Join-Path $dsys 'Store.AppHost') -c Release -v q -nologo; Pass 'Aspire AppHost builds (deploys with Docker Compose)'
 
     Write-Host 'Smoke test OK' -ForegroundColor Green
 }

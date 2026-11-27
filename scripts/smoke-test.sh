@@ -719,6 +719,26 @@ grep -q 'AddAzureServiceBus("servicebus")' "$SYS/Shop.AppHost/StratumServices.g.
   && grep -q "UseAzureServiceBus" "$SYS/notifications/src/Notifications.Api/StratumWiring.g.cs" \
   && "${MSG[@]}" events map --path "$SYS" | grep -q "no le llegarán" \
   && pass "Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported" || fail "Azure Service Bus"
+# Deployment (stratum deploy): optional targets in the AppHost, for "aspire deploy".
+DSYS="$WORK/system-docker"; mkdir -p "$DSYS"; cp -r "$SYS/orders" "$SYS/billing" "$DSYS/"
+"${MSG[@]}" aspire --path "$DSYS" --name Store >/dev/null
+"${MSG[@]}" deploy add docker --path "$DSYS" >/dev/null
+"${MSG[@]}" deploy add azure --path "$SYS" >/dev/null
+grep -q '<StratumDeploy>docker</StratumDeploy>' "$DSYS/Store.AppHost/Store.AppHost.csproj" \
+  && grep -q 'Aspire.Hosting.Docker' "$DSYS/Store.AppHost/Store.AppHost.csproj" \
+  && grep -q 'AddDockerComposeEnvironment("compose")' "$DSYS/Store.AppHost/StratumServices.g.cs" \
+  && grep -q '<StratumDeploy>azure</StratumDeploy>' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && grep -q 'Aspire.Hosting.Azure.AppContainers' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && grep -q 'Aspire.Hosting.Azure.PostgreSQL' "$SYS/Shop.AppHost/Shop.AppHost.csproj" && grep -q 'Aspire.Hosting.Azure.Sql' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && grep -q 'AddAzureContainerAppEnvironment("aca")' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q 'AddAzurePostgresFlexibleServer("postgres").WithPasswordAuthentication()' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q 'AddAzureSqlServer("sqlserver")' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && ! "${MSG[@]}" deploy add docker --path "$SYS" >/dev/null 2>&1 \
+  && "${MSG[@]}" deploy --path "$SYS" | grep -q "Azure Container Apps" \
+  && "${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null && grep -q '<StratumDeploy>azure</StratumDeploy>' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && "${MSG[@]}" deploy remove docker --path "$DSYS" >/dev/null && ! grep -q 'StratumDeploy\|Aspire.Hosting.Docker' "$DSYS/Store.AppHost/Store.AppHost.csproj" "$DSYS/Store.AppHost/StratumServices.g.cs" \
+  && "${MSG[@]}" deploy add docker --path "$DSYS" >/dev/null \
+  && pass "deploy: Docker Compose and Azure Container Apps as optional targets of the AppHost (Service Bus only to Azure)" || fail "deploy targets"
 "${MSG[@]}" events asyncapi --path "$SYS" >/dev/null
 grep -q 'asyncapi: "3.1.0"' "$SYS/asyncapi.yaml" && grep -q "address: orders.order-created" "$SYS/asyncapi.yaml" \
   && grep -q "action: receive" "$SYS/asyncapi.yaml" \
@@ -826,7 +846,8 @@ if [[ $ONLINE == 1 ]]; then
     dotnet build "$WORK/$s" -c Release -v q -nologo >/dev/null && pass "$s builds"
     dotnet test  "$WORK/$s" -c Release --no-build -v q -nologo >/dev/null && pass "$s tests pass"
   done
-  dotnet build "$SYS/Shop.AppHost" -c Release -v q -nologo >/dev/null && pass "Aspire AppHost builds"
+  dotnet build "$SYS/Shop.AppHost" -c Release -v q -nologo >/dev/null && pass "Aspire AppHost builds (deploys to Azure)"
+  dotnet build "$DSYS/Store.AppHost" -c Release -v q -nologo >/dev/null && pass "Aspire AppHost builds (deploys with Docker Compose)"
 else
   echo "  – nuget.org not reachable: skipped (run this script on your machine)"
 fi

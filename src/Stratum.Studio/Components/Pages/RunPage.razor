@@ -89,6 +89,38 @@
         </div>
     </section>
 
+    <section class="stack" aria-labelledby="h-deploy">
+        <h2 class="section" id="h-deploy">@L("Despliegue", "Deployment")</h2>
+        <span class="hint">@L("Opcional. Elige dónde puede desplegarse el sistema: Stratum prepara el AppHost para que aspire deploy lo lleve allí (las mismas bases de datos, broker y servicios que en local). Puedes marcar los dos.", "Optional. Choose where the system can be deployed: Stratum prepares the AppHost so that aspire deploy takes it there (the same databases, broker and services as locally). You can tick both.")</span>
+        @{ var targets = State.DeployTargets; var all = State.Services.ToList(); var aspireServices = all.Select(s => new AspireService(s.Directory, s.Definition)).ToList(); }
+        <div class="grid">
+            @foreach (var (target, title, description) in new[]
+            {
+                (AspireGenerator.DeployDocker, "Docker Compose", L("En cualquier servidor o VM con Docker: un docker-compose.yaml con los servicios, sus bases de datos y Kafka.", "On any server or VM with Docker: a docker-compose.yaml with the services, their databases and Kafka.")),
+                (AspireGenerator.DeployAzure, "Azure Container Apps", L("En tu suscripción de Azure: Container Apps, Azure Database for PostgreSQL o Azure SQL, y Service Bus o Kafka.", "In your Azure subscription: Container Apps, Azure Database for PostgreSQL or Azure SQL, and Service Bus or Kafka.")),
+            })
+            {
+                var on = targets.Contains(target);
+                var problem = on ? null : AspireGenerator.DeployProblem(target, aspireServices);
+                <div class="card stack" style="gap: 8px">
+                    <label class="row" style="gap: 8px; align-items: center">
+                        <input type="checkbox" checked="@on" disabled="@(all.Count == 0 || problem is not null)" @onchange="e => SetDeploy(target, e.Value is true)" />
+                        <b>@title</b>
+                    </label>
+                    <span class="hint">@description</span>
+                    @if (problem is not null)
+                    {
+                        <span class="hint" style="color: var(--warn)">⚠ @problem</span>
+                    }
+                    @if (on)
+                    {
+                        <pre class="mono" style="margin: 0; white-space: pre-wrap">@DeployCommands(target, targets.Count > 1)</pre>
+                    }
+                </div>
+            }
+        </div>
+    </section>
+
     <section class="stack" aria-labelledby="h-starts">
         <h2 class="section" id="h-starts">@L("Qué arranca", "What starts")</h2>
         @if (State.Services.Count == 0)
@@ -216,6 +248,42 @@
     }
 
     private void StopSystem() => Runner.Stop(ServiceCommands.DashboardJob);
+
+    /// <summary>What to run to deploy (PowerShell), shown under each target that is on.</summary>
+    private string DeployCommands(string target, bool several)
+    {
+        var lines = new List<string>();
+        if (several)
+        {
+            lines.Add($"$env:STRATUM_DEPLOY = \"{target}\"");
+        }
+
+        if (target == AspireGenerator.DeployDocker)
+        {
+            lines.Add("aspire deploy                     # " + L("docker compose up en esta máquina", "docker compose up on this machine"));
+            lines.Add("aspire publish -o deploy/docker   # " + L("solo los archivos, para otro servidor", "only the files, for another server"));
+        }
+        else
+        {
+            lines.Add("az login");
+            lines.Add("aspire deploy                     # " + L("crea los recursos y despliega", "creates the resources and deploys"));
+        }
+
+        return string.Join("\n", lines);
+    }
+
+    private void SetDeploy(string target, bool on)
+    {
+        try
+        {
+            error = null;
+            aspire = State.SetDeploy(systemName, target, on);
+        }
+        catch (StratumException ex)
+        {
+            error = ex.Message;
+        }
+    }
 
     private void GenerateAppHost()
     {
