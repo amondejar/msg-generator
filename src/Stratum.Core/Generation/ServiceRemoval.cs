@@ -19,8 +19,12 @@ public sealed record ServiceRemovalPlan(
     bool IsExternal,
     IReadOnlyList<ConsumerCleanup> Consumers,
     string? AppHost,
-    IReadOnlyList<string> Notes)
+    IReadOnlyList<string> Notes,
+    string? DatabaseProvider = null)
 {
+    /// <summary>The service's database in the system's server ("customers-db"), when it has one.</summary>
+    public string? Database => DatabaseProvider is null ? null : ContainerDatabase.DatabaseName(ServiceName);
+
     /// <summary>Files in the service folder (what "delete the folder" removes).</summary>
     public int FileCount => System.IO.Directory.Exists(Directory)
         ? System.IO.Directory.EnumerateFiles(Directory, "*", SearchOption.AllDirectories).Count()
@@ -67,12 +71,6 @@ public static class ServiceRemoval
         var appHost = System.IO.Directory.EnumerateDirectories(rootFull, "*.AppHost").Select(Path.GetFileName).FirstOrDefault();
 
         var notes = new List<string>();
-        if (definition.Persistence is not null)
-        {
-            notes.Add(
-                $"La base de datos '{ServiceName.ToKebab(name)}-db' sigue en el contenedor de {definition.Persistence.Provider} de Aspire " +
-                "(volumen persistente). Bórrala desde el contenedor si ya no la necesitas, o borra el volumen para empezar de cero.");
-        }
 
         if (definition.Messaging?.Broker == MessagingSettings.Kafka && definition.Entities.Any(e => e.Publishes))
         {
@@ -89,12 +87,17 @@ public static class ServiceRemoval
             notes.Add("La carpeta del servicio es un repositorio Git: al borrarla se pierde también su historial local (lo que no hayas subido).");
         }
 
-        return new ServiceRemovalPlan(rootFull, name, directory, !WorkspaceFile.IsInside(rootFull, directory), consumers, appHost, notes);
+        return new ServiceRemovalPlan(rootFull, name, directory, !WorkspaceFile.IsInside(rootFull, directory), consumers, appHost, notes,
+            definition.Persistence?.Provider);
     }
 
-    /// <summary>Applies the plan. Without <paramref name="deleteFolder"/> the service only leaves the system (its files stay).</summary>
+    /// <summary>
+    /// Applies the plan. Without <paramref name="deleteFolder"/> the service only leaves the system (its files stay).
+    /// With <paramref name="dropDatabase"/>, its database is deleted from the server's container at the end (the server
+    /// and the other databases stay); if it can't be, the rest is done anyway and the result says how to do it by hand.
+    /// </summary>
     /// <returns>What was done, one line per step.</returns>
-    public static IReadOnlyList<string> Apply(ServiceRemovalPlan plan, bool deleteFolder)
+    public static IReadOnlyList<string> Apply(ServiceRemovalPlan plan, bool deleteFolder, bool dropDatabase = false)
     {
         ArgumentNullException.ThrowIfNull(plan);
         if (!deleteFolder && !plan.IsExternal)
@@ -150,6 +153,19 @@ public static class ServiceRemoval
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 done.Add($"⚠ El servicio ya está quitado, pero no se pudo borrar del todo {moved} ({ex.Message}): bórrala a mano.");
+            }
+        }
+
+        if (plan.Database is { } database)
+        {
+            if (dropDatabase)
+            {
+                var (ok, message) = ContainerDatabase.Drop(ContainerDatabase.Locate(plan.DatabaseProvider!, database, plan.AppHost));
+                done.Add(ok ? message : "⚠ " + message);
+            }
+            else
+            {
+                done.Add($"La base de datos {database} sigue en el servidor de {plan.DatabaseProvider}. Para borrarla: {ContainerDatabase.DropSql(plan.DatabaseProvider!, database)}");
             }
         }
 

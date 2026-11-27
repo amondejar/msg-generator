@@ -293,11 +293,12 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["apply"] = Apply(),
             }, [], ReadOnly: false),
         new("remove_service", "Eliminar un servicio",
-            "Elimina un servicio y lo que cuelga de él: suscripciones de otros servicios, AppHost, stratum.workspace.json y su carpeta (salvo keepFiles). Irreversible fuera de git. " + PlanNote,
+            "Elimina un servicio y lo que cuelga de él: suscripciones de otros servicios, AppHost, stratum.workspace.json y su carpeta (salvo keepFiles). Con dropDatabase borra también su base de datos del contenedor del servidor (Docker o Podman; el servidor y las demás bases de datos se quedan). Irreversible fuera de git. " + PlanNote,
             new JsonObject
             {
                 ["service"] = Service(),
                 ["keepFiles"] = Bool("Conservar la carpeta del servicio en disco."),
+                ["dropDatabase"] = Bool("Borrar también su base de datos (DROP DATABASE en el contenedor de PostgreSQL o SQL Server). Irreversible."),
                 ["apply"] = Apply(),
             }, ["service"], ReadOnly: false, Destructive: true),
     ];
@@ -707,7 +708,7 @@ internal sealed class McpTools(string root, string? packageSource)
 
     private ToolOutcome RemoveService(JsonObject args, bool apply)
     {
-        List<string> cli = ["service", "remove", Folder(args, "service"), "--path", root, .. Flag(args, "keepFiles", "--keep-files")];
+        List<string> cli = ["service", "remove", Folder(args, "service"), "--path", root, .. Flag(args, "keepFiles", "--keep-files"), .. Flag(args, "dropDatabase", "--drop-database")];
         if (apply)
         {
             cli.Add("--yes");

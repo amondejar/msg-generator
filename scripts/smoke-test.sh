@@ -762,6 +762,10 @@ MCP_OUT=$(printf '%s\n' \
   && "${MSG[@]}" service remove "$SYS/legacy" --path "$SYS" --yes >/dev/null && [[ ! -d "$SYS/legacy" ]] \
   && ! grep -q "Legacy" "$SYS/Shop.AppHost/Shop.AppHost.csproj" "$SYS/Shop.AppHost/StratumServices.g.cs" "$SYS/Shop.slnx" \
   && pass "service remove: dry run first, then folder and AppHost references gone" || fail "service remove"
+"${MSG[@]}" service remove "$SYS/orders" --path "$SYS" | grep -q "La base de datos orders-db (postgres) se conserva" \
+  && "${MSG[@]}" service remove "$SYS/orders" --path "$SYS" --drop-database | grep -q "base de datos orders-db" \
+  && [[ -d "$SYS/orders" ]] \
+  && pass "service remove --drop-database: its database goes from the server's container (Docker or Podman), the rest stays" || fail "service remove --drop-database"
 grep -q 'Notifications_Api' "$SYS/Shop.AppHost/StratumServices.g.cs" && grep -q 'Notifications.Api.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
   && pass "a new service is added to the AppHost" || fail "new service not added"
 

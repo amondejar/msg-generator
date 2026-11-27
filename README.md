@@ -526,6 +526,7 @@ stratum migration review                                             # corrige l
 ```bash
 stratum service remove orders                 # enseña todo lo que se eliminaría; no toca nada
 stratum service remove orders --yes           # lo elimina
+stratum service remove orders --drop-database --yes   # y borra también su base de datos
 stratum service remove D:/apis/payments --path C:/servicios --keep-files --yes   # solo lo saca del sistema
 ```
 
@@ -535,9 +536,16 @@ Se elimina el servicio y lo que cuelga de él:
 - las suscripciones de otros servicios a sus eventos: sus contratos y los handlers que no hayas tocado (de los que sí, avisa);
 - su entrada en `stratum.workspace.json` y sus referencias en el AppHost y la solución, que se regeneran.
 
-La base de datos y los topics de Kafka viven en los contenedores de Aspire: Stratum te dice cuáles son para que los borres
-si ya no los necesitas. En el Studio: **General → Zona peligrosa → Eliminar**, con el mismo resumen y confirmación escribiendo
-el nombre del servicio.
+Su base de datos (`orders-db`) se conserva salvo que pidas borrarla con `--drop-database` (en el Studio, la casilla
+*Borrar también la base de datos*). Stratum busca el contenedor del servidor que arranca Aspire (`postgres-…` o
+`sqlserver-…`, en Docker o Podman; con varios sistemas en la máquina, el de este AppHost) y ejecuta `DROP DATABASE`
+con el cliente del propio contenedor (`psql` o `sqlcmd`), así que no necesita contraseñas. Si el contenedor está parado,
+lo arranca un momento y lo vuelve a parar. El servidor, su volumen y las bases de datos de los demás servicios se quedan.
+Si no encuentra el contenedor (otro servidor, sin Docker), el servicio se elimina igual y te da el SQL para borrarla a
+mano. Los topics de Kafka siguen en el broker: Stratum te dice cuáles son para que los borres desde Kafka UI.
+
+En el Studio: **General → Zona peligrosa → Eliminar**, con el mismo resumen y confirmación escribiendo el nombre del
+servicio.
 
 Al quitar una entidad o dejar de publicar sus eventos, los servicios que los escuchaban aparecen marcados en el mapa de
 eventos; `stratum subscribe --sync --prune` (o *Quitar* en su Mensajería) limpia esas suscripciones.
@@ -989,4 +997,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 28. ✅ Listados con orden (`?sort=-createdAt`) y búsqueda (`?search=ana`).
 29. ✅ Relaciones N–M (`Tags:Tag[]`, `stratum relation add Customer Tag --many`).
 30. ✅ Despliegue opcional con Docker Compose o Azure Container Apps (`stratum deploy`, `aspire deploy`).
+31. ✅ Al eliminar un servicio, borrar también su base de datos del contenedor (`--drop-database`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

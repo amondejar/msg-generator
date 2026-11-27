@@ -60,7 +60,7 @@ internal static partial class Cli
                                                  Servicio (o entidades nuevas) desde una especificación OpenAPI
           stratum events map [--path <sistema>]          Quién publica y quién escucha cada evento
           stratum events asyncapi [--path] [-o <fichero>] AsyncAPI 3.1 de los eventos (asyncapi.yaml, o .json)
-          stratum service remove <carpeta del servicio> [--path <sistema>] [--keep-files] [--yes]
+          stratum service remove <carpeta del servicio> [--path <sistema>] [--keep-files] [--drop-database] [--yes]
                                                  Elimina un servicio y lo que cuelga de él (suscripciones de otros
                                                  servicios, AppHost, stratum.workspace.json). Sin --yes solo lo muestra
           stratum workspace list|add <carpeta>|remove <carpeta> [--path <sistema>]
@@ -1867,14 +1867,14 @@ internal static partial class Cli
 
     private static int ServiceCommand(string[] args, TextWriter output)
     {
-        const string usage = "Uso: stratum service remove <carpeta del servicio> [--path <sistema>] [--keep-files] [--yes]";
+        const string usage = "Uso: stratum service remove <carpeta del servicio> [--path <sistema>] [--keep-files] [--drop-database] [--yes]";
         if (args.Length < 2 || args[0] != "remove")
         {
             throw new StratumException(usage);
         }
 
         string? root = null;
-        bool keepFiles = false, yes = false;
+        bool keepFiles = false, yes = false, dropDatabase = false;
         for (var i = 2; i < args.Length; i++)
         {
             switch (args[i])
@@ -1884,6 +1884,9 @@ internal static partial class Cli
                     break;
                 case "--keep-files":
                     keepFiles = true;
+                    break;
+                case "--drop-database":
+                    dropDatabase = true;
                     break;
                 case "--yes":
                     yes = true;
@@ -1921,6 +1924,21 @@ internal static partial class Cli
             output.WriteLine($"  ~ {appHost}: se regenera sin el servicio.");
         }
 
+        if (plan.Database is { } database)
+        {
+            if (dropDatabase)
+            {
+                var location = ContainerDatabase.Locate(plan.DatabaseProvider!, database, plan.AppHost);
+                output.WriteLine(location.Container is { } container
+                    ? $"  - Se borra la base de datos {database} del contenedor {container.Name} ({container.Runtime}{(container.Running ? string.Empty : ", parado: se arranca un momento")}); el servidor y las demás bases de datos se quedan."
+                    : $"  ⚠ La base de datos {database} no se podrá borrar: {location.Problem} SQL: {location.ManualSql}");
+            }
+            else
+            {
+                output.WriteLine($"  · La base de datos {database} ({plan.DatabaseProvider}) se conserva. Para borrarla también: --drop-database");
+            }
+        }
+
         foreach (var note in plan.Notes)
         {
             output.WriteLine($"  ⚠ {note}");
@@ -1933,9 +1951,9 @@ internal static partial class Cli
             return 0;
         }
 
-        foreach (var line in ServiceRemoval.Apply(plan, deleteFolder: !keepFiles))
+        foreach (var line in ServiceRemoval.Apply(plan, deleteFolder: !keepFiles, dropDatabase: dropDatabase))
         {
-            output.WriteLine($"✔ {line}");
+            output.WriteLine(line.StartsWith('⚠') ? line : $"✔ {line}");
         }
 
         return 0;

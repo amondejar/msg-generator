@@ -560,9 +560,9 @@ public sealed class StudioState(StudioOptions options) : IDisposable
     }
 
     /// <summary>Removes the service (see <see cref="ServiceRemoval"/>) and closes it.</summary>
-    public IReadOnlyList<string> RemoveService(ServiceRemovalPlan plan, bool deleteFolder)
+    public IReadOnlyList<string> RemoveService(ServiceRemovalPlan plan, bool deleteFolder, bool dropDatabase = false)
     {
-        var done = ServiceRemoval.Apply(plan, deleteFolder);
+        var done = ServiceRemoval.Apply(plan, deleteFolder, dropDatabase);
         Current = null;
         SelectedEntity = null;
         Plan = null;

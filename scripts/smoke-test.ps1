@@ -746,6 +746,11 @@ namespace Catalog.Infrastructure.Migrations
     Invoke-Dotnet $StratumDll service remove $legacy --path $sys --yes
     $appHostFiles = (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) + (Get-Content (Join-Path $sys 'Shop.AppHost\StratumServices.g.cs') -Raw) + (Get-Content (Join-Path $sys 'Shop.slnx') -Raw)
     if (-not (Test-Path $legacy) -and $appHostFiles -notlike '*Legacy*') { Pass 'service remove: dry run first, then folder and AppHost references gone' } else { Fail 'service remove' }
+    $keepDb = Get-DotnetOutput $StratumDll service remove (Join-Path $sys 'orders') --path $sys
+    $dropDb = Get-DotnetOutput $StratumDll service remove (Join-Path $sys 'orders') --path $sys --drop-database
+    if ($keepDb -like '*orders-db (postgres) se conserva*' -and $dropDb -like '*base de datos orders-db*' -and (Test-Path (Join-Path $sys 'orders'))) {
+        Pass 'service remove --drop-database: its database goes from the server''s container (Docker or Podman), the rest stays'
+    } else { $dropDb | Out-Host; Fail 'service remove --drop-database' }
     $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\StratumServices.g.cs') -Raw
     $hostProj = Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw
     if ($hostCode -like '*Notifications_Api*' -and $hostProj -like '*Notifications.Api.csproj*') { Pass 'a new service is added to the AppHost' } else { Fail 'new service not added' }

@@ -44,6 +44,35 @@ else
                 </div>
             </section>
 
+            @if (plan.Database is { } database)
+            {
+                <section class="stack" aria-labelledby="h-database">
+                    <h2 class="section" id="h-database">@L("Su base de datos", "Its database")</h2>
+                    <div class="card stack">
+                        <label class="row" style="gap: 10px; align-items: flex-start">
+                            <input type="checkbox" checked="@dropDatabase" disabled="@(location is null)" @onchange="e => dropDatabase = e.Value is true" />
+                            <span>
+                                <b>@L("Borrar también la base de datos", "Delete the database too")</b> <span class="mono">@database</span> <small class="hint">(@plan.DatabaseProvider)</small>
+                                <br /><small class="hint">@L("Se borra solo esta base de datos (DROP DATABASE) en el servidor del sistema; el servidor, su volumen y las bases de datos de los demás servicios se quedan. No se puede deshacer.", "Only this database is deleted (DROP DATABASE) in the system's server; the server, its volume and the other services' databases stay. It can't be undone.")</small>
+                                <br />
+                                @if (location is null)
+                                {
+                                    <small class="hint">@L("Buscando su contenedor…", "Looking for its container…")</small>
+                                }
+                                else if (location.Container is { } container)
+                                {
+                                    <small class="hint">@L($"En el contenedor {container.Name} ({container.Runtime})", $"In container {container.Name} ({container.Runtime})")@(container.Running ? string.Empty : L(", parado: se arranca un momento para borrarla", ", stopped: it's started for a moment to delete it")).</small>
+                                }
+                                else
+                                {
+                                    <small style="color: var(--warn)">⚠ @location.Problem @L("SQL para borrarla a mano:", "SQL to delete it by hand:") <span class="mono">@location.ManualSql</span></small>
+                                }
+                            </span>
+                        </label>
+                    </div>
+                </section>
+            }
+
             <section class="stack" aria-labelledby="h-consumers">
                 <h2 class="section" id="h-consumers">@L("Otros servicios que escuchan sus eventos", "Other services that listen to its events")</h2>
                 @if (plan.Consumers.Count == 0)
@@ -106,6 +135,8 @@ else
 @code {
     private ServiceRemovalPlan? plan;
     private bool deleteFolder = true;
+    private bool dropDatabase;
+    private DatabaseLocation? location;
     private string confirmation = string.Empty;
     private string? error;
 
@@ -125,6 +156,17 @@ else
         }
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Looking for the container asks Docker or Podman: after the page is shown.
+        if (firstRender && plan?.Database is { } database)
+        {
+            var found = plan;
+            location = await Task.Run(() => ContainerDatabase.Locate(found.DatabaseProvider!, database, found.AppHost));
+            StateHasChanged();
+        }
+    }
+
     private void Remove()
     {
         if (plan is null)
@@ -134,7 +176,7 @@ else
 
         try
         {
-            State.RemoveService(plan, deleteFolder || !plan.IsExternal);
+            State.RemoveService(plan, deleteFolder || !plan.IsExternal, dropDatabase && location?.Container is not null);
             Nav.NavigateTo("services");
         }
         catch (Exception ex) when (ex is StratumException or IOException or UnauthorizedAccessException)
