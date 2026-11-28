@@ -407,6 +407,7 @@ public static partial class EntityCodeGen
                     $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Integrity, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Integrity>();"))
                 .Concat(clean ? entities.Select(e => $"        services.AddScoped<global::{service}.Application.{e.Plural}.I{e.Name}Lister, global::{service}.Infrastructure.Persistence.{e.Plural}.{e.Name}Lister>();") : [])
                 .Concat(ReplicaCodeGen.Registrations(definition))),
+            ["ReplicaLoaderRegistrations"] = ReplicaCodeGen.LoaderRegistrations(definition),
             ["TypeDeclarations"] = TypeDeclarations(definition),
             ["TypeContracts"] = TypeContracts(definition),
             ["HttpRequests"] = HttpRequests(definition),

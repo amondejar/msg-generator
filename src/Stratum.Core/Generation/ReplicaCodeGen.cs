@@ -21,7 +21,27 @@ public static class ReplicaCodeGen
             ["ReplicaConfiguration"] = string.Join("\n", props.Select(Configuration).Where(l => l.Length > 0)),
             ["ReplicaCopy"] = string.Join("\n", props.Select(p => $"            replica.{p.Name} = integrationEvent.{p.Name};")),
             ["ReplicaFields"] = props.Count == 0 ? "only its Id" : string.Join(", ", props.Select(p => p.Name)),
+            ["publisher-kebab"] = ServiceName.ToKebab(replica.Service),
+            ["ReplicaRoute"] = replica.RouteOrDefault,
+            ["ReplicaLoadCopy"] = string.Join("\n", props.Select(p => $"            replica.{p.Name} = row.{p.Name};")),
+            ["ReplicaRowParameters"] = string.Join("\n", props.Select(p => $"        {PropertyTypes.EntityCSharp(p)} {p.Name},")),
         };
+    }
+
+    /// <summary>The loaders of the replicas (ReplicaLoading.AddReplicaLoading): hosted services, and IReplicaLoader for the endpoint.</summary>
+    public static string LoaderRegistrations(ServiceDefinition definition)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        var root = definition.Architecture == Architectures.CleanDdd
+            ? $"{definition.Service.Name}.Infrastructure.Persistence.Replicas"
+            : $"{definition.Service.Name}.Api.Replicas";
+        return string.Join("\n", (definition.Persistence is null ? [] : definition.Replicas ?? []).Select(r =>
+        {
+            var type = $"global::{root}.{r.Service}.{r.Name}Loader";
+            return $"        services.AddSingleton<{type}>();\n" +
+                   $"        services.AddSingleton<IReplicaLoader>(sp => sp.GetRequiredService<{type}>());\n" +
+                   $"        services.AddHostedService(sp => sp.GetRequiredService<{type}>());";
+        }));
     }
 
     /// <summary>The DbSet of every replica (for the DbContext of the service).</summary>

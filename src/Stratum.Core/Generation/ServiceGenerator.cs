@@ -363,9 +363,10 @@ public static class ServiceGenerator
             "hasEnums" => definition.Enums is { Count: > 0 },
             "hasTypes" => definition.Types is { Count: > 0 },
             "hasModelTypes" => definition.Enums is { Count: > 0 } || definition.Types is { Count: > 0 },
+            "replicas" => provider is not null && definition.Messaging is not null && definition.Replicas is { Count: > 0 },
             _ when !FeatureSet.Names.Contains(feature, StringComparer.OrdinalIgnoreCase) => throw new StratumException(
                 $"condición desconocida '{feature}'. Válidas: {string.Join(", ", FeatureSet.Names)}, " +
-                "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents, hasEnums, hasTypes, hasModelTypes " +
+                "persistence, postgres, sqlserver, cleanDdd, verticalSlice, messaging, kafka, azureServiceBus, brokerConnection, publishesEvents, hasEnums, hasTypes, hasModelTypes, replicas " +
                 "(y hasRequiredString, publishEvents, hasReferences, hasRequiredReferences, referenced, relations, unlinks, deleteChecks, hasLinks, hasOperations, hasLists, searchable, integrationEvents, publishCreated/Updated/Deleted en plantillas de entidad)."),
             _ => definition.Features.IsEnabled(feature),
         };

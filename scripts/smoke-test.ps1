@@ -553,6 +553,13 @@ await app.RunAsync().ConfigureAwait(false);
     $keptForReplica = (Get-Content (Join-Path $fs 'stratum.json') -Raw) -like '*"handler": false*'
     Invoke-Dotnet $StratumDll subscribe $clean Product.Created --path $fs
     if ($replicaOk -and $badFieldFailed -and $keptForReplica) { Pass 'replicas: table, handler of Created/Updated/Deleted, reader in clean-ddd; your handlers stay apart' } else { Fail 'replicas' }
+    $loaderOk = (Get-Content (Join-Path $fs 'src\Shop.Api\Replicas\Catalog\ProductReplicaLoader.g.cs') -Raw) -like '*protected override string Route => "products";*' `
+        -and (Get-Content (Join-Path $fs 'src\Shop.Api\Replicas\ReplicaLoading.g.cs') -Raw) -like '*services.AddHostedService(sp => sp.GetRequiredService<global::Shop.Api.Replicas.Catalog.ProductReplicaLoader>());*' `
+        -and (Get-Content (Join-Path $fs 'src\Shop.Api\StratumWiring.g.cs') -Raw) -like '*builder.Services.AddReplicaLoading();*' `
+        -and (Get-Content (Join-Path $fs 'src\Shop.Api\StratumWiring.g.cs') -Raw) -like '*app.MapReplicaLoading()*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Replicas\Shop\ProductReplicaLoader.g.cs') -Raw) -like '*class ProductReplicaLoader*' `
+        -and (Get-Content (Join-Path $clean 'src\Catalog.Infrastructure\Persistence\Replicas\ReplicaLoading.g.cs') -Raw) -like '*global::Catalog.Infrastructure.Persistence.Replicas.Shop.ProductReplicaLoader*'
+    if ($loaderOk) { Pass "replicas: initial load from the publisher's API (hosted service + Development endpoint)" } else { Fail 'replica initial load' }
     # Contract changes: the publisher is warned about the services that listen (field retyped, event no longer published).
     $contract = (Get-DotnetOutput $StratumDll entity update Product --props 'Title:string, Price:string, Stock:int, Size:Dimensions?' --path $clean --dry-run) -join "`n"
     $contractOff = (Get-DotnetOutput $StratumDll events off Product --path $clean --dry-run) -join "`n"
@@ -700,6 +707,13 @@ namespace Catalog.Infrastructure.Migrations
     if ($hostCode -like '*AddAzureServiceBus("servicebus")*' -and $hostCode -like '*AddServiceBusSubscription("notifications-orders-order-created", "notifications")*' -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -like '*Aspire.Hosting.Azure.ServiceBus*' -and (Get-Content (Join-Path $notifications 'src\Notifications.Api\StratumWiring.g.cs') -Raw) -like '*UseAzureServiceBus*' -and $map -like '*no le llegar*') {
         Pass 'Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported'
     } else { $map | Out-Host; Fail 'Azure Service Bus' }
+    Invoke-Dotnet $StratumDll add entity Notice --path $notifications --props 'Text:string'
+    Invoke-Dotnet $StratumDll replica add (Join-Path $sys 'orders') Order --fields 'Number' --path $notifications
+    Invoke-Dotnet $StratumDll aspire --path $sys --name Shop
+    if ((Get-Content (Join-Path $sys 'Shop.AppHost\StratumServices.g.cs') -Raw) -like '*notifications.WithReference(orders);   // initial load of its replicas*' `
+        -and (Get-Content (Join-Path $notifications 'stratum.json') -Raw) -like '*"route": "orders"*') {
+        Pass "AppHost: a service with replicas gets the publisher's address (initial load)"
+    } else { Fail 'AppHost replica reference' }
     # Deployment (stratum deploy): optional targets in the AppHost, for "aspire deploy".
     $dsys = Join-Path $Work 'system-docker'
     New-Item -ItemType Directory -Path $dsys -Force | Out-Null

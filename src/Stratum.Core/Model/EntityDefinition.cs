@@ -288,6 +288,13 @@ public sealed record ReplicaDefinition
     /// <summary>Data copied, as the events carry it (a subset of the Created event; Id always).</summary>
     public IReadOnlyList<PropertyDefinition> Properties { get; init; } = [];
 
+    /// <summary>The publisher's route segment of the entity ("customers" in /api/v1/customers): the initial load reads it.</summary>
+    public string? Route { get; init; }
+
+    /// <summary>The route segment, or the usual one for replicas made before 0.44 (until "stratum subscribe --sync").</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string RouteOrDefault => Route ?? Generation.EntityCodeGen.Kebab(PropertyTypes.Pluralize(Entity));
+
     /// <summary>"CustomerReplica": the class and the table (replica_customers).</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string Name => Entity + "Replica";

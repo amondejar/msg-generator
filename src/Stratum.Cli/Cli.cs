@@ -2491,7 +2491,8 @@ internal static partial class Cli
             output.WriteLine("La tabla de la réplica cambia: crea la migración (en el Studio: Datos y migraciones; o dotnet ef migrations add … y stratum migration review).");
             if (action == "add")
             {
-                output.WriteLine("La réplica se llena con los eventos que lleguen desde ahora: los datos que ya existían no se copian.");
+                output.WriteLine("Carga inicial: al arrancar con la réplica vacía, copia lo que ya existía leyendo la API del publicador (GET /api/v1/…).");
+                output.WriteLine("Regenera el AppHost (stratum aspire) para que sepa dónde está; si el publicador pide autenticación: Replicas:<Publicador>:Authorization.");
             }
         }
 

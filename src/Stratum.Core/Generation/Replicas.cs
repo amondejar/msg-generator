@@ -80,7 +80,11 @@ public static class Replicas
             }
         }
 
-        var replica = new ReplicaDefinition { Service = publisher.Service.Name, Entity = entity.Name, Properties = chosen };
+        var replica = new ReplicaDefinition
+        {
+            Service = publisher.Service.Name, Entity = entity.Name, Properties = chosen,
+            Route = EntityCodeGen.Kebab(entity.Plural),
+        };
         updated = updated with { Replicas = [.. updated.Replicas ?? [], replica] };
         ModelRules.Validate(updated);
         return updated;
@@ -124,6 +128,26 @@ public static class Replicas
                    r.Service.Equals(service, StringComparison.OrdinalIgnoreCase) && r.Entity.Equals(entity, StringComparison.OrdinalIgnoreCase))
                ?? throw new StratumException($"{current.Service.Name} no tiene una réplica de {service}.{entity}. " +
                                              $"Réplicas: {string.Join(", ", (current.Replicas ?? []).Select(r => $"{r.Service}.{r.Entity}").DefaultIfEmpty("ninguna"))}.");
+    }
+
+    /// <summary>The publisher's route of each replica (for the initial load), from the services of the workspace.</summary>
+    public static ServiceDefinition WithRoutes(ServiceDefinition consumer, IEnumerable<ServiceDefinition> services)
+    {
+        ArgumentNullException.ThrowIfNull(consumer);
+        ArgumentNullException.ThrowIfNull(services);
+        if (consumer.Replicas is not { Count: > 0 } replicas)
+        {
+            return consumer;
+        }
+
+        var all = services.ToList();
+        var updated = replicas.Select(r =>
+        {
+            var entity = all.FirstOrDefault(s => s.Service.Name == r.Service)?.Entities.FirstOrDefault(e => e.Name == r.Entity);
+            var route = entity is null ? r.Route : EntityCodeGen.Kebab(entity.Plural);
+            return route == r.Route ? r : r with { Route = route };
+        }).ToList();
+        return updated.SequenceEqual(replicas) ? consumer : consumer with { Replicas = updated };
     }
 
     /// <summary>

@@ -607,6 +607,19 @@ public static class AspireGenerator
             body.Append("            .WithHttpHealthCheck(\"/health/ready\");\n\n");
         }
 
+        // A service with replicas reads the publisher's list once, when its copy is empty (initial load): it needs its address.
+        var replicaReferences = services
+            .SelectMany(consumer => (consumer.Definition.Persistence is null ? [] : consumer.Definition.Replicas ?? [])
+                .Select(r => services.FirstOrDefault(s => s.Name == r.Service && s != consumer))
+                .OfType<AspireService>()
+                .Distinct()
+                .Select(publisher => $"        {Variable(consumer)}.WithReference({Variable(publisher)});   // initial load of its replicas\n"))
+            .ToList();
+        if (replicaReferences.Count > 0)
+        {
+            body.Append(string.Concat(replicaReferences)).Append('\n');
+        }
+
         var properties = string.Join("\n\n", services.Select(s =>
             $"    public required IResourceBuilder<ProjectResource> {Property(s)} {{ get; init; }}"));
         var assignments = string.Join("\n", services.Select(s => $"            {Property(s)} = {Variable(s)},"));

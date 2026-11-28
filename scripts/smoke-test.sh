@@ -580,6 +580,12 @@ grep -q 'IIntegrationEventHandler<ProductDeleted>' "$CR" && grep -q 'builder.ToT
   && "${MSG[@]}" unsubscribe Catalog Product.Created --path "$FS" >/dev/null && grep -q '"handler": false' "$FS/stratum.json" \
   && "${MSG[@]}" subscribe "$WORK/clean" Product.Created --path "$FS" >/dev/null \
   && pass "replicas: table, handler of Created/Updated/Deleted, reader in clean-ddd; your handlers stay apart" || fail "replicas"
+grep -q 'protected override string Route => "products";' "$FS/src/Shop.Api/Replicas/Catalog/ProductReplicaLoader.g.cs" \
+  && grep -q 'services.AddHostedService(sp => sp.GetRequiredService<global::Shop.Api.Replicas.Catalog.ProductReplicaLoader>());' "$FS/src/Shop.Api/Replicas/ReplicaLoading.g.cs" \
+  && grep -q 'builder.Services.AddReplicaLoading();' "$FS/src/Shop.Api/StratumWiring.g.cs" && grep -q 'app.MapReplicaLoading()' "$FS/src/Shop.Api/StratumWiring.g.cs" \
+  && grep -q 'class ProductReplicaLoader' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Replicas/Shop/ProductReplicaLoader.g.cs" \
+  && grep -q 'global::Catalog.Infrastructure.Persistence.Replicas.Shop.ProductReplicaLoader' "$WORK/clean/src/Catalog.Infrastructure/Persistence/Replicas/ReplicaLoading.g.cs" \
+  && pass "replicas: initial load from the publisher's API (hosted service + Development endpoint)" || fail "replica initial load"
 # Contract changes: the publisher is warned about the services that listen (field retyped, event no longer published).
 "${MSG[@]}" entity update Product --props "Title:string, Price:string, Stock:int, Size:Dimensions?" --path "$WORK/clean" --dry-run > "$WORK/contract.txt" 2>&1
 "${MSG[@]}" events off Product --path "$WORK/clean" --dry-run > "$WORK/contract-off.txt" 2>&1
@@ -719,6 +725,12 @@ grep -q 'AddAzureServiceBus("servicebus")' "$SYS/Shop.AppHost/StratumServices.g.
   && grep -q "UseAzureServiceBus" "$SYS/notifications/src/Notifications.Api/StratumWiring.g.cs" \
   && "${MSG[@]}" events map --path "$SYS" | grep -q "no le llegarán" \
   && pass "Azure Service Bus: emulator, topics and subscriptions in the AppHost; broker mismatch reported" || fail "Azure Service Bus"
+"${MSG[@]}" add entity Notice --path "$SYS/notifications" --props "Text:string" >/dev/null
+"${MSG[@]}" replica add "$SYS/orders" Order --fields "Number" --path "$SYS/notifications" >/dev/null
+"${MSG[@]}" aspire --path "$SYS" --name Shop >/dev/null
+grep -q 'notifications.WithReference(orders);   // initial load of its replicas' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q '"route": "orders"' "$SYS/notifications/stratum.json" \
+  && pass "AppHost: a service with replicas gets the publisher's address (initial load)" || fail "AppHost replica reference"
 # Deployment (stratum deploy): optional targets in the AppHost, for "aspire deploy".
 DSYS="$WORK/system-docker"; mkdir -p "$DSYS"; cp -r "$SYS/orders" "$SYS/billing" "$DSYS/"
 "${MSG[@]}" aspire --path "$DSYS" --name Store >/dev/null

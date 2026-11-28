@@ -22,6 +22,13 @@ using {{Service}}.Application;
 using {{Service}}.Infrastructure;
 // @stratum:end
 // @stratum:end
+// @stratum:if replicas
+// @stratum:if cleanDdd
+using {{Service}}.Infrastructure.Persistence.Replicas;
+// @stratum:else
+using {{Service}}.Api.Replicas;
+// @stratum:end
+// @stratum:end
 // @stratum:if openApi
 using Scalar.AspNetCore;
 // @stratum:end
@@ -75,6 +82,9 @@ internal static class StratumWiring
         // @stratum:end
 
         builder.AddFeatures();              // entities of stratum.json
+        // @stratum:if replicas
+        builder.Services.AddReplicaLoading();   // initial load of the replicas (after the database migrator: it reads them)
+        // @stratum:end
         // @stratum:if openApi
         builder.Services.AddOpenApi();
         // @stratum:end
@@ -123,8 +133,14 @@ internal static class StratumWiring
             // GET /_stratum/messaging: events sent and received lately, for Stratum Studio's event traces (with payloads: Development only).
             // @stratum:if auth
             app.MapStratumMessagingDiagnostics().AllowAnonymous();
+            // @stratum:if replicas
+            app.MapReplicaLoading().AllowAnonymous();          // POST /_stratum/replicas/{publisher}/{entity}/load
+            // @stratum:end
             // @stratum:else
             app.MapStratumMessagingDiagnostics();
+            // @stratum:if replicas
+            app.MapReplicaLoading();                           // POST /_stratum/replicas/{publisher}/{entity}/load
+            // @stratum:end
             // @stratum:end
         }
         // @stratum:end

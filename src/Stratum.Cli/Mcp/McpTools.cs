@@ -242,7 +242,7 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["apply"] = Apply(),
             }, ["service", "publisher", "event"], ReadOnly: false),
         new("add_replica", "Réplica de una entidad de otro servicio",
-            "Crea en el servicio una copia local (tabla replica_<entidades>) de una entidad de otro servicio, al día con sus eventos Created, Updated y Deleted: un handler generado inserta, actualiza o borra la fila (un evento antiguo que llega tarde se ignora). Sirve para comprobar que existe o mostrar sus datos sin llamar al otro servicio. El publicador tiene que publicar los tres eventos; el servicio necesita base de datos (y se le activa la mensajería). Solo se copia lo que llegue desde ahora; necesita una migración. Si ya hay una réplica de esa entidad, fields cambia los datos que copia. " + PlanNote,
+            "Crea en el servicio una copia local (tabla replica_<entidades>) de una entidad de otro servicio, al día con sus eventos Created, Updated y Deleted: un handler generado inserta, actualiza o borra la fila (un evento antiguo que llega tarde se ignora). Sirve para comprobar que existe o mostrar sus datos sin llamar al otro servicio. El publicador tiene que publicar los tres eventos; el servicio necesita base de datos (y se le activa la mensajería). Carga inicial: al arrancar con la réplica vacía, el servicio copia lo que ya existía leyendo la API del publicador (el AppHost generado le da la dirección; con autenticación, Replicas:<Publicador>:Authorization). Necesita una migración. Si ya hay una réplica de esa entidad, fields cambia los datos que copia. " + PlanNote,
             new JsonObject
             {
                 ["service"] = Service("Servicio que guarda la copia."),

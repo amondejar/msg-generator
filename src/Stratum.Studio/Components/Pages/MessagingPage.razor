@@ -169,7 +169,7 @@ else
             var replicaProblems = State.SubscriptionProblems(draft).Where(p => draft.ReplicaSubscriptions.Contains(p.Subscription)).ToList();
             <section class="stack" aria-labelledby="h-replicas">
                 <h2 class="section" id="h-replicas">@L("Réplicas de otros servicios", "Replicas of other services")</h2>
-                <span class="hint">@L("Una copia local de una entidad de otro servicio (los datos que elijas), al día con sus eventos Created, Updated y Deleted. Sirve para comprobar que existe o mostrar sus datos sin llamar a ese servicio. Stratum genera la tabla y el handler; solo se copia lo que llegue desde que existe la réplica.", "A local copy of an entity of another service (the data you choose), kept up to date with its Created, Updated and Deleted events. Use it to check that one exists or show its data without calling that service. Stratum generates the table and the handler; only what arrives after the replica exists is copied.")</span>
+                <span class="hint">@L("Una copia local de una entidad de otro servicio (los datos que elijas), al día con sus eventos Created, Updated y Deleted. Sirve para comprobar que existe o mostrar sus datos sin llamar a ese servicio. Stratum genera la tabla, el handler y la carga inicial: al arrancar con la réplica vacía copia lo que ya existía leyendo la API del publicador.", "A local copy of an entity of another service (the data you choose), kept up to date with its Created, Updated and Deleted events. Use it to check that one exists or show its data without calling that service. Stratum generates the table, the handler and the initial load: when the service starts with the replica empty, it copies what already existed from the publisher's API.")</span>
                 @if (draft.Replicas.Count > 0)
                 {
                     <div class="table">
@@ -203,9 +203,18 @@ else
                                     {
                                         <button type="button" class="btn" @onclick="() => State.RefreshReplica(draft, replica)">@L("Actualizar contrato", "Update contract")</button>
                                     }
+                                    @if (draft.Replicas.Count > 0 && State.Services.Any(s => s.Directory == draft.Directory && (s.Definition.Replicas ?? []).Any(r => r.Service == replica.Service && r.Entity == replica.Entity)))
+                                    {
+                                        <button type="button" class="btn" disabled="@(loading == replica.Name)" title="@L("Con el servicio arrancado (Development): copia de nuevo lo que tiene el publicador y quita lo que ya no está.", "With the service running (Development): copies again what the publisher has and removes what is no longer there.")"
+                                                @onclick="() => LoadReplica(draft, replica)">@(loading == replica.Name ? L("Cargando…", "Loading…") : L("Cargar ahora", "Load now"))</button>
+                                    }
                                     <button type="button" class="btn" style="color: var(--err)" @onclick="() => RemoveReplica(replica)">@L("Quitar", "Remove")</button>
                                 </span>
                             </div>
+                            @if (loaded.TryGetValue(replica.Name, out var outcome))
+                            {
+                                <div class="hint" role="status" style="@(outcome.Ok ? string.Empty : "color: var(--warn)")">@(outcome.Ok ? "✓ " : "⚠ ")@outcome.Message</div>
+                            }
                         }
                     </div>
                 }
@@ -319,6 +328,23 @@ else
 
         list[list.IndexOf(replica)] = replica with { Properties = [.. copiable.Where(p => names.Contains(p.Name))] };
         State.Recompute();
+    }
+
+    private string? loading;
+    private readonly Dictionary<string, TracesApi.ActionDto> loaded = new(StringComparer.Ordinal);
+
+    private async Task LoadReplica(ServiceDraft draft, ReplicaDefinition replica)
+    {
+        loading = replica.Name;
+        loaded.Remove(replica.Name);
+        try
+        {
+            loaded[replica.Name] = await TracesApi.LoadReplicaAsync(State.FullPath(draft.Directory), draft.Name, replica.Service, replica.Entity, CancellationToken.None);
+        }
+        finally
+        {
+            loading = null;
+        }
     }
 
     private void RemoveReplica(ReplicaDefinition replica)

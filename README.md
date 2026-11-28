@@ -669,8 +669,19 @@ stratum replica remove Customers.Customer --path addresses
   necesita base de datos; la mensajería se activa sola si hace falta. Crea una migración después.
 - Las suscripciones que usa la réplica no crean handlers tuyos. Si además quieres reaccionar a uno de esos eventos,
   `stratum subscribe` crea tu handler y los dos se ejecutan; `unsubscribe` quita el tuyo y la réplica sigue al día.
-- Es consistencia eventual: lo creado hace un momento puede no estar todavía, y **solo se copia lo que llegue desde que
-  existe la réplica** (los datos anteriores no se cargan).
+- Es consistencia eventual: lo creado hace un momento puede no estar todavía.
+- **Carga inicial**: lo que ya existía antes de la réplica se copia de la API del publicador. Al arrancar con la réplica
+  vacía, `CustomerReplicaLoader` (un servicio en segundo plano generado) lee `GET /api/v1/customers` página a página y
+  escribe cada fila con `LastEventAt = UpdatedAt`, sin pisar lo que un evento haya traído más nuevo. Si la lista no
+  cambió mientras la leía, quita también lo que el publicador ya no tiene. Nunca para el servicio: si el publicador aún
+  no responde, reintenta unas veces y luego lo deja (la réplica se sigue llenando con los eventos).
+  - Dónde está el publicador: el AppHost generado por `stratum aspire` añade `addresses.WithReference(customers)` (por
+    eso hay que regenerarlo tras añadir la réplica). Fuera de Aspire: `Replicas:Customers:Url`.
+  - Cuándo: `Replicas:Load` (o `Replicas:Customers:Load`) = `empty` (por defecto: solo con la réplica vacía), `always`
+    (en cada arranque; también quita lo que ya no está) o `never`.
+  - Publicador con autenticación: `Replicas:Customers:Authorization` con la cabecera entera (`Bearer …`).
+  - Volver a cargar: en Development, `POST /_stratum/replicas/customers/customer/load`, o el botón **Cargar ahora** del
+    Studio con el servicio arrancado.
 - En el Studio: **Servicio → Mensajería → Réplicas de otros servicios**. Asistentes de IA: `add_replica` y `remove_replica`.
 
 #### Mapa de eventos (Studio)
@@ -991,7 +1002,7 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 22. ✅ Trazas de eventos en el Studio: del outbox al broker y a cada servicio que escucha, con lo que no ha llegado, errores y enlaces a Aspire y Kafka UI.
 23. ✅ Publicar en nuget.org (prefijo `StratumKit.*`, la herramienta como `StratumKit.Cli`).
 24. ✅ Validaciones por propiedad (`stratum rule`): longitud, formato, patrón y rango en la API, el dominio, la columna y los tests.
-25. ✅ Réplicas de entidades de otros servicios (`stratum replica`), al día con sus eventos.
+25. ✅ Réplicas de entidades de otros servicios (`stratum replica`), al día con sus eventos y con carga inicial de lo que ya existía.
 26. ✅ Trazas de eventos: reintentar un mensaje fallido y enviar eventos de prueba desde el Studio.
 27. ✅ Avisos de cambios que rompen contratos con los servicios que escuchan; cada handler va por su cuenta ante un fallo.
 28. ✅ Listados con orden (`?sort=-createdAt`) y búsqueda (`?search=ana`).

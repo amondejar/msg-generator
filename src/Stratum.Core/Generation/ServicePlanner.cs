@@ -665,7 +665,9 @@ public static class ServicePlanner
     public static ServiceDefinition SyncSubscriptions(ServiceDefinition consumer, IEnumerable<ServiceDefinition> services, bool prune = false)
     {
         ArgumentNullException.ThrowIfNull(consumer);
-        var checks = CheckSubscriptions(consumer, services);
+        var all = services.ToList();
+        consumer = Replicas.WithRoutes(consumer, all);
+        var checks = CheckSubscriptions(consumer, all);
         var updates = checks.Where(c => c.Current is not null).ToList();
         var gone = prune ? checks.Where(c => c.Current is null).Select(c => c.Subscription).ToHashSet() : [];
         if (updates.Count == 0 && gone.Count == 0)

@@ -9,8 +9,8 @@ namespace {{Service}}.Application.Replicas.{{Publisher}};
 /// <summary>
 /// Local copy of the {{Entity}}s of {{Publisher}} ({{ReplicaFields}}), kept up to date with their Created, Updated and
 /// Deleted events. Use cases read it through <see cref="I{{ReplicaPlural}}"/> to check that a {{Entity}} exists or to show
-/// its data without calling {{Publisher}}. It's eventually consistent: one created a moment ago may not be here yet, and
-/// only those created or changed since the replica exists are in it.
+/// its data without calling {{Publisher}}. It's eventually consistent: one created a moment ago may not be here yet. What
+/// existed before the replica is copied by the initial load (Infrastructure: {{Replica}}Loader) when the service starts with it empty.
 /// </summary>
 public sealed class {{Replica}}
 {

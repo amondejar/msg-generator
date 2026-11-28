@@ -11,8 +11,8 @@ namespace {{Service}}.Api.Replicas.{{Publisher}};
 /// <summary>
 /// Local copy of the {{Entity}}s of {{Publisher}} ({{ReplicaFields}}), kept up to date by <see cref="{{Replica}}Handler"/>
 /// with their Created, Updated and Deleted events. Read it (db.{{ReplicaPlural}}) to check that a {{Entity}} exists or to
-/// show its data without calling {{Publisher}}. It's eventually consistent: one created a moment ago may not be here yet,
-/// and only those created or changed since the replica exists are in it.
+/// show its data without calling {{Publisher}}. It's eventually consistent: one created a moment ago may not be here yet.
+/// What existed before the replica is copied by {{Replica}}Loader when the service starts with it empty.
 /// </summary>
 public sealed class {{Replica}}
 {

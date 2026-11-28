@@ -36,6 +36,9 @@ internal static class TracesApi
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
+    /// <summary>A load reads every page of the publisher: it takes longer than a probe.</summary>
+    private static readonly HttpClient LoadHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { Converters = { new UtcDateTimeConverter() } };
 
     public static void Map(WebApplication app, StudioOptions options)
@@ -68,6 +71,42 @@ internal static class TracesApi
             return Results.Json(await CallAsync(options.Workspace, request.Service, "/_stratum/messaging/publish", body, cancellationToken).ConfigureAwait(false), Json);
         });
     }
+
+    /// <summary>
+    /// Initial load of a replica again, in the running service (POST /_stratum/replicas/{publisher}/{entity}/load,
+    /// Development): reads the publisher's list and brings the copy up to date.
+    /// </summary>
+    public static async Task<ActionDto> LoadReplicaAsync(string serviceDirectory, string service, string publisher, string entity, CancellationToken cancellationToken)
+    {
+        var url = BaseUrl(serviceDirectory, service);
+        try
+        {
+            using var response = await LoadHttp.PostAsync(new Uri($"{url}/_stratum/replicas/{Uri.EscapeDataString(publisher)}/{Uri.EscapeDataString(entity)}/load"), null, cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return new(false, I18n.L(
+                    $"{service} no tiene la carga inicial: aplica los cambios (Stratum 0.44 o posterior) y arráncalo en Development.",
+                    $"{service} doesn't have the initial load: apply the changes (Stratum 0.44 or later) and run it in Development."), null);
+            }
+
+            var result = await response.Content.ReadFromJsonAsync<ReplicaLoadDto>(Json, cancellationToken).ConfigureAwait(false);
+            return result is null ? new(false, $"HTTP {(int)response.StatusCode}", null)
+                : result.Problem is { } problem ? new(false, problem, null)
+                : new(true, I18n.L(
+                    $"{result.Read} leídos de {publisher}: {result.Written} escritos, {result.Removed} quitados (ya no estaban).",
+                    $"{result.Read} read from {publisher}: {result.Written} written, {result.Removed} removed (no longer there)."), null);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return new(false, I18n.L($"{service} no está arrancado (nada responde en {url}).", $"{service} isn't running (nothing answers on {url})."), null);
+        }
+        catch (Exception e) when (e is JsonException or NotSupportedException)
+        {
+            return new(false, e.Message, null);
+        }
+    }
+
+    private sealed record ReplicaLoadDto(string Replica, int Read, int Written, int Removed, string? Problem);
 
     /// <summary>POST to a running service of the system (its Development diagnostics).</summary>
     private static async Task<ActionDto> CallAsync(string workspace, string service, string path, JsonObject? body, CancellationToken cancellationToken)
@@ -155,9 +194,10 @@ internal static class TracesApi
         definition is null ? [] : [.. IntegrationEvents.Of(definition).Select(e => new PublishableDto(e.Topic, e.EventClass, EntityCodeGen.EventSample(definition, e)))];
 
     /// <summary>The service's http address in Development: its launchSettings.json (what Aspire uses too), else the port Stratum gave it.</summary>
-    private static string BaseUrl(string directory, ServiceDefinition definition)
+    private static string BaseUrl(string directory, ServiceDefinition definition) => BaseUrl(directory, definition.Service.Name);
+
+    private static string BaseUrl(string directory, string name)
     {
-        var name = definition.Service.Name;
         var launch = Path.Combine(directory, "src", $"{name}.Api", "Properties", "launchSettings.json");
         try
         {
