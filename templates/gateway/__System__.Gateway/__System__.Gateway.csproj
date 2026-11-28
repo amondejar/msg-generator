@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Gateway of the {{System}} system ("stratum gateway"): the only door for the frontend, in front of every service.
+    Stratum adds back the packages it needs if they are missing; the ones you add stay.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>{{System}}.Gateway</RootNamespace>
+    <!-- Its packages carry their versions: a Directory.Packages.props in a parent folder doesn't apply. -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StratumKit.ServiceDefaults" Version="{{StratumVersion}}" />
+    <PackageReference Include="StratumKit.ServiceDefaults.OpenTelemetry" Version="{{StratumVersion}}" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="{{YarpVersion}}" />
+    <PackageReference Include="Microsoft.Extensions.ServiceDiscovery.Yarp" Version="{{ServiceDiscoveryVersion}}" />
+    <!-- @stratum:if bff -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="{{OpenIdConnectVersion}}" />
+    <!-- @stratum:end -->
+  </ItemGroup>
+
+</Project>

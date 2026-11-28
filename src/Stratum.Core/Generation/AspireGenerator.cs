@@ -14,7 +14,14 @@ public sealed record AspireService(string RelativeDirectory, ServiceDefinition D
     public string ApiProject => $"{RelativeDirectory}/src/{Name}.Api/{Name}.Api.csproj";
 }
 
-public sealed record AspireResult(string AppHostName, IReadOnlyList<AspireService> Services, IReadOnlyList<string> Created, IReadOnlyList<string> Updated);
+public sealed record AspireResult(string AppHostName, IReadOnlyList<AspireService> Services, IReadOnlyList<string> Created, IReadOnlyList<string> Updated)
+{
+    /// <summary>The gateway's mode (proxy or bff), or null when the system has no gateway.</summary>
+    public string? Gateway { get; init; }
+
+    /// <summary>Things to know (routes of the gateway left out...).</summary>
+    public IReadOnlyList<string> Notes { get; init; } = [];
+}
 
 /// <summary>
 /// Generates an Aspire AppHost that runs every Stratum service under a folder, with their databases.
@@ -193,7 +200,8 @@ public static class AspireGenerator
     }
 
     /// <param name="deploy">Deploy targets to set (null keeps the ones the AppHost has).</param>
-    public static AspireResult Generate(string root, string appHostName, IReadOnlyList<AspireService> services, IReadOnlyList<string>? deploy = null)
+    /// <param name="gateway">The gateway's mode (proxy or bff), "none" to take it out; null keeps the AppHost's.</param>
+    public static AspireResult Generate(string root, string appHostName, IReadOnlyList<AspireService> services, IReadOnlyList<string>? deploy = null, string? gateway = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ServiceName.Validate(appHostName);
@@ -217,6 +225,11 @@ public static class AspireGenerator
                 throw new StratumException(problem);
             }
         }
+
+        gateway = gateway is null ? GatewayGenerator.Mode(root, appHostName)
+            : gateway.Trim().ToLowerInvariant() is "" or "none" or "off" ? null
+            : GatewayGenerator.Modes.Contains(gateway.Trim().ToLowerInvariant()) ? gateway.Trim().ToLowerInvariant()
+            : throw new StratumException($"No conozco el modo de gateway '{gateway}'. Modos: {string.Join(", ", GatewayGenerator.Modes)}.");
 
         var appHost = $"{appHostName}.AppHost";
         var created = new List<string>();
@@ -246,7 +259,7 @@ public static class AspireGenerator
         }
 
         var csprojPath = $"{appHost}/{appHost}.csproj";
-        var csproj = Csproj(root, appHostName, services, deploy);
+        var csproj = Csproj(root, appHostName, services, deploy, gateway);
         if (File.Exists(Path.Combine(root, csprojPath)))
         {
             // Services that left the system (removed or moved): their *.Api project references go too.
@@ -258,8 +271,16 @@ public static class AspireGenerator
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var cleaned = System.Text.RegularExpressions.Regex.Replace(
                 existing,
-                "[ \t]*<ProjectReference Include=\"(?<p>[^\"]+\\.Api\\.csproj)\"\\s*/>[ \t]*\r?\n?",
+                "[ \t]*<ProjectReference Include=\"(?<p>[^\"]+\\.(Api|Gateway)\\.csproj)\"\\s*/>[ \t]*\r?\n?",
                 m => current.Contains(m.Groups["p"].Value) ? m.Value : string.Empty);
+
+            // The gateway ("stratum gateway"): its mode in <StratumGateway>.
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, "[ \t]*(<!-- The gateway[^>]*-->[ \t]*\r?\n[ \t]*)?<StratumGateway>[^<]*</StratumGateway>[ \t]*\r?\n?", string.Empty);
+            if (gateway is not null
+                && System.Text.RegularExpressions.Regex.Match(cleaned, "([ \t]*)<OutputType>Exe</OutputType>(\r?\n)") is { Success: true } exeLine)
+            {
+                cleaned = cleaned.Insert(exeLine.Index + exeLine.Length, $"{exeLine.Groups[1].Value}<StratumGateway>{gateway}</StratumGateway>{exeLine.Groups[2].Value}");
+            }
 
             // Deploy targets ("stratum deploy"): their packages and the <StratumDeploy> property follow the targets.
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned,
@@ -337,13 +358,14 @@ public static class AspireGenerator
             }
         }
 
-        Overwrite($"{appHost}/StratumServices.g.cs", StratumServices(services, appHostName, deploy));
-        Overwrite($"{appHostName}.slnx", Solution(root, appHost, services));
+        var notes = gateway is null ? [] : GatewayGenerator.Generate(root, appHostName, services, gateway, created, updated);
+        Overwrite($"{appHost}/StratumServices.g.cs", StratumServices(services, appHostName, deploy, gateway));
+        Overwrite($"{appHostName}.slnx", Solution(root, appHost, services, gateway is null ? null : GatewayGenerator.ProjectName(appHostName)));
 
-        return new AspireResult(appHost, services, created, updated);
+        return new AspireResult(appHost, services, created, updated) { Gateway = gateway, Notes = notes };
     }
 
-    private static string Csproj(string root, string name, IReadOnlyList<AspireService> services, IReadOnlyList<string> deploy)
+    private static string Csproj(string root, string name, IReadOnlyList<AspireService> services, IReadOnlyList<string> deploy, string? gateway)
     {
         var providers = services.Select(s => s.Definition.Persistence?.Provider).Where(p => p is not null).Distinct().ToList();
         var packages = new StringBuilder();
@@ -386,12 +408,18 @@ public static class AspireGenerator
             }
         }
 
-        var deployProperty = deploy.Count == 0 ? string.Empty
-            : $"    <!-- Where \"aspire deploy\" takes the system: stratum deploy add|remove docker|azure. -->\n    <StratumDeploy>{string.Join(';', deploy)}</StratumDeploy>\n";
+        var deployProperty = (deploy.Count == 0 ? string.Empty
+            : $"    <!-- Where \"aspire deploy\" takes the system: stratum deploy add|remove docker|azure. -->\n    <StratumDeploy>{string.Join(';', deploy)}</StratumDeploy>\n")
+            + (gateway is null ? string.Empty : $"    <StratumGateway>{gateway}</StratumGateway>\n");
 
         // Relative to the AppHost folder; absolute for a service on another drive.
         var projects = string.Concat(services.Select(s =>
             $"    <ProjectReference Include=\"{Path.GetRelativePath(Path.GetFullPath(Path.Combine(root, $"{name}.AppHost")), Path.GetFullPath(Path.Combine(root, s.ApiProject))).Replace('/', '\\')}\" />\n"));
+        if (gateway is not null)
+        {
+            var project = GatewayGenerator.ProjectName(name);
+            projects += $"    <ProjectReference Include=\"..\\{project}\\{project}.csproj\" />\n";
+        }
 
         return $"""
             <Project Sdk="Aspire.AppHost.Sdk/{AspireVersion}">
@@ -445,7 +473,7 @@ public static class AspireGenerator
             """;
     }
 
-    private static string StratumServices(IReadOnlyList<AspireService> services, string appHostName, IReadOnlyList<string> deploy)
+    private static string StratumServices(IReadOnlyList<AspireService> services, string appHostName, IReadOnlyList<string> deploy, string? gateway)
     {
         var body = new StringBuilder();
         var providers = services.Select(s => s.Definition.Persistence?.Provider).Where(p => p is not null).Distinct().ToList();
@@ -623,6 +651,14 @@ public static class AspireGenerator
         var properties = string.Join("\n\n", services.Select(s =>
             $"    public required IResourceBuilder<ProjectResource> {Property(s)} {{ get; init; }}"));
         var assignments = string.Join("\n", services.Select(s => $"            {Property(s)} = {Variable(s)},"));
+        if (gateway is not null)
+        {
+            var property = services.Any(s => Property(s) == "Gateway") ? "SystemGateway" : "Gateway";
+            body.Append(GatewayGenerator.AppHostLines(appHostName, services, "systemGateway", Variable));
+            properties += $"\n\n    /// <summary>The gateway (YARP): e.g. .WithEnvironment(\"Gateway__Frontend__Url\", ...) or the OIDC settings of the BFF.</summary>\n" +
+                          $"    public required IResourceBuilder<ProjectResource> {property} {{ get; init; }}";
+            assignments += $"\n            {property} = systemGateway,";
+        }
 
         return $$"""
             // <auto-generated>
@@ -684,10 +720,14 @@ public static class AspireGenerator
 
         """;
 
-    private static string Solution(string root, string appHost, IReadOnlyList<AspireService> services)
+    private static string Solution(string root, string appHost, IReadOnlyList<AspireService> services, string? gatewayProject)
     {
         var sb = new StringBuilder("<Solution>\n");
         sb.Append($"  <Project Path=\"{appHost}/{appHost}.csproj\" />\n");
+        if (gatewayProject is not null)
+        {
+            sb.Append($"  <Project Path=\"{gatewayProject}/{gatewayProject}.csproj\" />\n");
+        }
 
         foreach (var service in services)
         {

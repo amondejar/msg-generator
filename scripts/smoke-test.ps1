@@ -714,12 +714,50 @@ namespace Catalog.Infrastructure.Migrations
         -and (Get-Content (Join-Path $notifications 'stratum.json') -Raw) -like '*"route": "orders"*') {
         Pass "AppHost: a service with replicas gets the publisher's address (initial load)"
     } else { Fail 'AppHost replica reference' }
+    # Gateway (stratum gateway): one door for the frontend (YARP), proxy or BFF.
+    $gw = Join-Path $sys 'Shop.Gateway'
+    Invoke-Dotnet $StratumDll gateway on bff --path $sys
+    $hostProj = Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw
+    $hostCode = Get-Content (Join-Path $sys 'Shop.AppHost\StratumServices.g.cs') -Raw
+    $gwRoutes = Get-Content (Join-Path $gw 'GatewayRoutes.g.cs') -Raw
+    $gwStatus = Get-DotnetOutput $StratumDll gateway --path $sys
+    # Plain substring checks (.Contains): -like reads [ ] as a wildcard set.
+    $gwChecks = [ordered]@{
+        'AppHost csproj: StratumGateway bff' = $hostProj.Contains('<StratumGateway>bff</StratumGateway>')
+        'AppHost csproj: gateway reference'  = $hostProj.Contains('Shop.Gateway.csproj')
+        'AppHost: AddProject gateway'        = $hostCode.Contains('builder.AddProject<Projects.Shop_Gateway>("gateway")')
+        'AppHost: external endpoints'        = $hostCode.Contains('.WithExternalHttpEndpoints()')
+        'routes: orders entity'              = $gwRoutes.Contains('("orders", "orders"),')
+        'routes: billing service'            = $gwRoutes.Contains('["billing"] = "https+http://billing",')
+        'csproj: OpenIdConnect package'      = (Get-Content (Join-Path $gw 'Shop.Gateway.csproj') -Raw).Contains('Microsoft.AspNetCore.Authentication.OpenIdConnect')
+        'wiring: AddOpenIdConnect'           = (Get-Content (Join-Path $gw 'GatewayWiring.g.cs') -Raw).Contains('AddOpenIdConnect')
+        'Program.cs: using'                  = (Get-Content (Join-Path $gw 'Program.cs') -Raw).Contains('using Shop.Gateway;')
+        'slnx: gateway project'              = (Get-Content (Join-Path $sys 'Shop.slnx') -Raw).Contains('Shop.Gateway/Shop.Gateway.csproj')
+        'stratum gateway: routes'            = "$gwStatus".Contains('/api/v1/orders')
+    }
+    $gwFailed = @($gwChecks.Keys | Where-Object { -not $gwChecks[$_] })
+    if ($gwFailed.Count -eq 0) {
+        Pass 'gateway (BFF): YARP project, routes per entity and per service, OpenID Connect session, in the AppHost'
+    } else { Fail "gateway bff ($($gwFailed -join '; '))" }
+    Add-Content (Join-Path $gw 'Program.cs') '// mine'
+    Invoke-Dotnet $StratumDll gateway on proxy --path $sys
+    $proxyOk = (Get-Content (Join-Path $gw 'Shop.Gateway.csproj') -Raw) -notlike '*OpenIdConnect*' `
+        -and (Get-Content (Join-Path $gw 'GatewayWiring.g.cs') -Raw) -notlike '*OpenIdConnect*' `
+        -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -like '*<StratumGateway>proxy</StratumGateway>*' `
+        -and (Get-Content (Join-Path $gw 'Program.cs') -Raw) -like '*// mine*'
+    Invoke-Dotnet $StratumDll gateway off --path $sys
+    if ($proxyOk -and (Get-Content (Join-Path $sys 'Shop.AppHost\StratumServices.g.cs') -Raw) -notlike '*Shop_Gateway*' `
+        -and (Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw) -notlike '*Gateway*' -and (Test-Path (Join-Path $gw 'Program.cs'))) {
+        Pass 'gateway: proxy mode drops OpenID Connect, off takes it out of the AppHost; your Program.cs stays'
+    } else { Fail 'gateway proxy/off' }
+    Invoke-Dotnet $StratumDll gateway on bff --path $sys   # stays on: the Studio and the AppHost build (online) use it
     # Deployment (stratum deploy): optional targets in the AppHost, for "aspire deploy".
     $dsys = Join-Path $Work 'system-docker'
     New-Item -ItemType Directory -Path $dsys -Force | Out-Null
     Copy-Item (Join-Path $sys 'orders'), (Join-Path $sys 'billing') -Destination $dsys -Recurse
     Invoke-Dotnet $StratumDll aspire --path $dsys --name Store
     Invoke-Dotnet $StratumDll deploy add docker --path $dsys
+    Invoke-Dotnet $StratumDll gateway on --path $dsys      # proxy: the online AppHost build compiles that mode too
     Invoke-Dotnet $StratumDll deploy add azure --path $sys
     $storeProj = Get-Content (Join-Path $dsys 'Store.AppHost\Store.AppHost.csproj') -Raw
     $shopProj = Get-Content (Join-Path $sys 'Shop.AppHost\Shop.AppHost.csproj') -Raw
@@ -796,6 +834,8 @@ namespace Catalog.Infrastructure.Migrations
         if ($watch.Elapsed.TotalSeconds -gt 10) { Write-Host "  (studio /$p took $([int]$watch.Elapsed.TotalSeconds) s)" -ForegroundColor Yellow }
     }
     $eventsHtml = $studioHttp.GetStringAsync("$studioBase/events").GetAwaiter().GetResult()
+    $runHtml = $studioHttp.GetStringAsync("$studioBase/run").GetAwaiter().GetResult()
+    if ($runHtml -like '*Gateway (BFF)*' -and $runHtml -like '*/api/v1/orders*' -and $runHtml -like '*Shop.Gateway*') { Pass 'studio: gateway section (mode and routes)' } else { $studioHttp.Dispose(); Stop-Process -Id $studio.Id -Force; Fail 'studio: gateway section' }
     $studioHttp.Dispose()
     Pass 'studio pages render and blazor.web.js is served (interactive UI)'
     if (([regex]::Matches($eventsHtml, 'class="ev-mini')).Count -ge 3 -and $eventsHtml -like '*orders.order-created*' -and $eventsHtml -like '*href="/designer"*') { Pass 'studio event map: compact summary of services and events, link to the designer' }

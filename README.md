@@ -170,6 +170,42 @@ stratum deploy remove docker
 - Los servicios aplican sus migraciones al arrancar, como en local. Se guarda en el AppHost (`<StratumDeploy>` del
   `.csproj`) y lo respeta cada `stratum aspire`. En el Studio: **Ejecutar → Despliegue**. Asistentes de IA: `set_deploy`.
 
+### Gateway para el frontend (`stratum gateway`)
+
+Opcional. Un único punto de entrada (YARP) delante de todos los servicios: el frontend solo habla con él, y desplegado
+es la única dirección pública del sistema. Es un proyecto más junto al AppHost (`Shop.Gateway`), con tu `Program.cs`.
+
+```bash
+stratum gateway on              # modo proxy: el frontend manda su propio token
+stratum gateway on bff          # modo BFF: el gateway inicia la sesión y guarda los tokens
+stratum gateway                 # modo y rutas
+stratum gateway off             # lo quita del AppHost (la carpeta se queda)
+```
+
+| Ruta del gateway | Llega a |
+| --- | --- |
+| `/api/v1/customers/...` | El servicio que tiene la entidad `Customer`: una sola API para el frontend. |
+| `/services/customers/...` | Cualquier endpoint de ese servicio, sin el prefijo (`/services/customers/scalar`, MCP, health). |
+| `/*` | El frontend: los archivos de `wwwroot` (una SPA: sus rutas cargan `index.html`) o su servidor de desarrollo. |
+
+- Las rutas salen de los `stratum.json`: `GatewayRoutes.g.cs` se regenera con cada `stratum aspire`. Si dos servicios
+  tienen la misma ruta, no se adivina: se avisa y solo llega por `/services/<servicio>/...`.
+- **Frontend en desarrollo**: `Gateway:Frontend:Url` = su servidor (Vite: `http://localhost:5173`). Abre la dirección
+  del gateway: frontend, API y sesión comparten origen (sin CORS, cookies sin problemas, recarga en caliente incluida).
+  Desde otro origen: `Gateway:Cors:Origins`.
+- **Proxy**: la cabecera `Authorization` que manda el frontend (MSAL, oidc-client...) llega tal cual a los servicios.
+- **BFF**: el gateway inicia la sesión con OpenID Connect (código + PKCE), guarda access y refresh token en una cookie
+  cifrada (el navegador nunca los ve), renueva el access token antes de que caduque y se lo manda a los servicios.
+  Configura `Gateway:Oidc` (`Authority`, `ClientId`, `ClientSecret`, `Scopes` con el de tu API; en el AppHost:
+  `services.Gateway.WithEnvironment("Gateway__Oidc__Authority", ...)`). Sin ella el gateway funciona y `/bff/login`
+  responde 503 diciendo qué falta. El frontend:
+  - entra con `<a href="/bff/login?returnUrl=/pedidos">`, sale con `/bff/logout` y pregunta quién es con `/bff/user`;
+  - manda `X-CSRF: 1` en cada llamada a `/api` (y en los POST/PUT/DELETE de `/services`): otra web no puede añadir esa
+    cabecera, así que la cookie sola no basta para llamar a la API.
+  - Con varias réplicas del gateway, comparte las claves de Data Protection (cifran la cookie).
+- Traza única: frontend → gateway → servicio en el dashboard de Aspire, con el mismo `X-Correlation-ID`.
+- En el Studio: **Ejecutar → Gateway (BFF)**. Asistentes de IA: `set_gateway`.
+
 ## `stratum add entity`
 
 Por cada entidad genera la entidad (Id UUID v7, `CreatedAt`, `UpdatedAt`), su `IEntityTypeConfiguration`, los DTOs con validación
@@ -1009,4 +1045,5 @@ actualizar la herramienta no deja a los servicios sin paquetes.
 29. ✅ Relaciones N–M (`Tags:Tag[]`, `stratum relation add Customer Tag --many`).
 30. ✅ Despliegue opcional con Docker Compose o Azure Container Apps (`stratum deploy`, `aspire deploy`).
 31. ✅ Al eliminar un servicio, borrar también su base de datos del contenedor (`--drop-database`).
+32. ✅ Gateway único (YARP) para el frontend, en modo proxy o BFF (`stratum gateway`).
 4. **Fase 4**: varios servicios conectados (eventos, Aspire AppHost, docker-compose).

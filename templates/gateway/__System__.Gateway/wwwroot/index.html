@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{System}} gateway</title>
+  <!--
+    The gateway serves your frontend from this folder: replace this page with its build (npm run build → wwwroot).
+    While you develop it, set Gateway:Frontend:Url to its dev server instead (Vite: http://localhost:5173) and open
+    the gateway's address: the frontend, /api and the session share the origin. Stratum creates this file once.
+  -->
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; color: #1d2433; }
+    code { background: #f1f3f7; padding: 1px 5px; border-radius: 4px; }
+    table { border-collapse: collapse; width: 100%; } td { padding: 4px 8px; border-bottom: 1px solid #e3e6ec; }
+    .muted { color: #667085; } button, a.button { font: inherit; padding: 4px 12px; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h1>{{System}} gateway</h1>
+  <p class="muted">The only door of the system for the frontend. Put your frontend's build in <code>wwwroot</code>, or set
+    <code>Gateway:Frontend:Url</code> to its dev server.</p>
+  <!-- @stratum:if bff -->
+  <h2>Session</h2>
+  <p id="user" class="muted">…</p>
+  <p><a class="button" href="/bff/login?returnUrl=/">Sign in</a> <a class="button" href="/bff/logout">Sign out</a></p>
+  <!-- @stratum:end -->
+  <h2>Routes</h2>
+  <table id="routes"><tr><td class="muted">The routes show here in Development (GET /gateway/routes).</td></tr></table>
+  <script>
+    // @stratum:if bff
+    // Every call to the API sends X-CSRF: the session cookie alone isn't enough (another site can't add the header).
+    const api = (url, options = {}) => fetch(url, { ...options, headers: { "X-CSRF": "1", ...(options.headers ?? {}) } });
+    api("/bff/user").then(async r => {
+      document.getElementById("user").textContent = r.ok ? `Signed in as ${(await r.json()).name ?? "(no name)"}` : "Not signed in.";
+    });
+    // @stratum:else
+    // Calls carry the user's token, if the frontend has one: fetch(url, { headers: { Authorization: `Bearer ${token}` } }).
+    const api = (url, options = {}) => fetch(url, options);
+    // @stratum:end
+    api("/gateway/routes").then(r => r.ok && r.headers.get("content-type")?.includes("json") ? r.json() : null).then(model => {
+      if (!model) return;
+      const rows = [
+        ...model.api.map(r => [r.path, `→ ${r.service}`]),
+        ...model.services.map(s => [`${s.path}/…`, `→ ${s.service} (any endpoint)`]),
+        ["/*", `→ frontend: ${model.frontend}`],
+      ];
+      document.getElementById("routes").innerHTML = rows
+        .map(([path, target]) => `<tr><td>${path.endsWith("/…") ? `<a href="${path.replace("/…", "/scalar")}"><code>${path}</code></a>` : `<code>${path}</code>`}</td><td>${target}</td></tr>`).join("");
+    });
+  </script>
+</body>
+</html>

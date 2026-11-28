@@ -731,10 +731,33 @@ grep -q 'AddAzureServiceBus("servicebus")' "$SYS/Shop.AppHost/StratumServices.g.
 grep -q 'notifications.WithReference(orders);   // initial load of its replicas' "$SYS/Shop.AppHost/StratumServices.g.cs" \
   && grep -q '"route": "orders"' "$SYS/notifications/stratum.json" \
   && pass "AppHost: a service with replicas gets the publisher's address (initial load)" || fail "AppHost replica reference"
+# Gateway (stratum gateway): one door for the frontend (YARP), proxy or BFF.
+GW="$SYS/Shop.Gateway"
+"${MSG[@]}" gateway on bff --path "$SYS" >/dev/null
+grep -q '<StratumGateway>bff</StratumGateway>' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && grep -q 'Shop.Gateway.csproj' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && grep -q 'builder.AddProject<Projects.Shop_Gateway>("gateway")' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q '.WithExternalHttpEndpoints()' "$SYS/Shop.AppHost/StratumServices.g.cs" \
+  && grep -q '("orders", "orders"),' "$GW/GatewayRoutes.g.cs" && grep -q '\["billing"\] = "https+http://billing",' "$GW/GatewayRoutes.g.cs" \
+  && grep -q 'Microsoft.AspNetCore.Authentication.OpenIdConnect' "$GW/Shop.Gateway.csproj" && grep -q 'AddOpenIdConnect' "$GW/GatewayWiring.g.cs" \
+  && grep -q '"Oidc"' "$GW/appsettings.json" && grep -q 'using Shop.Gateway;' "$GW/Program.cs" \
+  && grep -q 'Shop.Gateway/Shop.Gateway.csproj' "$SYS/Shop.slnx" \
+  && "${MSG[@]}" gateway --path "$SYS" | grep -q '/api/v1/orders' \
+  && pass "gateway (BFF): YARP project, routes per entity and per service, OpenID Connect session, in the AppHost" || fail "gateway bff"
+echo "// mine" >> "$GW/Program.cs"
+"${MSG[@]}" gateway on proxy --path "$SYS" >/dev/null
+! grep -q 'OpenIdConnect' "$GW/Shop.Gateway.csproj" && ! grep -q 'OpenIdConnect' "$GW/GatewayWiring.g.cs" \
+  && grep -q '<StratumGateway>proxy</StratumGateway>' "$SYS/Shop.AppHost/Shop.AppHost.csproj" && grep -q '// mine' "$GW/Program.cs" \
+  && "${MSG[@]}" gateway off --path "$SYS" >/dev/null \
+  && ! grep -q 'Shop_Gateway' "$SYS/Shop.AppHost/StratumServices.g.cs" && ! grep -q 'Gateway' "$SYS/Shop.AppHost/Shop.AppHost.csproj" \
+  && [[ -f "$GW/Program.cs" ]] \
+  && pass "gateway: proxy mode drops OpenID Connect, off takes it out of the AppHost; your Program.cs stays" || fail "gateway proxy/off"
+"${MSG[@]}" gateway on bff --path "$SYS" >/dev/null   # stays on: the Studio and the AppHost build (online) use it
 # Deployment (stratum deploy): optional targets in the AppHost, for "aspire deploy".
 DSYS="$WORK/system-docker"; mkdir -p "$DSYS"; cp -r "$SYS/orders" "$SYS/billing" "$DSYS/"
 "${MSG[@]}" aspire --path "$DSYS" --name Store >/dev/null
 "${MSG[@]}" deploy add docker --path "$DSYS" >/dev/null
+"${MSG[@]}" gateway on --path "$DSYS" >/dev/null       # proxy: the online AppHost build compiles that mode too
 "${MSG[@]}" deploy add azure --path "$SYS" >/dev/null
 grep -q '<StratumDeploy>docker</StratumDeploy>' "$DSYS/Store.AppHost/Store.AppHost.csproj" \
   && grep -q 'Aspire.Hosting.Docker' "$DSYS/Store.AppHost/Store.AppHost.csproj" \
@@ -795,6 +818,9 @@ for p in services events spec run templates service entities service/data servic
   [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$STUDIO_PORT/$p")" == 200 ]] || fail "studio: /$p"
 done
 pass "studio pages render"
+RUN_HTML="$(curl -s "http://127.0.0.1:$STUDIO_PORT/run")"
+[[ "$RUN_HTML" == *'Gateway (BFF)'* && "$RUN_HTML" == *'/api/v1/orders'* && "$RUN_HTML" == *'Shop.Gateway'* ]] \
+  && pass "studio: gateway section (mode and routes)" || fail "studio: gateway section"
 ENT="$(curl -s "http://127.0.0.1:$STUDIO_PORT/entities?open=orders&dialog=property:Total")"
 ENUM_DLG="$(curl -s "http://127.0.0.1:$STUDIO_PORT/entities?open=orders&dialog=enum")"
 [[ "$ENT" == *'class="modal-backdrop"'* && "$ENT" == *'Propiedad Total'* && "$ENT" == *'Guardar y cerrar'* && "$ENUM_DLG" == *'Nuevo enumerado'* ]] \

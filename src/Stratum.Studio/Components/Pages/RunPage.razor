@@ -121,6 +121,60 @@
         </div>
     </section>
 
+    <section class="stack" aria-labelledby="h-gateway">
+        <h2 class="section" id="h-gateway">@L("Gateway (BFF)", "Gateway (BFF)")</h2>
+        <span class="hint">@L("Opcional. Un único punto de entrada (YARP) delante de los servicios: el frontend habla solo con él. /api/v1/<entidades> llega al servicio que las tiene, /services/<servicio>/… a cualquiera, y el resto es el frontend (wwwroot o su servidor de desarrollo). Desplegado, es la única dirección pública.", "Optional. A single entry point (YARP) in front of the services: the frontend only talks to it. /api/v1/<entities> reaches the service that has them, /services/<service>/… any of them, and the rest is the frontend (wwwroot or its dev server). Deployed, it's the only public address.")</span>
+        @{ var gatewayMode = State.GatewayMode; var gatewayServices = State.Services.Select(s => new AspireService(s.Directory, s.Definition)).ToList(); }
+        <div class="grid">
+            @foreach (var (mode, title, description) in new[]
+            {
+                ("none", L("Sin gateway", "No gateway"), L("El frontend llama a cada servicio (CORS en cada uno).", "The frontend calls each service (CORS on each one).")),
+                (GatewayGenerator.Proxy, L("Proxy", "Proxy"), L("El frontend inicia sesión por su cuenta (MSAL, oidc-client…) y manda su token; el gateway lo pasa a los servicios.", "The frontend signs in on its own (MSAL, oidc-client…) and sends its token; the gateway passes it on to the services.")),
+                (GatewayGenerator.Bff, L("BFF", "BFF"), L("El gateway inicia la sesión (OpenID Connect) y guarda los tokens en una cookie cifrada: el navegador nunca los ve. El frontend usa /bff/login, /bff/logout, /bff/user y la cabecera X-CSRF.", "The gateway signs the user in (OpenID Connect) and keeps the tokens in an encrypted cookie: the browser never sees them. The frontend uses /bff/login, /bff/logout, /bff/user and the X-CSRF header.")),
+            })
+            {
+                var on = (gatewayMode ?? "none") == mode;
+                <div class="card stack" style="gap: 8px">
+                    <label class="row" style="gap: 8px; align-items: center">
+                        <input type="radio" name="gateway" checked="@on" disabled="@(gatewayServices.Count == 0)" @onchange="() => SetGateway(mode)" />
+                        <b>@title</b>
+                    </label>
+                    <span class="hint">@description</span>
+                </div>
+            }
+        </div>
+        @if (gatewayMode is not null)
+        {
+            var (routes, conflicts) = GatewayGenerator.Routes(gatewayServices);
+            var project = GatewayGenerator.ProjectName(State.ExistingAppHost![..^".AppHost".Length]);
+            <div class="table">
+                <div class="tr head" style="grid-template-columns: 1.4fr 1fr"><span>@L("Ruta del gateway", "Gateway route")</span><span>@L("Llega a", "Goes to")</span></div>
+                @foreach (var route in routes)
+                {
+                    <div class="tr" style="grid-template-columns: 1.4fr 1fr"><span class="mono">/api/v1/@route.Route</span><span>@route.Service.ResourceName</span></div>
+                }
+                @foreach (var service in gatewayServices.OrderBy(s => s.ResourceName, StringComparer.Ordinal))
+                {
+                    <div class="tr" style="grid-template-columns: 1.4fr 1fr"><span class="mono">/services/@service.ResourceName/…</span><span>@service.ResourceName @L("(cualquier endpoint)", "(any endpoint)")</span></div>
+                }
+                <div class="tr" style="grid-template-columns: 1.4fr 1fr"><span class="mono">/*</span><span>@L("el frontend: wwwroot o Gateway:Frontend:Url", "the frontend: wwwroot or Gateway:Frontend:Url")</span></div>
+            </div>
+            @foreach (var conflict in conflicts)
+            {
+                <span class="hint" style="color: var(--warn)">⚠ @conflict</span>
+            }
+            <span class="hint">
+                @L(@<text>El proyecto <span class="mono">@project</span> está junto al AppHost; <span class="mono">Program.cs</span> y <span class="mono">appsettings.json</span> son tuyos. Las rutas se regeneran con el AppHost.</text>,
+                   @<text>The <span class="mono">@project</span> project sits next to the AppHost; <span class="mono">Program.cs</span> and <span class="mono">appsettings.json</span> are yours. The routes are regenerated with the AppHost.</text>)
+                @if (gatewayMode == GatewayGenerator.Bff)
+                {
+                    @L(@<text> Configura <span class="mono">Gateway:Oidc</span> (Authority, ClientId, ClientSecret, Scopes): sin ella, <span class="mono">/bff/login</span> responde 503.</text>,
+                       @<text> Set <span class="mono">Gateway:Oidc</span> (Authority, ClientId, ClientSecret, Scopes): without it, <span class="mono">/bff/login</span> answers 503.</text>)
+                }
+            </span>
+        }
+    </section>
+
     <section class="stack" aria-labelledby="h-starts">
         <h2 class="section" id="h-starts">@L("Qué arranca", "What starts")</h2>
         @if (State.Services.Count == 0)
@@ -278,6 +332,19 @@
         {
             error = null;
             aspire = State.SetDeploy(systemName, target, on);
+        }
+        catch (StratumException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private void SetGateway(string mode)
+    {
+        try
+        {
+            error = null;
+            aspire = State.SetGateway(systemName, mode);
         }
         catch (StratumException ex)
         {

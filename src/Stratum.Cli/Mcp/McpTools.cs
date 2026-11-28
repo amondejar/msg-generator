@@ -292,6 +292,13 @@ internal sealed class McpTools(string root, string? packageSource)
                 ["remove"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray("docker", "azure") }, ["description"] = "Destinos que se quitan." },
                 ["apply"] = Apply(),
             }, [], ReadOnly: false),
+        new("set_gateway", "Gateway del sistema (BFF)",
+            "Activa, cambia o quita el gateway único (YARP) delante de los servicios: la puerta del frontend. /api/v1/<entidades> llega al servicio que las tiene, /services/<servicio>/... a cualquier endpoint, y el resto es el frontend (wwwroot o su servidor de desarrollo). Modos: proxy (el frontend manda su propio token y el gateway lo pasa) o bff (el gateway inicia la sesión con OpenID Connect, guarda los tokens en su cookie y manda el access token a los servicios; el frontend usa /bff/login, /bff/logout, /bff/user y la cabecera X-CSRF). mode none lo quita del AppHost (la carpeta se conserva). Sin apply muestra el estado y las rutas. " + PlanNote,
+            new JsonObject
+            {
+                ["mode"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray("proxy", "bff", "none"), ["description"] = "proxy, bff, o none para quitarlo." },
+                ["apply"] = Apply(),
+            }, [], ReadOnly: false),
         new("remove_service", "Eliminar un servicio",
             "Elimina un servicio y lo que cuelga de él: suscripciones de otros servicios, AppHost, stratum.workspace.json y su carpeta (salvo keepFiles). Con dropDatabase borra también su base de datos del contenedor del servidor (Docker o Podman; el servidor y las demás bases de datos se quedan). Irreversible fuera de git. " + PlanNote,
             new JsonObject
@@ -383,6 +390,7 @@ internal sealed class McpTools(string root, string? packageSource)
             "review_migration" => Cli(apply, ["migration", "review", "--path", Folder(args, "service")]),
             "generate_apphost" => AppHost(args, apply),
             "set_deploy" => SetDeploy(args, apply),
+            "set_gateway" => SetGateway(args, apply),
             "remove_service" => RemoveService(args, apply),
             _ => throw new StratumException($"Herramienta desconocida '{name}'."),
         };
@@ -704,6 +712,20 @@ internal sealed class McpTools(string root, string? packageSource)
         }
 
         return new(text.ToString().TrimEnd());
+    }
+
+    private ToolOutcome SetGateway(JsonObject args, bool apply)
+    {
+        var mode = args["mode"]?.GetValue<string>();
+        if (!apply || mode is null)
+        {
+            var output = new StringWriter();
+            global::Stratum.Cli.Cli.Run(["gateway", "status", "--path", root], output);
+            return new(output.ToString().TrimEnd() + (mode is null ? string.Empty
+                : $"\n{(mode == "none" ? "Se quitaría el gateway" : $"El gateway quedaría en modo {mode}")}. Repite con \"apply\": true."));
+        }
+
+        return Run(mode == "none" ? ["gateway", "off", "--path", root] : ["gateway", "on", mode, "--path", root]);
     }
 
     private ToolOutcome RemoveService(JsonObject args, bool apply)

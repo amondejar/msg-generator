@@ -618,6 +618,20 @@ public sealed class StudioState(StudioOptions options) : IDisposable
         return result;
     }
 
+    /// <summary>The gateway's mode (the AppHost's StratumGateway): proxy, bff, or null without a gateway.</summary>
+    public string? GatewayMode =>
+        ExistingAppHost is { } appHost ? GatewayGenerator.Mode(Workspace, appHost[..^".AppHost".Length]) : null;
+
+    /// <summary>Turns the gateway on (proxy or bff) or off ("none"); generates the AppHost if it doesn't exist yet.</summary>
+    public AspireResult SetGateway(string systemName, string mode)
+    {
+        var name = ExistingAppHost is { } appHost ? appHost[..^".AppHost".Length] : ServiceName.Normalize(systemName);
+        var result = AspireGenerator.Generate(Workspace, name, [.. AspireGenerator.Discover(Workspace)], gateway: mode);
+        Reload();
+        Changed?.Invoke();
+        return result;
+    }
+
     public string? ExistingAppHost =>
         Directory.EnumerateDirectories(Workspace, "*.AppHost").Select(Path.GetFileName).FirstOrDefault();
 

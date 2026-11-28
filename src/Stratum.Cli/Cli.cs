@@ -86,6 +86,8 @@ internal static partial class Cli
                                          Validación de una propiedad: longitud, formato, patrón, rango (API 400, dominio y columna)
           stratum deploy [list] | add docker|azure | remove docker|azure  [--path <sistema>]
                                                  Dónde se despliega el sistema (Docker Compose, Azure Container Apps)
+          stratum gateway [status] | on [proxy|bff] | off  [--path <sistema>]
+                                                 Gateway único (YARP) delante de los servicios: la puerta del frontend (BFF)
           stratum replica list | add <carpeta del publicador> <Entidad> [--fields "Name, Email"]
                         | fields <carpeta del publicador> <Entidad> --fields ... | remove <Publicador>.<Entidad>  [--path] [--dry-run]
                                                  Copia local de una entidad de otro servicio, al día con sus eventos
@@ -172,6 +174,7 @@ internal static partial class Cli
             "unsubscribe" => Subscribe(args[1..], output, subscribe: false),
             "aspire" => Aspire(args[1..], output),
             "deploy" => Deploy(args[1..], output),
+            "gateway" => Gateway(args[1..], output),
             "templates" => Templates(args[1..], output),
             "import" => Import(args[1..], output),
             "enum" => Enums(args[1..], output),
@@ -688,6 +691,16 @@ internal static partial class Cli
             output.WriteLine($"  ~ {file}");
         }
 
+        foreach (var note in result.Notes)
+        {
+            output.WriteLine($"  ⚠ {note}");
+        }
+
+        if (result.Gateway is not null)
+        {
+            output.WriteLine($"  · {GatewayGenerator.ProjectName(result.AppHostName[..^".AppHost".Length])}: rutas al día (stratum gateway para verlas)");
+        }
+
         output.WriteLine();
         output.WriteLine("Siguientes pasos (necesitas Docker o Podman para las bases de datos):");
         output.WriteLine("  aspire run                                    # o: dotnet run --project " + result.AppHostName);
@@ -768,6 +781,109 @@ internal static partial class Cli
         }
 
         return 0;
+    }
+
+    private static int Gateway(string[] args, TextWriter output)
+    {
+        const string usage = "Uso: stratum gateway [status] | on [proxy|bff] | off  [--path <carpeta del sistema>]";
+        var root = ".";
+        var positional = new List<string>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path": root = Value(args, ref i, args[i]); break;
+                default:
+                    if (args[i].StartsWith('-'))
+                    {
+                        throw new StratumException($"Argumento inesperado '{args[i]}'. {usage}");
+                    }
+
+                    positional.Add(args[i].ToLowerInvariant());
+                    break;
+            }
+        }
+
+        if (ServiceGenerator.FindDefinition(root) is not null)
+        {
+            throw new StratumException("Esta carpeta es un servicio. El gateway es del sistema: ejecútalo en la carpeta que contiene tus servicios (o usa --path).");
+        }
+
+        var action = positional.Count == 0 ? "status" : positional[0];
+        var name = AspireGenerator.DefaultSystemName(root);
+        var services = AspireGenerator.Discover(root);
+        if (action == "status")
+        {
+            var mode = GatewayGenerator.Mode(root, name);
+            if (mode is null)
+            {
+                output.WriteLine("El sistema no tiene gateway. Añádelo: stratum gateway on (el frontend manda su token) o stratum gateway on bff (el gateway guarda la sesión).");
+                return 0;
+            }
+
+            PrintGateway(output, name, services, mode);
+            return 0;
+        }
+
+        if (action is not ("on" or "off") || positional.Count > 2 || (action == "off" && positional.Count > 1))
+        {
+            throw new StratumException(usage);
+        }
+
+        var requested = action == "off" ? "none" : positional.Count == 2 ? positional[1] : GatewayGenerator.Mode(root, name) ?? GatewayGenerator.Proxy;
+        if (action == "on" && !GatewayGenerator.Modes.Contains(requested))
+        {
+            throw new StratumException($"No conozco el modo '{requested}'. {usage}");
+        }
+
+        var result = AspireGenerator.Generate(root, name, services, gateway: requested);
+        output.WriteLine(result.Gateway is null
+            ? $"✔ {result.AppHostName}: sin gateway (la carpeta {GatewayGenerator.ProjectName(name)} se conserva: bórrala si ya no la quieres)"
+            : $"✔ {result.AppHostName}: gateway {GatewayGenerator.ProjectName(name)} ({(result.Gateway == GatewayGenerator.Bff ? "BFF: el gateway guarda la sesión" : "proxy: el frontend manda su token")})");
+        foreach (var file in result.Created)
+        {
+            output.WriteLine($"  + {file}");
+        }
+
+        foreach (var file in result.Updated)
+        {
+            output.WriteLine($"  ~ {file}");
+        }
+
+        if (result.Gateway is not null)
+        {
+            output.WriteLine();
+            PrintGateway(output, name, services, result.Gateway);
+        }
+
+        return 0;
+    }
+
+    private static void PrintGateway(TextWriter output, string name, IReadOnlyList<AspireService> services, string mode)
+    {
+        var (routes, conflicts) = GatewayGenerator.Routes(services);
+        output.WriteLine($"Gateway {GatewayGenerator.ProjectName(name)} ({mode}). Rutas (se regeneran con stratum aspire):");
+        foreach (var route in routes)
+        {
+            output.WriteLine($"  /api/v1/{route.Route,-28} → {route.Service.ResourceName}");
+        }
+
+        foreach (var service in services.OrderBy(s => s.ResourceName, StringComparer.Ordinal))
+        {
+            output.WriteLine($"  /services/{service.ResourceName + "/…",-26} → {service.ResourceName} (cualquier endpoint, sin el prefijo)");
+        }
+
+        output.WriteLine("  /*                                    → el frontend: wwwroot, o Gateway:Frontend:Url (su servidor de desarrollo)");
+        foreach (var conflict in conflicts)
+        {
+            output.WriteLine($"  ⚠ {conflict}");
+        }
+
+        output.WriteLine();
+        output.WriteLine(mode == GatewayGenerator.Bff
+            ? "BFF: configura Gateway:Oidc (Authority, ClientId, ClientSecret, Scopes) en appsettings.json o user secrets. El frontend entra con /bff/login, sale con /bff/logout, pregunta con /bff/user y manda X-CSRF: 1 en cada llamada a /api."
+            : "Proxy: el frontend manda su propio token (Authorization: Bearer ...) y el gateway lo pasa a los servicios. Desde otro origen: Gateway:Cors:Origins.");
+        output.WriteLine("aspire run: el gateway sale en el dashboard; desplegado, es la única dirección pública del sistema.");
     }
 
     private static string DeployName(string target) => target == AspireGenerator.DeployDocker ? "Docker Compose" : "Azure Container Apps";
